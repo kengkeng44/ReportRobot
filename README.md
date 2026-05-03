@@ -193,6 +193,33 @@ Gmail / 對帳單
 - LINE 群組打 `/2330` 等指令立刻回應
 - `https://<railway-domain>/admin/env-check` 可檢查環境變數是否正確 sync 到 Railway
 
+## 監控 AI 用量與費用
+
+### 從 LINE 群組查（最方便）
+
+在群組打 `/cost` 或 `/用量`，bot 會回應：
+- 各模型呼叫次數、input/output tokens
+- web_search 呼叫次數
+- 估算累計費用（USD）
+
+### 從 PowerShell 查（不想暴露給家人時）
+
+```powershell
+Invoke-RestMethod -Method Get `
+  -Uri "https://chengreportbot-production.up.railway.app/admin/cost-stats" `
+  -Headers @{ "X-Admin-Token" = "你的 ADMIN_TOKEN" }
+```
+
+回 JSON 含相同資料 + `note` 欄位說明。
+
+### 計算方式
+
+`usage_tracker.py` 在每次 Anthropic SDK call 後抽 `message.usage` 累加：
+- Token 計費：`PRICING` 表內建 Sonnet 4.5 `$3/$15`、Haiku 4.5 `$0.80/$4`（per 1M）
+- Web search：每次 `$0.01`
+
+⚠️ in-memory counter，**Railway redeploy 會歸零**。看當期趨勢用，月底總帳對 [Anthropic Console](https://console.anthropic.com/) 為準。
+
 ## 排程時間
 
 `server.py` 用 apscheduler，預設讀 `DAILY_CRON` 環境變數：

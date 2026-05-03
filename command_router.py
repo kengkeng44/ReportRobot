@@ -15,6 +15,10 @@ _HELP_KEYWORDS = {
     "help", "Help", "HELP", "說明", "指令", "幫助", "教學", "?", "？",
 }
 
+_COST_KEYWORDS = {
+    "cost", "Cost", "COST", "用量", "費用", "成本", "stats",
+}
+
 HELP_TEXT = (
     "🤖 喵管家指令清單\n"
     "\n"
@@ -39,6 +43,9 @@ HELP_TEXT = (
     "  • /護國神山近期新聞\n"
     "  • 不認得的中文指令會丟給 AI 上網查\n"
     "\n"
+    "💰 看 AI 用量與費用\n"
+    "  • /cost 或 /用量 或 /費用\n"
+    "\n"
     "🆘 顯示這個說明\n"
     "  • help / 說明 / ?\n"
     "\n"
@@ -48,6 +55,39 @@ HELP_TEXT = (
     "\n"
     "ℹ️ 一般聊天不會被當指令，家人聊天不會被打擾。"
 )
+
+
+def _format_cost_stats(stats):
+    """把 usage_tracker.get_stats() 的 dict 轉成 LINE 友善排版。"""
+    lines = ["<b>💰 AI 用量統計</b>"]
+    started = stats.get("tracking_since", "")[:16].replace("T", " ")
+    now = stats.get("now", "")[:16].replace("T", " ")
+    lines.append(f"統計區間：{started} ~ {now}")
+    lines.append("")
+
+    by_model = stats.get("by_model", {})
+    if not by_model:
+        lines.append("（尚無 AI 呼叫紀錄）")
+    else:
+        for model, data in by_model.items():
+            short = model.replace("claude-", "").replace("-20251001", "")
+            lines.append(f"🤖 {short}")
+            lines.append(f"  呼叫 {data['calls']} 次")
+            lines.append(
+                f"  In {data['input_tokens']:,} / Out {data['output_tokens']:,} tokens"
+            )
+            lines.append(f"  約 ${data['estimated_cost_usd']:.4f}")
+            lines.append("")
+
+    if stats.get("web_search_calls"):
+        lines.append(f"🔍 Web Search 共 {stats['web_search_calls']} 次")
+        lines.append(f"  約 ${stats['web_search_cost_usd']:.4f}")
+        lines.append("")
+
+    lines.append(f"📊 累計：${stats.get('total_estimated_cost_usd', 0):.4f}")
+    lines.append("")
+    lines.append("ℹ️ 從上次 Railway 重啟到現在的累積，redeploy 會歸零。")
+    return "\n".join(lines)
 
 # 偵測前綴：開頭是 / 或「查」
 _HAS_PREFIX_RE = re.compile(r"^\s*[/查]")
@@ -121,6 +161,9 @@ def parse(text):
     if cleaned in _HELP_KEYWORDS:
         return ("help", None)
 
+    if cleaned in _COST_KEYWORDS:
+        return ("cost", None)
+
     if cleaned in _PORTFOLIO_KEYWORDS:
         return ("portfolio", None)
 
@@ -165,6 +208,10 @@ def handle(text):
     try:
         if kind == "help":
             return HELP_TEXT
+
+        if kind == "cost":
+            from usage_tracker import get_stats
+            return _format_cost_stats(get_stats())
 
         if kind == "portfolio":
             from gmail_reader import get_portfolio_from_gmail
