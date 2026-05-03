@@ -140,6 +140,22 @@ async def line_webhook(
             "user_id": source.get("userId"),
             "group_id": source.get("groupId"),
         }
+
+        # 多行訊息：每行各自當獨立指令，結果合併成一則 reply
+        # 限制最多 3 行，避免一次塞十個指令把 server 卡爆
+        lines = [l.strip() for l in text.splitlines() if l.strip()]
+        if len(lines) > 1:
+            parts = []
+            for line in lines[:3]:
+                r = command_router.handle(line, ctx=ctx)
+                if r:
+                    parts.append(r)
+            if parts:
+                combined = "\n\n━━━━━━━━━━\n\n".join(parts)
+                print(f"LINE 多行指令命中 {len(parts)} 行 → 回覆 {len(combined)} 字")
+                await reply_message(reply_token, combined)
+            continue
+
         response = command_router.handle(text, ctx=ctx)
         if response:
             print(f"LINE 指令命中：{text[:30]} → 回覆 {len(response)} 字")

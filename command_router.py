@@ -251,41 +251,41 @@ def _is_personal_chat(ctx):
 
 
 def _handle_todo_subcmd(user_id, body):
-    """處理 /待辦 加|完成|刪|清完成 子命令；回應字串。"""
+    """處理 /待辦 加|完成|刪|清完成 子命令；用 regex 支援「加X」黏在一起。"""
     import personal
-    parts = body.split(maxsplit=1)
-    cmd = parts[0]
-    rest = parts[1].strip() if len(parts) > 1 else ""
+    body = body.strip()
 
-    if cmd in ("加", "新增", "add"):
-        if not rest:
+    # 加 / 新增（中間可有可無空白）
+    m = re.match(r"^(?:加|新增|add)\s*(.+)$", body, re.IGNORECASE)
+    if m:
+        item = m.group(1).strip()
+        if not item:
             return "用法：/待辦 加 [內容]"
-        tid = personal.add_todo(user_id, rest)
-        return f"✅ 已新增待辦 [{tid}] {rest}"
+        tid = personal.add_todo(user_id, item)
+        return f"✅ 已新增待辦 [{tid}] {item}"
 
-    if cmd in ("完成", "做完", "done"):
-        try:
-            tid = int(rest)
-        except ValueError:
-            return "用法：/待辦 完成 [編號]"
+    # 完成
+    m = re.match(r"^(?:完成|做完|done)\s*(\d+)$", body, re.IGNORECASE)
+    if m:
+        tid = int(m.group(1))
         if personal.complete_todo(user_id, tid):
             return f"✅ 待辦 [{tid}] 已標記完成"
         return f"找不到編號 {tid} 的待辦"
 
-    if cmd in ("刪", "刪除", "del", "remove"):
-        try:
-            tid = int(rest)
-        except ValueError:
-            return "用法：/待辦 刪 [編號]"
+    # 刪
+    m = re.match(r"^(?:刪|刪除|del|remove)\s*(\d+)$", body, re.IGNORECASE)
+    if m:
+        tid = int(m.group(1))
         if personal.delete_todo(user_id, tid):
             return f"🗑️ 待辦 [{tid}] 已刪除"
         return f"找不到編號 {tid} 的待辦"
 
-    if cmd in ("清完成", "清", "clear"):
+    # 清完成
+    if body in ("清完成", "清", "clear"):
         n = personal.clear_done(user_id)
         return f"🧹 已清掉 {n} 筆已完成的待辦"
 
-    # 不認得的子命令 → 直接列清單
+    # 不認得 → 列清單
     return personal.format_todos(user_id)
 
 

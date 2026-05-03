@@ -87,10 +87,28 @@ def format_todos(user_id):
 # 提醒
 # ════════════════════════════════════════
 
-# 「N 分鐘/小時/天 後 [內容]」
-_RE_RELATIVE_MIN = re.compile(r"^(\d+)\s*分鐘?後\s+(.+)$")
-_RE_RELATIVE_HOUR = re.compile(r"^(\d+)\s*小時?後\s+(.+)$")
-_RE_RELATIVE_DAY = re.compile(r"^(\d+)\s*天後\s+(.+)$")
+# 中文數字 → int（一二...十、半小時的「半」、十一、二十等較複雜的不接，要的話自己用阿拉伯數字）
+_CN_NUM = {
+    "一": 1, "二": 2, "兩": 2, "三": 3, "四": 4, "五": 5,
+    "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+}
+
+
+def _parse_int(s):
+    """阿拉伯數字 / 中文數字一~十 → int；無法解析回 None。"""
+    if not s:
+        return None
+    if s.isdigit():
+        return int(s)
+    if s in _CN_NUM:
+        return _CN_NUM[s]
+    return None
+
+
+# 「N 分鐘/小時/天 後 [內容]」N 接受阿拉伯或中文「一二三四五六七八九十」
+_RE_RELATIVE_MIN = re.compile(r"^([一二兩三四五六七八九十\d]+)\s*分鐘?後\s+(.+)$")
+_RE_RELATIVE_HOUR = re.compile(r"^([一二兩三四五六七八九十\d]+)\s*(?:個)?小時後\s+(.+)$")
+_RE_RELATIVE_DAY = re.compile(r"^([一二兩三四五六七八九十\d]+)\s*天後\s+(.+)$")
 # 「今天/明天/後天 HH:MM [內容]」
 _RE_REL_DAY_TIME = re.compile(r"^(今天|明天|後天)\s*(\d{1,2}):?(\d{2})?\s+(.+)$")
 
@@ -104,15 +122,21 @@ def parse_reminder_input(text):
 
     m = _RE_RELATIVE_MIN.match(s)
     if m:
-        return now + timedelta(minutes=int(m.group(1))), m.group(2).strip()
+        n = _parse_int(m.group(1))
+        if n:
+            return now + timedelta(minutes=n), m.group(2).strip()
 
     m = _RE_RELATIVE_HOUR.match(s)
     if m:
-        return now + timedelta(hours=int(m.group(1))), m.group(2).strip()
+        n = _parse_int(m.group(1))
+        if n:
+            return now + timedelta(hours=n), m.group(2).strip()
 
     m = _RE_RELATIVE_DAY.match(s)
     if m:
-        return now + timedelta(days=int(m.group(1))), m.group(2).strip()
+        n = _parse_int(m.group(1))
+        if n:
+            return now + timedelta(days=n), m.group(2).strip()
 
     m = _RE_REL_DAY_TIME.match(s)
     if m:
