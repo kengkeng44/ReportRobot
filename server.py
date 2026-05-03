@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI, Header, HTTPException, Request
 
 import command_router
@@ -38,6 +39,13 @@ DAILY_CRON = os.environ.get("DAILY_CRON", "0 0 * * *")  # 預設 UTC 00:00 = 台
 scheduler = AsyncIOScheduler()
 
 
+def _periodic_todo_reminder():
+    """每 4 小時提醒所有 user 未完成的待辦。同步函式（apscheduler 直接呼叫）。"""
+    from personal import send_pending_reminders
+    from line_sender import push_to_user_sync
+    send_pending_reminders(push_to_user_sync)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 啟動時掛排程
@@ -49,11 +57,19 @@ async def lifespan(app: FastAPI):
         max_instances=1,
         coalesce=True,
     )
+    # 每 4 小時掃一次所有人未完成待辦並提醒
+    scheduler.add_job(
+        _periodic_todo_reminder,
+        IntervalTrigger(hours=4),
+        id="periodic_todo_reminder",
+        max_instances=1,
+    )
     scheduler.start()
     # 注入 scheduler 給 personal.py 用（提醒功能要排 one-shot job）
     import app_state
     app_state.set_scheduler(scheduler)
     print(f"Scheduler 啟動，每日報排程：{DAILY_CRON} (UTC)")
+    print("待辦定期提醒：每 4 小時")
     yield
     scheduler.shutdown()
 

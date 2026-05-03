@@ -73,14 +73,34 @@ def format_todos(user_id):
         return ("📋 目前沒有待辦事項。\n"
                 "用法：\n"
                 "  /待辦 加 [內容]\n"
-                "  /待辦 完成 [編號]\n"
+                "  /待辦 完成 [編號]   ← 完成會直接移除\n"
                 "  /待辦 刪 [編號]\n"
-                "  /待辦 清完成   ← 砍掉所有已完成")
+                "  /待辦 清空           ← 清掉全部\n\n"
+                "ℹ️ 未完成的待辦每 4 小時會自動提醒一次")
     lines = ["<b>📋 待辦清單</b>"]
     for t in items:
-        check = "✅" if t["done"] else "⬜"
-        lines.append(f"  {check} [{t['id']}] {t['text']}")
+        lines.append(f"  ⬜ [{t['id']}] {t['text']}")
     return "\n".join(lines)
+
+
+def send_pending_reminders(push_func):
+    """掃所有 user 的待辦清單，各推一份提醒。每 4 小時被 cron 觸發。"""
+    with _LOCK:
+        snapshot = [(uid, list(items))
+                    for uid, items in _TODOS.items() if items]
+
+    sent = 0
+    for user_id, items in snapshot:
+        try:
+            text = "<b>📋 你還有未完成的待辦</b>\n"
+            for t in items:
+                text += f"  ⬜ [{t['id']}] {t['text']}\n"
+            text += "\n做完打 /待辦 完成 [編號]"
+            push_func(user_id, text)
+            sent += 1
+        except Exception as e:
+            print(f"待辦定期提醒 push 失敗 {user_id}: {e}")
+    print(f"待辦定期提醒：對 {sent} 位 user 推送")
 
 
 # ════════════════════════════════════════

@@ -61,9 +61,10 @@ HELP_TEXT = (
     "📋 待辦清單（只在 1 對 1 chat 有效）\n"
     "  • /待辦 加 [內容]    新增\n"
     "  • /待辦              看清單\n"
-    "  • /待辦 完成 [編號]  打勾\n"
+    "  • /待辦 完成 [編號]  完成（自動移除）\n"
     "  • /待辦 刪 [編號]    刪除\n"
-    "  • /待辦 清完成        砍掉所有已完成\n"
+    "  • /待辦 清空         清掉全部\n"
+    "  ℹ️ 未完成的每 4 小時自動提醒一次\n"
     "\n"
     "⏰ 提醒（只在 1 對 1 chat 有效）\n"
     "  • /提醒 30 分鐘後 喝水\n"
@@ -264,12 +265,12 @@ def _handle_todo_subcmd(user_id, body):
         tid = personal.add_todo(user_id, item)
         return f"✅ 已新增待辦 [{tid}] {item}"
 
-    # 完成
+    # 完成（= 直接刪除，不留勾在清單裡）
     m = re.match(r"^(?:完成|做完|done)\s*(\d+)$", body, re.IGNORECASE)
     if m:
         tid = int(m.group(1))
-        if personal.complete_todo(user_id, tid):
-            return f"✅ 待辦 [{tid}] 已標記完成"
+        if personal.delete_todo(user_id, tid):
+            return f"✅ 待辦 [{tid}] 完成（已自動移除）"
         return f"找不到編號 {tid} 的待辦"
 
     # 刪
@@ -280,10 +281,12 @@ def _handle_todo_subcmd(user_id, body):
             return f"🗑️ 待辦 [{tid}] 已刪除"
         return f"找不到編號 {tid} 的待辦"
 
-    # 清完成
-    if body in ("清完成", "清", "clear"):
-        n = personal.clear_done(user_id)
-        return f"🧹 已清掉 {n} 筆已完成的待辦"
+    # 清空全部
+    if body in ("清空", "全清", "clear", "clear all"):
+        items = personal.list_todos(user_id)
+        for t in items:
+            personal.delete_todo(user_id, t["id"])
+        return f"🧹 已清空 {len(items)} 筆待辦"
 
     # 不認得 → 列清單
     return personal.format_todos(user_id)
