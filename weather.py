@@ -429,8 +429,10 @@ def get_weather_report():
 
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        # 天氣整理是「按格式重組資料」型任務，不需要深度推理
+        # 改 haiku 4.5 省 ~75% token cost（input $3→$0.8/M、output $15→$4/M）
         message = client.messages.create(
-            model="claude-sonnet-4-5",
+            model="claude-haiku-4-5-20251001",
             max_tokens=1500,
             messages=[{"role": "user", "content": prompt}]
         )
