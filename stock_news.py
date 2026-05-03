@@ -621,17 +621,71 @@ def get_etf_top_holdings(stock_id, top_n=5):
         return None
 
 
+# 大型美股的中文常用名（台股 ETF / 美股 ETF top holdings 都會用到）
+_US_CN_NAMES = {
+    "NVDA": "輝達", "AAPL": "蘋果", "MSFT": "微軟",
+    "GOOGL": "谷歌 A", "GOOG": "谷歌 C", "AMZN": "亞馬遜",
+    "META": "Meta", "TSLA": "特斯拉",
+    "BRK-B": "波克夏 B", "BRK.B": "波克夏 B", "BRK-A": "波克夏 A",
+    "V": "Visa", "MA": "萬事達",
+    "JPM": "摩根大通", "BAC": "美國銀行", "WFC": "富國銀行",
+    "GS": "高盛", "MS": "摩根士丹利", "C": "花旗",
+    "JNJ": "嬌生", "PG": "寶僑", "WMT": "沃爾瑪",
+    "UNH": "聯合健康", "XOM": "艾克森美孚", "CVX": "雪佛龍",
+    "HD": "家得寶", "AVGO": "博通", "LLY": "禮來",
+    "KO": "可口可樂", "PEP": "百事", "TMO": "賽默飛",
+    "COST": "好市多", "MRK": "默克", "CSCO": "思科",
+    "PFE": "輝瑞", "ABBV": "艾伯維", "ORCL": "甲骨文",
+    "AMD": "超微", "CRM": "Salesforce", "NFLX": "網飛",
+    "INTC": "英特爾", "IBM": "IBM", "BA": "波音",
+    "DIS": "迪士尼", "BABA": "阿里巴巴", "JD": "京東",
+    "NKE": "耐吉", "MCD": "麥當勞", "SBUX": "星巴克",
+    "PYPL": "PayPal", "ADBE": "Adobe", "NOW": "ServiceNow",
+    "INTU": "Intuit", "QCOM": "高通", "TXN": "德州儀器",
+    "F": "福特", "GM": "通用汽車", "T": "AT&T", "VZ": "威訊",
+    "MU": "美光", "ASML": "艾司摩爾",
+}
+
+
+def _holding_cn_name(symbol, fallback):
+    """ETF 持股中文名：台股查 twstock、美股查內建表、都沒有用 fallback 英文。"""
+    if not symbol:
+        return fallback
+    base = symbol.strip().upper()
+
+    # 台股 .TW / .TWO 後綴
+    for suffix in (".TW", ".TWO", ".TPO"):
+        if base.endswith(suffix):
+            tw_code = base[: -len(suffix)]
+            cn = _twstock_name(tw_code)
+            return cn or fallback
+
+    # 純台股代號（4-6 位數字 + 可選一字母）
+    if (base.isdigit() and 4 <= len(base) <= 6) or (
+        len(base) >= 5 and base[:-1].isdigit() and base[-1].isalpha()
+    ):
+        cn = _twstock_name(base)
+        if cn:
+            return cn
+
+    # 美股對照
+    return _US_CN_NAMES.get(base, fallback)
+
+
 def _format_holdings_block(holdings):
     lines = []
     for h in holdings:
         sym = (h.get("symbol") or "").strip()
-        name = (h.get("name") or "").strip()
+        eng_name = (h.get("name") or "").strip()
         weight = h.get("weight")
         weight_s = f"{weight:.2f}%" if weight is not None else "N/A"
-        if sym and name and sym != name:
-            display = f"{sym} {name}"
-        elif name:
-            display = name
+
+        cn_name = _holding_cn_name(sym, eng_name)
+        # 排版：sym + 中文名（若中文名不等於 symbol 才加）
+        if sym and cn_name and sym != cn_name:
+            display = f"{sym} {cn_name}"
+        elif cn_name:
+            display = cn_name
         elif sym:
             display = sym
         else:
