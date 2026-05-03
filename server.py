@@ -13,7 +13,6 @@ from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI, Header, HTTPException, Request
 
 import command_router
@@ -57,10 +56,11 @@ async def lifespan(app: FastAPI):
         max_instances=1,
         coalesce=True,
     )
-    # 每 4 小時掃一次所有人未完成待辦並提醒
+    # 待辦定期提醒：台北時間每天 06:00 / 09:00 / 12:00 / 18:00
+    # 沒有未完成待辦時 send_pending_reminders 內部會 skip，不會吵
     scheduler.add_job(
         _periodic_todo_reminder,
-        IntervalTrigger(hours=4),
+        CronTrigger(hour="6,9,12,18", minute=0, timezone="Asia/Taipei"),
         id="periodic_todo_reminder",
         max_instances=1,
     )
@@ -69,7 +69,7 @@ async def lifespan(app: FastAPI):
     import app_state
     app_state.set_scheduler(scheduler)
     print(f"Scheduler 啟動，每日報排程：{DAILY_CRON} (UTC)")
-    print("待辦定期提醒：每 4 小時")
+    print("待辦定期提醒：台北 06:00 / 09:00 / 12:00 / 18:00（沒待辦時不發）")
     yield
     scheduler.shutdown()
 
