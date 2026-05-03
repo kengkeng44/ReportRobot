@@ -5,6 +5,7 @@
 
 import os
 import anthropic
+import usage_tracker
 
 
 def _env(name):
@@ -45,6 +46,7 @@ def answer(query):
             }],
             messages=[{"role": "user", "content": prompt}],
         )
+        usage_tracker.track("claude-sonnet-4-5", msg)
         text = ""
         for block in msg.content:
             if getattr(block, "type", None) == "text":

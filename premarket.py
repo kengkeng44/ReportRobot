@@ -11,6 +11,7 @@ import os
 from datetime import date
 
 import anthropic
+import usage_tracker
 
 from chips import get_institutional_trades
 from markets import _format_price, get_index_quote
@@ -156,6 +157,7 @@ def _build_ai_summary():
             }],
             messages=[{"role": "user", "content": prompt}],
         )
+        usage_tracker.track("claude-sonnet-4-5", message)
         text = ""
         for block in message.content:
             if getattr(block, "type", None) == "text":

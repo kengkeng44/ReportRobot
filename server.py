@@ -142,6 +142,19 @@ async def line_webhook(
     return {"ok": True}
 
 
+@app.get("/admin/cost-stats")
+async def cost_stats(request: Request):
+    """累積 AI / web_search 用量與估算成本（要 X-Admin-Token header）。
+    Railway redeploy 會清空，看當期趨勢用。"""
+    admin_token = os.environ.get("ADMIN_TOKEN", "")
+    if not admin_token:
+        raise HTTPException(status_code=503, detail="Admin disabled")
+    if request.headers.get("X-Admin-Token") != admin_token:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    import usage_tracker
+    return usage_tracker.get_stats()
+
+
 @app.post("/admin/run-daily")
 async def trigger_daily(request: Request, force: int = 0):
     """手動觸發每日報。?force=1 會 bypass 週末略過盤前段的檢查（測試用）。"""

@@ -12,6 +12,7 @@ import time
 import requests
 import feedparser
 import anthropic
+import usage_tracker
 from bs4 import BeautifulSoup
 from prompts import STOCK_ANALYSIS_PROMPT, FORUM_SUMMARY_PROMPT
 
@@ -90,6 +91,7 @@ def translate_titles(items):
             max_tokens=800,
             messages=[{"role": "user", "content": prompt}],
         )
+        usage_tracker.track(AI_MODEL, message)
         text = message.content[0].text.strip()
         match = re.search(r'\[.*\]', text, re.DOTALL)
         if match:
@@ -413,6 +415,7 @@ def get_ai_analysis(stock_id, news_summary, forum_summary):
             max_tokens=1200,
             messages=[{"role": "user", "content": prompt}],
         )
+        usage_tracker.track(AI_MODEL, message)
         return message.content[0].text
     except Exception as e:
         return f"AI 分析暫時無法取得：{e}"
@@ -518,6 +521,7 @@ def get_security_intro(stock_id, name):
             max_tokens=200,
             messages=[{"role": "user", "content": prompt}],
         )
+        usage_tracker.track("claude-haiku-4-5-20251001", msg)
         text = msg.content[0].text.strip() if msg.content else ""
         # AI 表示不熟悉就跳過
         if text in ("無資料", "無資料。", "無", "") or "不熟悉" in text or "無法確定" in text:
@@ -535,7 +539,7 @@ def _is_tw_etf(stock_id):
 
 # 基本面摘要 cache：{stock_id: (timestamp, text)}
 _FUNDAMENTALS_CACHE = {}
-_FUNDAMENTALS_TTL = 3600 * 6  # 6 小時，台股月營收每月才更新一次
+_FUNDAMENTALS_TTL = 3600 * 24  # 24 小時。月營收每月、季 EPS 每季更新，一日一次足夠
 
 
 def get_fundamentals_block(stock_id, name):
@@ -578,6 +582,7 @@ def get_fundamentals_block(stock_id, name):
             }],
             messages=[{"role": "user", "content": prompt}],
         )
+        usage_tracker.track("claude-sonnet-4-5", msg)
         text = ""
         for block in msg.content:
             if getattr(block, "type", None) == "text":

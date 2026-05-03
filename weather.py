@@ -10,6 +10,7 @@ import os
 import tempfile
 import requests
 import anthropic
+import usage_tracker
 import matplotlib
 matplotlib.use('Agg')  # 無視窗環境
 import matplotlib.pyplot as plt
@@ -385,6 +386,7 @@ def get_local_events(locations):
             }],
             messages=[{"role": "user", "content": prompt}],
         )
+        usage_tracker.track("claude-sonnet-4-5", message)
         # web_search 是 server-side tool；content 含多個 block，取最後一個 text
         text = ""
         for block in message.content:
@@ -436,6 +438,7 @@ def get_weather_report():
             max_tokens=1500,
             messages=[{"role": "user", "content": prompt}]
         )
+        usage_tracker.track("claude-haiku-4-5-20251001", message)
         weather_text = message.content[0].text
     except Exception as e:
         print(f"AI 天氣整理失敗：{e}")
