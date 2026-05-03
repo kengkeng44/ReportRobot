@@ -87,6 +87,20 @@ async def push_message(text):
         })
 
 
+def push_to_user_sync(user_id, text):
+    """同步版本的 push（給 apscheduler / 提醒用）。直接 push 到指定 user_id。"""
+    if not (LINE_CHANNEL_TOKEN and user_id):
+        return
+    chunks = _chunks(text)
+    if not chunks:
+        return
+    for chunk in chunks:
+        _post(PUSH_URL, {
+            "to": user_id,
+            "messages": [{"type": "text", "text": chunk}],
+        })
+
+
 async def reply_message(reply_token, text):
     """回覆使用者訊息（webhook 互動用）。reply_token 只能用 1 次、有效 30 秒。"""
     if not (LINE_CHANNEL_TOKEN and reply_token):

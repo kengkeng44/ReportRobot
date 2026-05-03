@@ -50,6 +50,9 @@ async def lifespan(app: FastAPI):
         coalesce=True,
     )
     scheduler.start()
+    # 注入 scheduler 給 personal.py 用（提醒功能要排 one-shot job）
+    import app_state
+    app_state.set_scheduler(scheduler)
     print(f"Scheduler 啟動，每日報排程：{DAILY_CRON} (UTC)")
     yield
     scheduler.shutdown()
@@ -118,7 +121,6 @@ async def line_webhook(
 
     for event in events:
         if event.get("type") != "message":
-            # 也印 join / leave / 其他事件的 source，方便釣 groupId
             source = event.get("source", {}) or {}
             print(f"[webhook] event={event.get('type')} source={source}")
             continue
@@ -128,12 +130,17 @@ async def line_webhook(
         text = msg.get("text", "")
         reply_token = event.get("replyToken")
         source = event.get("source", {}) or {}
-        # 每筆訊息都印 source（含 groupId/userId），方便釣新群組 ID
         print(f"[webhook] message text={text[:30]!r} source={source}")
         if not reply_token:
             continue
 
-        response = command_router.handle(text)
+        # 把 source 資訊塞給 command_router，個人指令用 source_type 判斷
+        ctx = {
+            "source_type": source.get("type"),  # 'user' / 'group' / 'room'
+            "user_id": source.get("userId"),
+            "group_id": source.get("groupId"),
+        }
+        response = command_router.handle(text, ctx=ctx)
         if response:
             print(f"LINE 指令命中：{text[:30]} → 回覆 {len(response)} 字")
             await reply_message(reply_token, response)

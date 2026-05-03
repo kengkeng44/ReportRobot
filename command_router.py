@@ -19,6 +19,18 @@ _COST_KEYWORDS = {
     "cost", "Cost", "COST", "用量", "費用", "成本", "stats",
 }
 
+# 個人指令（只在 1 對 1 chat 觸發）
+_REMINDER_RE = re.compile(r"^(?:提醒|remind)\s*(.*)$", re.IGNORECASE)
+_REMINDER_LIST_KEYWORDS = {"提醒", "remind", "提醒清單", "我的提醒"}
+_REMINDER_CANCEL_RE = re.compile(r"^(?:取消提醒|cancel)\s+(\d+)$")
+_TODO_RE = re.compile(r"^(?:待辦|todo)\s*(.*)$", re.IGNORECASE)
+_TODO_LIST_KEYWORDS = {"待辦", "todo", "待辦清單"}
+
+PERSONAL_ONLY_MSG = (
+    "🤫 這是私人指令，請在 1 對 1 chat 跟我說。\n"
+    "在 LINE 找「鄭家大總管」單獨對話，不會打擾家庭群組。"
+)
+
 HELP_TEXT = (
     "🤖 喵管家指令清單\n"
     "\n"
@@ -45,6 +57,21 @@ HELP_TEXT = (
     "\n"
     "💰 看 AI 用量與費用\n"
     "  • /cost 或 /用量 或 /費用\n"
+    "\n"
+    "📋 待辦清單（只在 1 對 1 chat 有效）\n"
+    "  • /待辦 加 [內容]    新增\n"
+    "  • /待辦              看清單\n"
+    "  • /待辦 完成 [編號]  打勾\n"
+    "  • /待辦 刪 [編號]    刪除\n"
+    "  • /待辦 清完成        砍掉所有已完成\n"
+    "\n"
+    "⏰ 提醒（只在 1 對 1 chat 有效）\n"
+    "  • /提醒 30 分鐘後 喝水\n"
+    "  • /提醒 2 小時後 開會\n"
+    "  • /提醒 明天 9:30 會議\n"
+    "  • /提醒 今天 18:00 倒垃圾\n"
+    "  • /提醒              看所有進行中提醒\n"
+    "  • /取消提醒 [編號]\n"
     "\n"
     "🆘 顯示這個說明\n"
     "  • help / 說明 / ?\n"
@@ -167,6 +194,23 @@ def parse(text):
     if cleaned in _PORTFOLIO_KEYWORDS:
         return ("portfolio", None)
 
+    # 個人指令：提醒
+    if cleaned in _REMINDER_LIST_KEYWORDS:
+        return ("reminder_list", None)
+    m = _REMINDER_CANCEL_RE.match(cleaned)
+    if m:
+        return ("reminder_cancel", int(m.group(1)))
+    m = _REMINDER_RE.match(cleaned)
+    if m and m.group(1).strip():
+        return ("reminder_add", m.group(1).strip())
+
+    # 個人指令：待辦
+    if cleaned in _TODO_LIST_KEYWORDS:
+        return ("todo_list", None)
+    m = _TODO_RE.match(cleaned)
+    if m and m.group(1).strip():
+        return ("todo", m.group(1).strip())
+
     # 比較指令（必須要前綴，避免「台積跟鴻海比較」之類聊天誤觸發）
     if has_prefix:
         compare = _try_parse_compare(cleaned)
@@ -198,13 +242,67 @@ def parse(text):
     return None  # 不認得就靜默不回應，避免騷擾家人聊天
 
 
-def handle(text):
-    """parse + dispatch；回字串（給 reply_message 直接送）或 None。"""
+_PERSONAL_KINDS = {"reminder_add", "reminder_list", "reminder_cancel",
+                   "todo", "todo_list"}
+
+
+def _is_personal_chat(ctx):
+    return bool(ctx) and ctx.get("source_type") == "user"
+
+
+def _handle_todo_subcmd(user_id, body):
+    """處理 /待辦 加|完成|刪|清完成 子命令；回應字串。"""
+    import personal
+    parts = body.split(maxsplit=1)
+    cmd = parts[0]
+    rest = parts[1].strip() if len(parts) > 1 else ""
+
+    if cmd in ("加", "新增", "add"):
+        if not rest:
+            return "用法：/待辦 加 [內容]"
+        tid = personal.add_todo(user_id, rest)
+        return f"✅ 已新增待辦 [{tid}] {rest}"
+
+    if cmd in ("完成", "做完", "done"):
+        try:
+            tid = int(rest)
+        except ValueError:
+            return "用法：/待辦 完成 [編號]"
+        if personal.complete_todo(user_id, tid):
+            return f"✅ 待辦 [{tid}] 已標記完成"
+        return f"找不到編號 {tid} 的待辦"
+
+    if cmd in ("刪", "刪除", "del", "remove"):
+        try:
+            tid = int(rest)
+        except ValueError:
+            return "用法：/待辦 刪 [編號]"
+        if personal.delete_todo(user_id, tid):
+            return f"🗑️ 待辦 [{tid}] 已刪除"
+        return f"找不到編號 {tid} 的待辦"
+
+    if cmd in ("清完成", "清", "clear"):
+        n = personal.clear_done(user_id)
+        return f"🧹 已清掉 {n} 筆已完成的待辦"
+
+    # 不認得的子命令 → 直接列清單
+    return personal.format_todos(user_id)
+
+
+def handle(text, ctx=None):
+    """parse + dispatch；回字串（給 reply_message 直接送）或 None。
+    ctx={'source_type': 'user'/'group'/'room', 'user_id': ..., 'group_id': ...}
+    個人指令只在 source_type=='user' 才執行。"""
     parsed = parse(text)
     if not parsed:
         return None
 
     kind, arg = parsed
+
+    # 個人指令權限檢查
+    if kind in _PERSONAL_KINDS and not _is_personal_chat(ctx):
+        return PERSONAL_ONLY_MSG
+
     try:
         if kind == "help":
             return HELP_TEXT
@@ -231,6 +329,43 @@ def handle(text):
         if kind == "free_query":
             from free_query import answer
             return answer(arg)
+
+        if kind == "reminder_list":
+            import personal
+            return personal.format_reminders(ctx["user_id"])
+
+        if kind == "reminder_cancel":
+            import personal
+            if personal.cancel_reminder(ctx["user_id"], arg):
+                return f"🗑️ 提醒 [{arg}] 已取消"
+            return f"找不到編號 {arg} 的提醒"
+
+        if kind == "reminder_add":
+            import personal
+            from line_sender import push_to_user_sync
+            parsed_time = personal.parse_reminder_input(arg)
+            if not parsed_time:
+                return ("無法解析時間，可用格式：\n"
+                        "  /提醒 30 分鐘後 喝水\n"
+                        "  /提醒 2 小時後 開會\n"
+                        "  /提醒 明天 9:30 會議\n"
+                        "  /提醒 今天 18:00 倒垃圾")
+            fire_at, content = parsed_time
+            rid = personal.add_reminder(
+                ctx["user_id"], content, fire_at, push_to_user_sync,
+            )
+            if rid is None:
+                return "⚠️ 排程系統未就緒，請稍後再試"
+            return (f"✅ 已設定提醒 [{rid}]\n"
+                    f"⏰ {fire_at.strftime('%Y-%m-%d %H:%M')}\n"
+                    f"📝 {content}")
+
+        if kind == "todo_list":
+            import personal
+            return personal.format_todos(ctx["user_id"])
+
+        if kind == "todo":
+            return _handle_todo_subcmd(ctx["user_id"], arg)
     except Exception as e:
         print(f"指令處理失敗 ({kind}/{arg})：{e}")
         import traceback; traceback.print_exc()
