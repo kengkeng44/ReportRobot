@@ -34,11 +34,29 @@ def _is_retryable(exc):
     return False
 
 
+def _on_exhausted(retry_state):
+    """3 次重試都失敗 → 通知管理員，然後重新拋出原始例外。"""
+    exc = retry_state.outcome.exception()
+    fn = retry_state.fn.__name__ if retry_state.fn else "?"
+    args = retry_state.args or ()
+    url_hint = str(args[0])[:80] if args else ""
+    try:
+        from admin_notify import notify_admin
+        notify_admin(exc, {
+            "module": "http_utils",
+            "function": fn,
+            "extra": f"url={url_hint} attempts={retry_state.attempt_number}",
+        })
+    except Exception:
+        pass  # 通知失敗也不能讓重試結果被吃掉
+    raise exc
+
+
 _RETRY = dict(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
     retry=retry_if_exception(_is_retryable),
-    reraise=True,
+    retry_error_callback=_on_exhausted,
 )
 
 

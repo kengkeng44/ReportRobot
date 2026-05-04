@@ -2,7 +2,7 @@
 每日報告（08:00 推送）：天氣 → 大盤指數 → 盤前報告。
 持倉與個股改成 on-demand：使用者用 /仁和持股、/2330、/AAPL 等指令查。
 週末略過盤前段，其他照發。
-任一段失敗只 log，不中斷其他段推送。
+任一段失敗仍會推降級文案（讓用戶知道某段掛掉）；錯誤同時通知管理員。
 """
 
 import traceback
@@ -10,10 +10,11 @@ from datetime import date
 from weather import get_weather_report
 from premarket import build_premarket_report
 from line_sender import push_message
+from admin_notify import notify_admin
 
 
 async def _push_safe(label, body_fn):
-    """執行 body_fn() 拿段落字串；失敗只 log 不中斷整體流程。"""
+    """執行 body_fn() 拿段落字串；失敗時推一段降級文案 + 通知管理員。"""
     try:
         body = body_fn()
         if body:
@@ -21,6 +22,11 @@ async def _push_safe(label, body_fn):
     except Exception as e:
         print(f"[{label}] 失敗：{e}")
         traceback.print_exc()
+        notify_admin(e, {"module": "daily_report", "section": label})
+        try:
+            await push_message(f"<b>⚠️ {label}段</b>\n資料暫時無法取得，已通知維運。")
+        except Exception as push_err:
+            print(f"[{label}] 降級文案 push 也失敗：{push_err}")
 
 
 async def run_daily_report(force_premarket=False):

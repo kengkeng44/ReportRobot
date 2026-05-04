@@ -372,6 +372,15 @@ def handle(text, ctx=None):
     except Exception as e:
         print(f"指令處理失敗 ({kind}/{arg})：{e}")
         import traceback; traceback.print_exc()
+        try:
+            from admin_notify import notify_admin
+            notify_admin(e, {
+                "module": "command_router",
+                "section": str(kind),
+                "extra": f"arg={str(arg)[:80]}",
+            })
+        except Exception:
+            pass
         return f"查詢失敗：{e}"
 
     return None
