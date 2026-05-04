@@ -2,7 +2,7 @@
 大盤指數模組：用 Yahoo Finance chart API 抓主要指數即時報價。
 """
 
-import requests
+import http_utils
 
 
 INDEX_LABELS = [
@@ -18,7 +18,7 @@ def get_index_quote(symbol):
     """回 (price, change, change_pct) 或 None。"""
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-        r = requests.get(
+        r = http_utils.get(
             url,
             params={"interval": "1d", "range": "5d"},
             headers={"User-Agent": "Mozilla/5.0"},

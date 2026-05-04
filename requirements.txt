@@ -13,3 +13,4 @@ uvicorn[standard]==0.32.1
 apscheduler==3.10.4
 yfinance==1.3.0
 twstock==1.5.1
+tenacity==9.0.0

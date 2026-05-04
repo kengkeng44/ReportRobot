@@ -10,6 +10,7 @@ import os
 import tempfile
 import requests
 import anthropic
+import http_utils
 import usage_tracker
 import matplotlib
 matplotlib.use('Agg')  # 無視窗環境
@@ -89,7 +90,7 @@ def get_cwa_weather():
             # 平均相對濕度/最高體感溫度/最低體感溫度/風速/風向/12小時降雨機率/天氣現象/天氣預報綜合描述」等，
             # 不帶參數就一次拿全部，避免名稱不符被 CWA 靜默丟掉。
         }
-        resp = requests.get(url, params=params, timeout=15)
+        resp = http_utils.get(url, params=params, timeout=15)
         data = resp.json()
 
         records = data.get('records', {})
@@ -135,7 +136,7 @@ def get_cwa_weather_fallback():
     try:
         url = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001"
         params = {"Authorization": CWA_API_KEY, "locationName": "新北市"}
-        resp = requests.get(url, params=params, timeout=15)
+        resp = http_utils.get(url, params=params, timeout=15)
         data = resp.json()
 
         locations = data.get('records', {}).get('location', [])
@@ -181,7 +182,7 @@ def get_owm_weather():
                 "appid": OWM_API_KEY, "units": "metric",
                 "lang": "zh_tw", "cnt": 8
             }
-            resp = requests.get(url, params=params, timeout=10)
+            resp = http_utils.get(url, params=params, timeout=10)
             results[name] = resp.json()
         except Exception as e:
             print(f"OWM 失敗 ({name})：{e}")

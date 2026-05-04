@@ -3,7 +3,8 @@
 """
 
 import re
-import requests
+
+import http_utils
 from stock_news import get_stock_name
 
 
@@ -24,7 +25,7 @@ def get_live_price(ticker):
     symbol = _to_yahoo_symbol(ticker)
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-        resp = requests.get(
+        resp = http_utils.get(
             url,
             params={"interval": "1d", "range": "1d"},
             headers={"User-Agent": "Mozilla/5.0"},

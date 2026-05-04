@@ -12,6 +12,7 @@ import time
 import requests
 import feedparser
 import anthropic
+import http_utils
 import usage_tracker
 from bs4 import BeautifulSoup
 from prompts import STOCK_ANALYSIS_PROMPT, FORUM_SUMMARY_PROMPT
@@ -162,7 +163,7 @@ def get_cnyes_news(stock_id, limit=10):
     try:
         url = "https://news.cnyes.com/api/v3/news/category/tw_stock"
         params = {"keyword": stock_id, "limit": limit}
-        resp = requests.get(url, params=params, timeout=10)
+        resp = http_utils.get(url, params=params, timeout=10)
         data = resp.json()
         items = data.get('items', {}).get('data', [])
         news = []
@@ -456,7 +457,7 @@ def get_stock_quote_with_history(stock_id):
     symbol = _to_yahoo_symbol(stock_id)
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-        r = requests.get(
+        r = http_utils.get(
             url,
             params={"interval": "1d", "range": "3mo"},
             headers={"User-Agent": "Mozilla/5.0"},

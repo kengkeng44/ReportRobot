@@ -2,8 +2,9 @@
 台股盤後籌碼資料：三大法人買賣超。資料源 = 證交所 OpenAPI。
 """
 
-import requests
 from datetime import date, timedelta
+
+import http_utils
 
 
 HEADERS = {"User-Agent": "Mozilla/5.0"}
@@ -40,7 +41,7 @@ def get_institutional_trades(target_date=None):
         d = target - timedelta(days=delta)
         date_str = d.strftime("%Y%m%d")
         try:
-            r = requests.get(
+            r = http_utils.get(
                 TWSE_BFI82U,
                 params={"response": "json", "dayDate": date_str},
                 headers=HEADERS,
