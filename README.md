@@ -102,6 +102,16 @@
    - 中文反查必須有 `/` 或 `查` 前綴（避免「我買台積電」觸發）
    - 不認得的指令一律靜默不回應（不要動不動回「無此指令」吵到家人聊天）
 
+8. **資安、可靠性、可觀測性**
+   - **HMAC-SHA256 webhook 簽章驗證**：拒絕任何未經 LINE 平台簽章的偽造請求（用 `hmac.compare_digest` 防 timing attack）
+   - **OAuth 2.0**：Gmail 走標準 OAuth flow，refresh token 自動換新 access token
+   - **Secrets 管理**：Infisical 集中維護 → Railway 注入 → 不入版控；`config.py` 與 `token.pickle` 都列入 `.gitignore`
+   - **日誌脫敏**（`security_utils.mask`）：LINE userId / groupId、token 等以 `頭4***尾4` 格式輸出，避免敏感字串外洩到 Railway log
+   - **外部 API exponential backoff retry**（`http_utils`）：對 timeout / 429 / 5xx 自動重試 3 次（2→4→8 秒），4xx 不重試；用 `tenacity`
+   - **Graceful degradation**：每段內含降級（CWA 主備、quote N/A、AI 失敗回降級文案）；段落層級失敗時仍推「⚠️ 該段資料暫時無法取得」讓使用者知道
+   - **管理員錯誤主動通知**（`admin_notify`）：retry 用盡、排程錯誤、command 例外都會 push 到 `ADMIN_LINE_USER_ID`；同錯誤 5 分鐘 throttle 避免通知洪水；自身崩潰只往 stderr 不影響主程式
+   - **排程冪等性**：`apscheduler` 加 `coalesce=True` + `misfire_grace_time=300`，搭配每日 flag 檔，避免服務重啟踩到排程點導致重複推播
+
 ### 架構
 
 ```
@@ -152,6 +162,9 @@ LINE Group ←─┐
 | `free_query.py` | 自由格式中文 query → Sonnet + web_search |
 | `usage_tracker.py` | 累積 AI / web_search 用量與估算成本 |
 | `prompts.py` | 集中管理所有 AI prompt |
+| `http_utils.py` | requests 包 tenacity：timeout / 429 / 5xx 自動 exponential backoff retry |
+| `security_utils.py` | log 脫敏 utility（`mask` / `mask_source`） |
+| `admin_notify.py` | 管理員錯誤通知（含 5 分鐘 throttle，retry 用盡 / 排程失敗時主動 push）|
 | `main.py` | 本機手動測試入口（部署用 server.py） |
 
 ## 技術棧
@@ -164,6 +177,8 @@ LINE Group ←─┐
 - **台股對照**：twstock（內建 46k 上市櫃對照表，含 ETF 中文名）
 - **API**：LINE Messaging API、Gmail API (OAuth2)、CWA Open Data、OpenWeatherMap、TWSE OpenAPI
 - **PDF**：pikepdf（解密）、pdfplumber（抽文字）
+- **可靠性**：tenacity（exponential backoff retry）、apscheduler（冪等排程）
+- **資安**：hmac（webhook 驗章）、log mask、Infisical secrets
 - **部署**：Railway 24/7 web service
 - **Secrets**：Infisical → Railway sync
 
@@ -196,6 +211,7 @@ Gmail / 對帳單
 | `MANUAL_STOCKS` | 預留：手動追蹤股票清單（逗號分隔）|
 | `WEATHER_LOCATIONS` | 天氣地點，逗號分隔（例：`淡水區,金山區`）|
 | `ADMIN_TOKEN` | `/admin/run-daily` endpoint 保護用 |
+| `ADMIN_LINE_USER_ID` | 管理員錯誤通知目標（自己的 LINE userId）；未設定則 notify_admin 變 no-op |
 | `DAILY_CRON` | 排程 cron 表達式（預設 `"0 0 * * *"` = UTC 00:00 = 台北 08:00）|
 | `PYTHONUNBUFFERED` | 設 `1`，讓 print 即時顯示在 Railway log |
 
@@ -263,6 +279,9 @@ DAILY_CRON = "0 0 * * *"   # UTC 00:00 = 台北 08:00
 - [x] 1 對 1 自訂提醒（`/提醒 30 分鐘後 X` / `/提醒 明天 9:30 X`，支援中文數字）
 - [x] 1 對 1 vs 群組權限分流（個人指令不在群組執行，避免家人看到）
 - [x] 多行訊息一次處理多個指令
+- [x] 資安補強：HMAC 驗章、log 脫敏（mask）
+- [x] 可靠性補強：外部 API tenacity exponential backoff retry、graceful degradation 段落降級文案、排程冪等性（coalesce + misfire_grace + daily flag）
+- [x] 可觀測性補強：管理員錯誤主動通知（含 5 分鐘 throttle 防通知洪水）
 
 ### v2 規劃（個人深度功能）
 
