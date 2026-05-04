@@ -18,6 +18,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 import command_router
 from daily_report import run_daily_report
 from line_sender import reply_message
+from security_utils import mask_source
 
 
 def _env(name):
@@ -138,7 +139,7 @@ async def line_webhook(
     for event in events:
         if event.get("type") != "message":
             source = event.get("source", {}) or {}
-            print(f"[webhook] event={event.get('type')} source={source}")
+            print(f"[webhook] event={event.get('type')} source={mask_source(source)}")
             continue
         msg = event.get("message", {}) or {}
         if msg.get("type") != "text":
@@ -146,7 +147,7 @@ async def line_webhook(
         text = msg.get("text", "")
         reply_token = event.get("replyToken")
         source = event.get("source", {}) or {}
-        print(f"[webhook] message text={text[:30]!r} source={source}")
+        print(f"[webhook] message text={text[:30]!r} source={mask_source(source)}")
         if not reply_token:
             continue
 

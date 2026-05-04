@@ -8,6 +8,8 @@ import re
 import threading
 from datetime import datetime, timedelta
 
+from security_utils import mask
+
 
 _LOCK = threading.Lock()
 
@@ -99,7 +101,7 @@ def send_pending_reminders(push_func):
             push_func(user_id, text)
             sent += 1
         except Exception as e:
-            print(f"待辦定期提醒 push 失敗 {user_id}: {e}")
+            print(f"待辦定期提醒 push 失敗 {mask(user_id)}: {e}")
     print(f"待辦定期提醒：對 {sent} 位 user 推送")
 
 
@@ -215,7 +217,7 @@ def _fire_reminder(user_id, reminder_id, push_func):
         try:
             push_func(user_id, f"⏰ 提醒：{target['text']}")
         except Exception as e:
-            print(f"提醒 push 失敗 {user_id}/{reminder_id}: {e}")
+            print(f"提醒 push 失敗 {mask(user_id)}/{reminder_id}: {e}")
 
 
 def list_reminders(user_id):
