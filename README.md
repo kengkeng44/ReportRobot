@@ -1,6 +1,8 @@
 # 喵管家 LINE 情報機器人 (ReportRobot)
 
-每天台灣早上 8 點自動推播每日情報到 LINE 群組，**並且支援即時對話查詢個股、ETF、持倉**。
+每天台灣早上 8 點自動推播每日情報到 LINE 群組，**並且支援即時對話查詢個股、ETF、持倉、待辦提醒**。
+
+含 HMAC webhook 驗章、log 脫敏、外部 API exponential backoff retry、graceful degradation、管理員錯誤通知、排程冪等性等生產等級的資安／可靠性／可觀測性補強。
 
 ## 推播內容
 
@@ -58,7 +60,7 @@
 
 ## 設計亮點
 
-> 個人 side project · 約 2,000 行 Python · 12 個模組 · LINE webhook + 排程整合 · 部署於 Railway
+> 個人 side project · 約 4,000 行 Python · 19 個模組 · LINE webhook + 排程整合 · 部署於 Railway
 
 **解決的痛點**：早上要分別查股價、看新聞、查天氣太瑣碎；券商對帳單是加密 PDF 沒辦法直接看持倉；想查個股還要打開 App、找代號、看新聞、滑論壇、抓 ETF 成分。一個 LINE bot 全部解決，且家人也能直接用。
 
