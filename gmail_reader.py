@@ -568,6 +568,13 @@ def get_portfolio_from_gmail():
                 print(f"  [內文月報] {it['subject'][:50]} → {len(trades)} 筆")
                 all_trades.extend(trades)
 
+        # ── 詳細 trade dump，方便對照月對帳單 debug parser bug ──
+        print("===== Raw trades（去重前） =====")
+        for t in all_trades:
+            print(f"  {t.get('date')} | {t['ticker']:>6s} | {t['action']:>4s} | "
+                  f"{t['shares']:>6d} 股 @ {t['price']:>10.2f}")
+        print(f"===== 共 {len(all_trades)} 筆 =====")
+
         # ── 去重：日對帳單 vs 月對帳單常重複同筆交易 ──
         seen = set()
         deduped = []

@@ -25,6 +25,7 @@ _REMINDER_LIST_KEYWORDS = {"提醒", "remind", "提醒清單", "我的提醒"}
 _REMINDER_CANCEL_RE = re.compile(r"^(?:取消提醒|cancel)\s+(\d+)$")
 _TODO_RE = re.compile(r"^(?:待辦|todo)\s*(.*)$", re.IGNORECASE)
 _TODO_LIST_KEYWORDS = {"待辦", "todo", "待辦清單"}
+_PREVIEW_KEYWORDS = {"預覽", "preview", "Preview", "PREVIEW", "test", "預覽報告"}
 
 PERSONAL_ONLY_MSG = (
     "🤫 這是私人指令，請在 1 對 1 chat 跟我說。\n"
@@ -74,10 +75,14 @@ HELP_TEXT = (
     "  • /提醒              看所有進行中提醒\n"
     "  • /取消提醒 [編號]\n"
     "\n"
+    "🧪 預覽明天的每日情報（只在 1 對 1 chat 有效）\n"
+    "  • /預覽 或 /preview\n"
+    "  ℹ️ 1-2 分鐘內 push 一份天氣 + 盤前給你（force 強跑、不發群組）\n"
+    "\n"
     "🆘 顯示這個說明\n"
     "  • help / 說明 / ?\n"
     "\n"
-    "📅 每天 08:00 自動推送\n"
+    "📅 每天 06:00 自動推送\n"
     "  • 🌤️ 淡水區天氣 + 近期活動\n"
     "  • 📊 盤前報告（週末略過）\n"
     "\n"
@@ -195,6 +200,9 @@ def parse(text):
     if cleaned in _PORTFOLIO_KEYWORDS:
         return ("portfolio", None)
 
+    if cleaned in _PREVIEW_KEYWORDS:
+        return ("preview", None)
+
     # 個人指令：提醒
     if cleaned in _REMINDER_LIST_KEYWORDS:
         return ("reminder_list", None)
@@ -244,7 +252,7 @@ def parse(text):
 
 
 _PERSONAL_KINDS = {"reminder_add", "reminder_list", "reminder_cancel",
-                   "todo", "todo_list"}
+                   "todo", "todo_list", "preview"}
 
 
 def _is_personal_chat(ctx):
@@ -290,6 +298,44 @@ def _handle_todo_subcmd(user_id, body):
 
     # 不認得 → 列清單
     return personal.format_todos(user_id)
+
+
+def _handle_preview(user_id):
+    """/預覽：背景跑天氣 + 盤前 (force) 並 push 給該 user，立即 reply 確認訊息。
+    避免在 reply 路徑內阻塞 30 秒以上把 replyToken 用爆。"""
+    import threading
+    from datetime import date
+
+    def _bg():
+        from line_sender import push_to_user_sync
+        try:
+            today = date.today().strftime("%Y-%m-%d")
+            try:
+                from weather import get_weather_report
+                weather_msg, _ = get_weather_report()
+                push_to_user_sync(
+                    user_id,
+                    f"<b>🧪 預覽 - 每日情報</b>  {today}\n\n"
+                    f"<b>🌤️ 天氣報告</b>\n\n{weather_msg}",
+                )
+            except Exception as e:
+                push_to_user_sync(user_id, f"⚠️ 預覽天氣失敗：{e}")
+
+            try:
+                from premarket import build_premarket_report
+                pre = build_premarket_report(force=True)  # force=週末也產
+                if pre:
+                    push_to_user_sync(user_id, pre)
+                else:
+                    push_to_user_sync(user_id, "（盤前報告無內容）")
+            except Exception as e:
+                push_to_user_sync(user_id, f"⚠️ 預覽盤前失敗：{e}")
+        except Exception as e:
+            print(f"預覽背景執行失敗：{e}")
+
+    threading.Thread(target=_bg, daemon=True).start()
+    return ("⏳ 預覽生成中，1-2 分鐘內 push 給你（不會發到群組）。\n"
+            "ℹ️ 即使週末也會強跑盤前段。")
 
 
 def handle(text, ctx=None):
@@ -369,6 +415,9 @@ def handle(text, ctx=None):
 
         if kind == "todo":
             return _handle_todo_subcmd(ctx["user_id"], arg)
+
+        if kind == "preview":
+            return _handle_preview(ctx["user_id"])
     except Exception as e:
         print(f"指令處理失敗 ({kind}/{arg})：{e}")
         import traceback; traceback.print_exc()
