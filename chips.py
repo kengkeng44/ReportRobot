@@ -9,6 +9,7 @@ import http_utils
 
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 TWSE_BFI82U = "https://www.twse.com.tw/rwd/zh/fund/BFI82U"
+TWSE_OPENAPI_BFI82U = "https://openapi.twse.com.tw/v1/fund/BFI82U"
 
 
 def _last_trading_day(today=None):
@@ -102,4 +103,60 @@ def get_institutional_trades(target_date=None):
         except Exception as e:
             print(f"三大法人抓取失敗 {date_str}: {e}")
             continue
+
+    # RWD 5 天都失敗 → 改試 OpenAPI（只有最新一天，沒 date 參數）
+    print("  [chips] RWD 5 天都失敗，改試 OpenAPI v1")
+    try:
+        return _fetch_openapi()
+    except Exception as e:
+        print(f"  [chips] OpenAPI 也失敗：{e}")
+        return None
+
+
+def _fetch_openapi():
+    """OpenAPI v1 fallback。回傳結構與 get_institutional_trades 一致。
+    OpenAPI 只回最新交易日，欄位名稱中文（單位名稱 / 買進金額 / 賣出金額 / 買賣差額）。"""
+    r = http_utils.get(TWSE_OPENAPI_BFI82U, headers=HEADERS, timeout=10)
+    rows = r.json() or []
+    if not rows or not isinstance(rows, list):
+        print(f"  [chips/openapi] 回空：{str(r.text)[:200]}")
+        return None
+    print(f"  [chips/openapi] 拿到 {len(rows)} rows，"
+          f"keys={list(rows[0].keys()) if rows else []}")
+
+    result = {"date": rows[0].get("日期") or date.today().strftime("%Y-%m-%d")}
+    foreign_main = foreign_sub = dealer_self = dealer_hedge = dealer_total = None
+
+    for row in rows:
+        category = (row.get("單位名稱") or "").strip()
+        diff_str = row.get("買賣差額") or "0"
+        try:
+            diff = float(str(diff_str).replace(",", "")) / 1e8
+        except ValueError:
+            continue
+
+        if "投信" in category:
+            result["investment_trust"] = diff
+        elif "外資" in category and "自營商" in category:
+            foreign_sub = diff
+        elif "外資" in category:
+            foreign_main = diff
+        elif "自營商" in category and "自行買賣" in category:
+            dealer_self = diff
+        elif "自營商" in category and "避險" in category:
+            dealer_hedge = diff
+        elif "自營商" in category:
+            dealer_total = diff
+        elif "合計" in category:
+            result["total"] = diff
+
+    if foreign_main is not None or foreign_sub is not None:
+        result["foreign"] = (foreign_main or 0.0) + (foreign_sub or 0.0)
+    if dealer_self is not None or dealer_hedge is not None:
+        result["dealer"] = (dealer_self or 0.0) + (dealer_hedge or 0.0)
+    elif dealer_total is not None:
+        result["dealer"] = dealer_total
+
+    if "foreign" in result or "investment_trust" in result or "dealer" in result:
+        return result
     return None
