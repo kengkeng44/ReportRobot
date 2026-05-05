@@ -237,10 +237,12 @@ def _parse_us_record(line, fallback_date=None):
     return None
 
 
-def _amount_matches(shares, price, amount, tol=0.05):
-    """成交金額 ≈ 股數 × 價格（容忍 5% 用來吸收手續費或四捨五入）。"""
+def _amount_matches(shares, price, amount, tol=0.02):
+    """成交金額 ≈ 股數 × 價格（容忍 2% 用來吸收手續費 / 四捨五入）。
+    amount 缺值（≤ 0）視為驗證失敗，不再放行 — 防月對帳單裡的累計 / 摘要 row
+    把不正確的 token 對齊解成「貌似 OK 但 amount 對不上」的假交易。"""
     if amount <= 0:
-        return True  # 無法驗證就放行
+        return False
     expected = shares * price
     return abs(expected - amount) / amount <= tol
 
@@ -337,12 +339,16 @@ def _parse_tw_monthly_record(line, fallback_date=None, name_to_code=None):
     if not _amount_matches(shares, price, amount):
         return None
 
-    # 額外健全性檢查：零股股數 ≥ 1000 不合理（零股最多 999 股）。
-    # 防範把整股行誤判為零股（rest[1] 偶有小數點時誤觸發）。
+    # 健全性檢查 1：零股股數 ≥ 1000 不合理（零股交易單位本就 < 1000 股）。
     if mode == 'odd' and shares >= 1000:
         print(f"  [parse warn] 零股股數異常 {shares}，疑似整股誤判，line={line!r}")
         return None
-    # 整股股數通常 1000 的倍數；非倍數也不一定錯（不擋），但 dump log 方便 debug。
+    # 健全性檢查 2：整股股數必為 1000 倍數（台股整股交易 1 張 = 1000 股）。
+    # 不是 1000 倍代表此 row 不是真正的「成交股數」欄位，
+    # 多半是月對帳單「累計金額 / 結算 / 摘要」row 被誤判成交易。
+    if mode == 'lot' and shares % 1000 != 0:
+        print(f"  [parse warn] 整股股數非千倍 {shares}，疑似累計/摘要 row 誤判，line={line!r}")
+        return None
 
     print(f"  [parse {mode}] line={line!r} → shares={shares} price={price} amount={amount}")
 
