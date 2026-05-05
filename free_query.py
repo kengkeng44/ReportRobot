@@ -10,8 +10,32 @@ Prompt 架構參考機構級 IC Memo + macro transmission framework：
 """
 
 import os
+import re
 import anthropic
 import usage_tracker
+
+
+# 觸發詳細版的關鍵字（含中英文）。Query 含其中之一 → 走詳細版 6 塊；
+# 否則走精簡版（預設）。
+_DETAIL_KEYWORDS = (
+    "詳細", "完整", "深入", "深度", "詳盡", "full", "detail", "report", "分析報告",
+)
+
+
+def _is_detail_request(query):
+    q = query.lower()
+    for kw in _DETAIL_KEYWORDS:
+        if kw in q:
+            return True
+    return False
+
+
+def _strip_detail_keywords(query):
+    """把觸發詞從 query 移除（讓 prompt 看到的是乾淨主題）。"""
+    out = query
+    for kw in _DETAIL_KEYWORDS:
+        out = re.sub(re.escape(kw), "", out, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", out).strip()
 
 
 def _env(name):
@@ -28,10 +52,41 @@ def _env(name):
 ANTHROPIC_API_KEY = _env("ANTHROPIC_API_KEY")
 
 
+_CONCISE_PROMPT = """你是金融市場分析師。使用者問：「{q}」
+
+請用 web_search 查 2-3 次拿關鍵數據後，給「精簡版」回答。
+
+格式（純文字繁體中文，不要 Markdown）：
+1. 第一行：📌 主題 + 一句重點（含最關鍵的數字 + 日期）
+2. 接著 3-5 條 bullet（• 開頭），每點 1 句、含具體數字 / 日期 / 來源
+3. 若是預測類 query，bullet 第 1 條寫共識方向 + 區間（不寫機率），
+   不必跑完整 bull/base/bear 6 塊；機構代表 1-2 家即可
+4. 最後一行：「💡 想看完整版分析請輸入：/詳細 {q_clean}」
+
+長度上限：12 行內、200-350 字。
+
+絕對禁止：
+- Markdown（## ** * ``` ─ 等）
+- 開場白：「以下是」「您好」「我為您整理」「根據查詢」
+- 結語：「簡言之」「綜合而言」「總結來說」「希望對你有幫助」「※」
+        「投資人應留意」「值得關注」「市場將觀察」「資產配置工具」
+        「不構成投資建議」
+- 編造找不到的具體數字 / 日期 / 機構名
+"""
+
+
 def answer(query):
-    """自由 query → Sonnet + web_search；失敗回錯誤訊息。"""
+    """自由 query → Sonnet + web_search；失敗回錯誤訊息。
+    預設走精簡版；query 含「詳細/完整/深入/分析報告/full/detail」走詳細版。"""
+    detailed = _is_detail_request(query)
+    clean_query = _strip_detail_keywords(query) if detailed else query
+
+    if not detailed:
+        prompt = _CONCISE_PROMPT.format(q=query, q_clean=query)
+        return _call_claude(prompt, max_tokens=1500, max_uses=3, label="concise")
+
     prompt = f"""你是首席投資策略師（Chief Investment Strategist），CFA 等級分析。
-使用者問：「{query}」
+使用者問：「{clean_query}」
 
 ⚠️ 絕對要求：
 - 必須完整輸出對應結構的全部段落（A 型 6 塊 / B 型 6-10 條 / C 型 6 塊），少一塊視為錯誤
@@ -118,27 +173,31 @@ C 型｜未來展望／價格預測／趨勢預測（query 含「未來」「預
 - 數字 → 附日期；事件 → 附來源；預測 → 附情境機率
 - 找不到的整塊省略，不要寫「N/A」「資料尚待補充」
 """
+    return _call_claude(prompt, max_tokens=4096, max_uses=5, label="detailed")
+
+
+def _call_claude(prompt, max_tokens, max_uses, label):
+    """共用：打 Claude API、收集所有 text block、log stop_reason。"""
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         msg = client.messages.create(
             model="claude-sonnet-4-5",
-            max_tokens=4096,
+            max_tokens=max_tokens,
             tools=[{
                 "type": "web_search_20250305",
                 "name": "web_search",
-                "max_uses": 5,
+                "max_uses": max_uses,
             }],
             messages=[{"role": "user", "content": prompt}],
         )
         usage_tracker.track("claude-sonnet-4-5", msg)
-        # 蒐集所有 text block 的文字（可能有多個 — web_search 之間會穿插推理 text）
+        # 蒐集所有 text block（web_search 之間會穿插多個 text，必須全部收）
         texts = []
         for block in msg.content:
             if getattr(block, "type", None) == "text":
                 texts.append(block.text)
         text = "\n\n".join(t for t in texts if t and t.strip()).strip()
-        # log stop_reason 方便診斷被截斷或提早停的問題
-        print(f"[free_query] stop_reason={msg.stop_reason} "
+        print(f"[free_query/{label}] stop_reason={msg.stop_reason} "
               f"text_blocks={len(texts)} chars={len(text)} "
               f"input={msg.usage.input_tokens} output={msg.usage.output_tokens}")
         if msg.stop_reason == "max_tokens":
