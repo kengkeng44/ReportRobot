@@ -22,8 +22,9 @@
 | ETF | `0050` / `SPY` / `00631L` | 含前 5 大持股（中文名）|
 | 中文公司名 | `/鼎天` / `查台積` | 反查 twstock 拿代號 |
 | 比較 | `/比較 0050 0056 1y` | 兩檔績效對比 |
-| 自由問答 | `/Fed 最新動向` | Sonnet + web_search 回答 |
-| 持倉 | `仁和持股` / `持股` | 全持倉現價損益 |
+| 自由問答（精簡） | `/Fed 最新動向` / `/黃金未來價格` | Sonnet + web_search，3-5 條 bullet、約 200-350 字 |
+| 自由問答（詳細） | `/詳細 黃金未來價格` / `/full report on NVDA` | 機構級 IC Memo（A/B/C 型 6 塊，含 bull/base/bear 三情境）。觸發詞：詳細 / 完整 / 深入 / 深度 / detail / full / report |
+| 持倉 | `仁和持股` / `持股` | 全持倉現價損益，台股顯示中文名、末尾分台/美股總報酬 |
 | 用量 | `/cost` / `/用量` | AI 累積成本 |
 | 說明 | `/help` / `說明` / `?` | 完整指令清單 |
 
@@ -92,6 +93,7 @@
    - **Sonnet 4.5（無工具）**：天氣報告整理、新聞 + 論壇解讀
    - **Haiku 4.5（無工具）**：個股簡介（1-2 句，便宜快速）
    - **基本面 6 小時 cache**：月營收/季 EPS 不會頻繁變動，同檔股票一天內多次查走 cache，month-cost 從 ~$30 降到 ~$3
+   - **自由問答精簡 / 詳細雙模式**：預設精簡版（max_tokens 1500、3 次 search）控成本；query 含「詳細 / 深入 / full / detail」觸發完整 IC Memo 結構（max_tokens 4096、5 次 search）。Prompt 架構參考 [`devfinprojects/awesome-claude-finance-prompts`](https://github.com/devfinprojects/awesome-claude-finance-prompts) 的 macro transmission framework + CRAFT IC Memo 模板，預測類 query 強制 bull/base/bear 三情境機率加權
 
 5. **OAuth Token 雲端化**
    Railway 唯讀檔案系統無法寫回 `token.pickle`，本機 OAuth 完成後將 token base64 編碼存進環境變數 `TOKEN_PICKLE_B64`。`_load_creds()` 優先讀環境變數、退回本機檔案，**同份程式碼支援本機開發與雲端部署**。
@@ -154,15 +156,15 @@ LINE Group ←─┐
 | `weather.py` | CWA 鄉鎮預報 + OpenWeatherMap 輔助 + AI 整理 + 近期活動 web_search |
 | `markets.py` | Yahoo Finance v8 chart API 通用報價 wrapper |
 | `premarket.py` | 盤前報告組裝（Nasdaq / 費半 / TSMC ADR / 黃金 + 三大法人 + AI 重點），AI 取用真實籌碼數字寫昨日資金流向，週末 skip |
-| `chips.py` | 證交所 OpenAPI 抓三大法人買賣超，5 日 fallback 走過假日 |
+| `chips.py` | 證交所 RWD + OpenAPI v1 雙來源抓三大法人買賣超（外資 / 自營商雙列累加），5 日 fallback 走過假日 |
 | `stock_news.py` | 個股報告：股價、簡介、ETF 持股、基本面、新聞、論壇、AI 解讀 |
 | `gmail_reader.py` | 抓 Gmail 對帳單，雙市場 + 雙 pass 解析持倉 |
-| `portfolio.py` | 持倉現價/損益計算 |
+| `portfolio.py` | 持倉現價/損益計算（台股顯中文名、末尾分台/美股總報酬，避免幣別混算）|
 | `line_sender.py` | LINE Messaging API push / reply 包裝（HTML strip + 切片） |
 | `personal.py` | 個人待辦 / 提醒邏輯（in-memory + apscheduler 排 one-shot） |
 | `app_state.py` | 跨模組共享 scheduler ref（避免循環 import） |
 | `compare.py` | 兩檔績效比較（IX 指數對照、yfinance 算漲跌） |
-| `free_query.py` | 自由格式中文 query → Sonnet + web_search |
+| `free_query.py` | 自由格式 query → Sonnet + web_search，分精簡 / 詳細兩版（IC Memo 結構，含預測類 bull/base/bear 三情境）|
 | `usage_tracker.py` | 累積 AI / web_search 用量與估算成本 |
 | `prompts.py` | 集中管理所有 AI prompt |
 | `http_utils.py` | requests 包 tenacity：timeout / 429 / 5xx 自動 exponential backoff retry |
@@ -286,6 +288,11 @@ DAILY_CRON = "0 22 * * *"  # UTC 22:00 = 台北 06:00
 - [x] 資安補強：HMAC 驗章、log 脫敏（mask）
 - [x] 可靠性補強：外部 API tenacity exponential backoff retry、graceful degradation 段落降級文案、排程冪等性（coalesce + misfire_grace + daily flag）
 - [x] 可觀測性補強：管理員錯誤主動通知（含 5 分鐘 throttle 防通知洪水）
+- [x] 持倉概覽：台股顯示中文名（不顯示代號）、末尾分台 / 美股總報酬（避免幣別混算）
+- [x] 自由問答升級：精簡 / 詳細雙模式，詳細版套用 IC Memo 6 塊結構，預測類 query 含 bull/base/bear 三情境機率加權 + 4-6 家機構共識
+- [x] 三大法人籌碼：RWD + OpenAPI 雙來源、外資 / 自營商雙列累加、AI 盤前重點 prompt 取用真實籌碼數字寫昨日資金流向
+- [x] 月對帳單 PDF 黏字 fix：用 amount 反推切點，自動拆解 pdfplumber 把「股數 + 單價」黏成一個 token 的 case
+- [x] `/預覽` 個人指令：1 對 1 chat 立刻產一份明天的每日情報（force 強跑、不發群組）
 
 ### v2 規劃（個人深度功能）
 
