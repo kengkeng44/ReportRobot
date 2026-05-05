@@ -318,12 +318,14 @@ def _parse_tw_monthly_record(line, fallback_date=None, name_to_code=None):
         # rest[1] 是價格 → 零股（rest[0]=股數, rest[1]=價格, rest[2]=金額）
         # rest[1] 是股數 → 整股（rest[0]=張數, rest[1]=股數, rest[2]=價格, rest[3]=金額）
         if '.' in rest[1]:
+            mode = 'odd'  # 零股
             shares = int(rest[0].replace(',', ''))
             price = float(rest[1].replace(',', ''))
             amount = float(rest[2].replace(',', ''))
         else:
             if len(rest) < 4:
                 return None
+            mode = 'lot'  # 整股
             shares = int(rest[1].replace(',', ''))
             price = float(rest[2].replace(',', ''))
             amount = float(rest[3].replace(',', ''))
@@ -334,6 +336,15 @@ def _parse_tw_monthly_record(line, fallback_date=None, name_to_code=None):
         return None
     if not _amount_matches(shares, price, amount):
         return None
+
+    # 額外健全性檢查：零股股數 ≥ 1000 不合理（零股最多 999 股）。
+    # 防範把整股行誤判為零股（rest[1] 偶有小數點時誤觸發）。
+    if mode == 'odd' and shares >= 1000:
+        print(f"  [parse warn] 零股股數異常 {shares}，疑似整股誤判，line={line!r}")
+        return None
+    # 整股股數通常 1000 的倍數；非倍數也不一定錯（不擋），但 dump log 方便 debug。
+
+    print(f"  [parse {mode}] line={line!r} → shares={shares} price={price} amount={amount}")
 
     code = (name_to_code or {}).get(name, name)
     return {
