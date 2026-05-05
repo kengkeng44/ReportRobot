@@ -60,24 +60,30 @@ def _format_pnl_amount(value, is_us):
 def build_portfolio_summary(portfolio):
     """
     portfolio: {ticker: {'shares': N, 'avg_cost': X}}
-    回傳 HTML 字串（Telegram 用），若無持倉回傳空字串。
+    回傳 HTML 字串。台股顯示中文名（不顯示代號），美股保留代號。
+    最後加 NTD / USD 兩幣別總報酬（避免幣別混算誤導）。
     """
     if not portfolio:
         return ""
 
     lines = ["<b>📊 持倉概覽</b>"]
     rows = []
+    tw_cost = tw_value = 0.0
+    us_cost = us_value = 0.0
+
     for ticker, p in portfolio.items():
         is_us = not _is_tw_ticker(ticker)
         shares = p['shares']
         avg_cost = p['avg_cost']
         current = get_live_price(ticker)
         name = get_stock_name(ticker)
+        # 台股只顯示中文名，美股顯示 ticker（沒對應中文名時 fallback ticker）
+        display = ticker if is_us else (name or ticker)
 
         if current is None:
             rows.append({
                 'sort_key': shares * avg_cost,
-                'line': f"{ticker} {name}｜{shares}股｜均價{_format_price(avg_cost, is_us)}｜現價N/A",
+                'line': f"{display}｜{shares}股｜均價{_format_price(avg_cost, is_us)}｜現價N/A",
             })
             continue
 
@@ -87,8 +93,15 @@ def build_portfolio_summary(portfolio):
         pnl_pct = (current - avg_cost) / avg_cost * 100 if avg_cost > 0 else 0
         sign = "+" if pnl_pct >= 0 else ""
 
+        if is_us:
+            us_cost += cost_value
+            us_value += market_value
+        else:
+            tw_cost += cost_value
+            tw_value += market_value
+
         line = (
-            f"{ticker} {name}｜{shares}股"
+            f"{display}｜{shares}股"
             f"｜均價{_format_price(avg_cost, is_us)}"
             f"｜現價{_format_price(current, is_us)}"
             f"｜{sign}{pnl_pct:.1f}% {_format_pnl_amount(pnl, is_us)}"
@@ -97,4 +110,28 @@ def build_portfolio_summary(portfolio):
 
     rows.sort(key=lambda r: r['sort_key'], reverse=True)
     lines.extend(r['line'] for r in rows)
+
+    # 總報酬：台美分開算，避免 NTD/USD 混算
+    summary_parts = []
+    if tw_cost > 0:
+        tw_pnl = tw_value - tw_cost
+        tw_pct = tw_pnl / tw_cost * 100
+        sign = "+" if tw_pct >= 0 else ""
+        summary_parts.append(
+            f"🇹🇼 台股｜成本 {tw_cost:,.0f}｜市值 {tw_value:,.0f}"
+            f"｜{sign}{tw_pct:.1f}% {_format_pnl_amount(tw_pnl, False)}"
+        )
+    if us_cost > 0:
+        us_pnl = us_value - us_cost
+        us_pct = us_pnl / us_cost * 100
+        sign = "+" if us_pct >= 0 else ""
+        summary_parts.append(
+            f"🇺🇸 美股｜成本 ${us_cost:,.0f}｜市值 ${us_value:,.0f}"
+            f"｜{sign}{us_pct:.1f}% {_format_pnl_amount(us_pnl, True)}"
+        )
+    if summary_parts:
+        lines.append("")
+        lines.append("<b>💰 總報酬</b>")
+        lines.extend(summary_parts)
+
     return "\n".join(lines)
