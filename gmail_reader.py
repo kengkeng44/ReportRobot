@@ -237,6 +237,33 @@ def _parse_us_record(line, fallback_date=None):
     return None
 
 
+def _try_split_glued_token(token, expected_amount, tol=0.02):
+    """pdfplumber 偶爾把月對帳單的「股數 單價」兩欄黏成一個 token。
+    例：'5 2,245.0000' → '52,245.0000'。
+    用 amount 反推切點：把所有逗號拿掉、找小數點，從整數段不同位置試切，
+    回 (shares_str, price_str) 或 None。"""
+    plain = token.replace(',', '')
+    if '.' not in plain or plain.count('.') > 1:
+        return None
+    int_part, dec_part = plain.split('.')
+    if not int_part.isdigit() or not dec_part.isdigit():
+        return None
+    # 整數段每個切點 i：左側 = shares、右側 + 小數 = price
+    # 跳過 i=0（shares 為空）與 i=len（price 為空）
+    for i in range(1, len(int_part)):
+        try:
+            shares = int(int_part[:i])
+            price = float(int_part[i:] + '.' + dec_part)
+        except ValueError:
+            continue
+        if shares <= 0 or price <= 0:
+            continue
+        if abs(shares * price - expected_amount) / expected_amount <= tol:
+            # price 字串保留小數但拿掉千分位（不影響 float 解析）
+            return (str(shares), int_part[i:] + '.' + dec_part)
+    return None
+
+
 def _amount_matches(shares, price, amount, tol=0.02):
     """成交金額 ≈ 股數 × 價格（容忍 2% 用來吸收手續費 / 四捨五入）。
     amount 缺值（≤ 0）視為驗證失敗，不再放行 — 防月對帳單裡的累計 / 摘要 row
@@ -315,6 +342,21 @@ def _parse_tw_monthly_record(line, fallback_date=None, name_to_code=None):
     rest = tokens[action_idx + 2:]
     if len(rest) < 3:
         return None
+
+    # 修補 pdfplumber 黏字 bug：零股 row 常把「股數 單價」黏成一個 token，
+    # 例如「5 2,245.0000」+「11,225」抽出來變「52,245.0000 11,225」一個 token。
+    # 用 amount (rest[1]) 反推切點：找一個切法讓 shares × price ≈ amount。
+    if ',' in rest[0] and '.' in rest[0] and len(rest) >= 2:
+        try:
+            expected_amount = float(rest[1].replace(',', ''))
+        except ValueError:
+            expected_amount = 0
+        if expected_amount > 0:
+            split = _try_split_glued_token(rest[0], expected_amount)
+            if split:
+                shares_s, price_s = split
+                print(f"  [parse fix] 拆黏字 {rest[0]!r} → shares={shares_s} price={price_s}")
+                rest = [shares_s, price_s] + list(rest[1:])
 
     try:
         # rest[1] 是價格 → 零股（rest[0]=股數, rest[1]=價格, rest[2]=金額）

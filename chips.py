@@ -50,7 +50,12 @@ def get_institutional_trades(target_date=None):
             data = r.json()
             rows = data.get("data") or []
             if not rows:
+                # 印出完整 keys 跟 stat 訊息方便診斷（API 改欄位 / 資料未公布 / 假日）
+                print(f"  [chips] {date_str} 無資料：stat={data.get('stat')} "
+                      f"keys={list(data.keys())}")
                 continue
+            print(f"  [chips] {date_str} 拿到 {len(rows)} rows，"
+                  f"category 樣本={[r[0] for r in rows[:6]]}")
 
             result = {"date": d.strftime("%Y-%m-%d")}
             # 證交所 BFI82U 把外資拆兩列（外資及陸資 + 外資自營商）、自營商也拆
