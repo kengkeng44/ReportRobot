@@ -1,6 +1,6 @@
 #  LINE 情報機器人 (ReportRobot)
 
-每天台灣早上 8 點自動推播每日情報到 LINE 群組，**並且支援即時對話查詢個股、ETF、持倉、待辦提醒**。
+每天台灣早上 6 點自動推播每日情報到 LINE 群組，**並且支援即時對話查詢個股、ETF、持倉、待辦提醒**。
 
 含 HMAC webhook 驗章、log 脫敏、外部 API exponential backoff retry、graceful degradation、管理員錯誤通知、排程冪等性等生產等級的資安／可靠性／可觀測性補強。
 
@@ -9,7 +9,7 @@
 | 段落 | 內容 |
 |---|---|
 | 🌤️ **淡水區天氣** | 整體總結、6 時段逐時概況、今日重點提醒、📅 近期活動（AI web_search） |
-| 📊 **盤前報告**（週末略過） | 🌍 國際指數（道瓊 / S&P / Nasdaq / 費半 / TSMC ADR / NVDA）<br>💱 匯率原物料（USD/TWD / DXY / USD/JPY / 油 / 金）<br>🏛️ 三大法人買賣超（外資 / 投信 / 自營）<br>🧠 AI 盤前重點 8-10 條（Fed / 總經 / 地緣 / 類股 / 法說會） |
+| 📊 **盤前報告**（週末略過） | 🌍 國際市場（Nasdaq / 費半 / TSMC ADR / 黃金）<br>🏛️ 三大法人買賣超（外資 / 投信 / 自營，外資雙列累加）<br>🧠 AI 盤前重點 6-8 條（**昨日台股資金流向**置頂 + Fed / 總經 / 地緣 / 法說會，AI 取用真實籌碼數字） |
 
 ## 互動指令
 
@@ -214,7 +214,7 @@ Gmail / 對帳單
 | `WEATHER_LOCATIONS` | 天氣地點，逗號分隔（例：`淡水區,金山區`）|
 | `ADMIN_TOKEN` | `/admin/run-daily` endpoint 保護用 |
 | `ADMIN_LINE_USER_ID` | 管理員錯誤通知目標（自己的 LINE userId）；未設定則 notify_admin 變 no-op |
-| `DAILY_CRON` | 排程 cron 表達式（預設 `"0 0 * * *"` = UTC 00:00 = 台北 08:00）|
+| `DAILY_CRON` | 排程 cron 表達式（預設 `"0 22 * * *"` = UTC 22:00 = 台北 06:00）|
 | `PYTHONUNBUFFERED` | 設 `1`，讓 print 即時顯示在 Railway log |
 
 ## 部署
@@ -226,9 +226,10 @@ Gmail / 對帳單
 5. **設 LINE Webhook URL**：LINE Developers → Messaging API → Webhook URL → `https://<railway-domain>/line/webhook` → Use webhook ON → Verify
 
 部署成功後：
-- 每天 08:00 自動推送
+- 每天 06:00 自動推送
 - LINE 群組打 `/2330` 等指令立刻回應
 - `https://<railway-domain>/admin/env-check` 可檢查環境變數是否正確 sync 到 Railway
+- `https://<railway-domain>/admin/portfolio-debug`（要 X-Admin-Token）回 JSON 含所有 trades 與累計 portfolio，方便對照月對帳單 debug parser
 
 ## 監控 AI 用量與費用
 
@@ -262,7 +263,7 @@ Invoke-RestMethod -Method Get `
 `server.py` 用 apscheduler，預設讀 `DAILY_CRON` 環境變數：
 
 ```
-DAILY_CRON = "0 0 * * *"   # UTC 00:00 = 台北 08:00
+DAILY_CRON = "0 22 * * *"  # UTC 22:00 = 台北 06:00
 ```
 
 要改時間直接改 Infisical 的 `DAILY_CRON` 變數。

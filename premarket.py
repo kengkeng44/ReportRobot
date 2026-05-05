@@ -31,30 +31,19 @@ def _env(name):
 ANTHROPIC_API_KEY = _env("ANTHROPIC_API_KEY")
 
 
-# 國際指數（隔夜美股 + 費半）
+# 國際指數（瘦身：只留與台股相關性最高的）
 INTL_INDICES = [
-    ("^DJI", "Dow"),
-    ("^GSPC", "S&P 500"),
     ("^IXIC", "Nasdaq"),
     ("^SOX", "費半"),
 ]
 
-# 重要 ADR / 美股科技股盤後
+# 重要 ADR
 ADR_STOCKS = [
     ("TSM", "TSMC ADR"),
-    ("NVDA", "NVIDIA"),
 ]
 
-# 匯率
-FX_LIST = [
-    ("TWD=X", "USD/TWD"),
-    ("DX-Y.NYB", "美元指數"),
-    ("JPY=X", "USD/JPY"),
-]
-
-# 原物料
+# 原物料（拿掉原油，只留黃金）
 COMMODITIES = [
-    ("CL=F", "原油"),
     ("GC=F", "黃金"),
 ]
 
@@ -94,8 +83,7 @@ def _format_chip(value):
     return f"{sign}{abs(value):.2f} 億"
 
 
-def _build_chip_block():
-    chips = get_institutional_trades()
+def _build_chip_block_from(chips):
     if not chips:
         return "N/A（資料尚未公布或抓取失敗）"
     lines = [f"📅 {chips['date']} 收盤"]
@@ -125,24 +113,44 @@ def _strip_to_bullets(text):
     return "\n".join(bullets)
 
 
-def _build_ai_summary():
-    """用 Claude web_search 整理盤前重點。失敗回空字串。"""
+def _build_ai_summary(chip_data=None):
+    """用 Claude web_search 整理盤前重點。失敗回空字串。
+    chip_data：來自 chips.get_institutional_trades()，把真實數字注入 prompt
+    讓 AI 用準確基準寫昨日資金流向。"""
     today = date.today().strftime("%Y-%m-%d")
+    chip_block = ""
+    if chip_data:
+        parts = [f"日期 {chip_data['date']}"]
+        if chip_data.get('foreign') is not None:
+            parts.append(f"外資 {chip_data['foreign']:+.2f} 億")
+        if chip_data.get('investment_trust') is not None:
+            parts.append(f"投信 {chip_data['investment_trust']:+.2f} 億")
+        if chip_data.get('dealer') is not None:
+            parts.append(f"自營 {chip_data['dealer']:+.2f} 億")
+        if chip_data.get('total') is not None:
+            parts.append(f"合計 {chip_data['total']:+.2f} 億")
+        chip_block = (
+            "\n\n[實際三大法人數字 — 請務必引用此真實數字，不要 web_search 拿舊的]\n"
+            + " / ".join(parts)
+        )
+
     prompt = (
         f"今天是 {today}（台北時間）。請用網路搜尋整理今日台股開盤前重點。\n"
-        f"輸出 8-10 條 bullet，每點 `• ` 開頭，純文字繁體中文，不要 Markdown。\n\n"
-        f"請涵蓋以下面向（找不到資訊就跳過該面向，不要編造）：\n"
-        f"1. 美聯準會（Fed）動向：近期談話、會議紀要、利率機率變化\n"
-        f"2. 重要經濟數據：近期已公布或本週將公布的 CPI/PPI/非農/PMI/GDP/零售銷售\n"
-        f"3. 地緣政治與重大事件：貿易戰、關稅、戰爭、選舉、央行政策對股市的影響\n"
-        f"4. 強勢/弱勢類股輪動：昨夜美股與最近台股的明顯資金流向（AI/半導體/PCB/航運/金融等）\n"
-        f"5. 重要個股動態：權值股法說重點、財報、併購、減資等\n"
+        f"輸出 6-8 條 bullet，每點 `• ` 開頭，純文字繁體中文，不要 Markdown。"
+        f"{chip_block}\n\n"
+        f"請涵蓋以下面向（找不到就跳過，不要編造；數據都要附日期）：\n"
+        f"1. **昨日台股資金流向**（必寫，使用上方真實數字）：外資 / 投信 / 自營買賣超、"
+        f"強勢類股 Top 3 與弱勢類股 Top 3，每個類股要附漲跌幅、帶動的權值股名稱與該股漲跌\n"
+        f"2. 美聯準會（Fed）動向：近期談話、會議紀要、利率機率變化\n"
+        f"3. 重要經濟數據：近期已公布或本週將公布的 CPI/PPI/非農/PMI/GDP/零售銷售\n"
+        f"4. 地緣政治與重大事件：貿易戰、關稅、戰爭、央行政策對股市的影響\n"
+        f"5. 重要個股動態：權值股法說、財報、併購、減資（要有具體數字、日期）\n"
         f"6. 今日台股召開法說會的重要公司（如有）\n"
-        f"7. 美股盤後/盤前重要科技股表現（NVDA/TSM/AAPL/MSFT/AMD 等）\n"
-        f"8. 國際原物料、加密貨幣異動（油金、比特幣，如果有顯著變化）\n\n"
+        f"7. 美股盤後/盤前重要科技股漲跌（NVDA/TSM/AAPL/MSFT/AMD 任一有 ±3% 以上才寫，"
+        f"並使用最新隔夜收盤數據；務必先 web_search 確認當天實際數字）\n\n"
         f"規則：\n"
-        f"- 每點 1-2 句話，要有具體數字或事件名稱（不要寫「市場關注 Fed」這種空話）\n"
-        f"- 8-10 條 bullet，重要面向多列，不重要的面向就略過\n"
+        f"- 每點 1-2 句話，要有具體數字 / 公司名 / 日期\n"
+        f"- 「昨日資金流向」放第一條，用上方提供的真實數字（重要！）\n"
         f"- 直接列出 bullet，禁止開場白與結語"
     )
     try:
@@ -175,15 +183,14 @@ def build_premarket_report(force=False):
         print("週末，盤前報告 skip")
         return None
 
-    intl_lines = [_quote_line(s, l) for s, l in INTL_INDICES + ADR_STOCKS]
-    fx_lines = [_quote_line(s, l) for s, l in FX_LIST + COMMODITIES]
-    chip_block = _build_chip_block()
-    ai_block = _build_ai_summary()
+    intl_lines = [_quote_line(s, l) for s, l in INTL_INDICES + ADR_STOCKS + COMMODITIES]
+    chip_data = get_institutional_trades()
+    chip_block = _build_chip_block_from(chip_data)
+    ai_block = _build_ai_summary(chip_data=chip_data)
 
     sections = [
         "<b>📊 盤前報告</b>",
         "<b>🌍 國際市場（隔夜）</b>\n" + "\n".join(intl_lines),
-        "<b>💱 匯率與原物料</b>\n" + "\n".join(fx_lines),
         "<b>🏛️ 三大法人買賣超</b>\n" + chip_block,
     ]
     if ai_block:

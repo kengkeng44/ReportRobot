@@ -53,9 +53,13 @@ def get_institutional_trades(target_date=None):
                 continue
 
             result = {"date": d.strftime("%Y-%m-%d")}
-            dealer_self = 0.0
-            dealer_hedge = 0.0
-            has_dealer_subtype = False
+            # 證交所 BFI82U 把外資拆兩列（外資及陸資 + 外資自營商）、自營商也拆
+            # 兩列（自行買賣 + 避險）。要累加，不能 overwrite。
+            foreign_main = None
+            foreign_sub = None
+            dealer_self = None
+            dealer_hedge = None
+            dealer_total = None  # 萬一 API 改回單列「自營商」
 
             for row in rows:
                 category = (row[0] or "").strip()
@@ -64,23 +68,29 @@ def get_institutional_trades(target_date=None):
                 except (ValueError, IndexError, AttributeError):
                     continue
 
-                if "外資" in category:
-                    result["foreign"] = diff
-                elif "投信" in category:
+                if "投信" in category:
                     result["investment_trust"] = diff
+                elif "外資" in category and "自營商" in category:
+                    foreign_sub = diff
+                elif "外資" in category:
+                    foreign_main = diff
                 elif "自營商" in category and "自行買賣" in category:
                     dealer_self = diff
-                    has_dealer_subtype = True
                 elif "自營商" in category and "避險" in category:
                     dealer_hedge = diff
-                    has_dealer_subtype = True
                 elif "自營商" in category:
-                    result["dealer"] = diff
+                    dealer_total = diff
                 elif "合計" in category:
                     result["total"] = diff
 
-            if has_dealer_subtype:
-                result["dealer"] = dealer_self + dealer_hedge
+            # 外資 = 外資及陸資 + 外資自營商（任一缺值就用另一個）
+            if foreign_main is not None or foreign_sub is not None:
+                result["foreign"] = (foreign_main or 0.0) + (foreign_sub or 0.0)
+            # 自營商：優先拼 self+hedge；都沒拆才用單列總額
+            if dealer_self is not None or dealer_hedge is not None:
+                result["dealer"] = (dealer_self or 0.0) + (dealer_hedge or 0.0)
+            elif dealer_total is not None:
+                result["dealer"] = dealer_total
 
             if "foreign" in result or "investment_trust" in result or "dealer" in result:
                 return result

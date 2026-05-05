@@ -35,7 +35,7 @@ def _env(name):
 
 
 LINE_CHANNEL_SECRET = _env("LINE_CHANNEL_SECRET")
-DAILY_CRON = os.environ.get("DAILY_CRON", "0 0 * * *")  # 預設 UTC 00:00 = 台北 08:00
+DAILY_CRON = os.environ.get("DAILY_CRON", "0 22 * * *")  # 預設 UTC 22:00 = 台北 06:00
 
 
 scheduler = AsyncIOScheduler()
@@ -257,3 +257,36 @@ async def trigger_daily(request: Request, force: int = 0):
     # admin 手動觸發：直接呼叫 run_daily_report，跳過 flag 冪等（測試用）
     await run_daily_report(force_premarket=bool(force))
     return {"ok": True, "force_premarket": bool(force)}
+
+
+@app.get("/admin/portfolio-debug")
+async def portfolio_debug(request: Request):
+    """Dump 所有 trades + 累計後 portfolio，用來對照月對帳單抓 parser bug。
+    回傳 JSON：{trades: [...], portfolio: {ticker: {shares, avg_cost}}}。
+    要 X-Admin-Token header。"""
+    admin_token = os.environ.get("ADMIN_TOKEN", "")
+    if not admin_token:
+        raise HTTPException(status_code=503, detail="Admin disabled")
+    if request.headers.get("X-Admin-Token") != admin_token:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    from gmail_reader import _download_email_items, extract_trades_from_pdf, extract_trades_from_text, _is_tw_daily, _is_tw_monthly_text, _aggregate_portfolio
+    items = _download_email_items()
+    all_trades = []
+    for it in items:
+        if _is_tw_daily(it["subject"]):
+            tr = extract_trades_from_text(it["body_text"], fallback_date=it["date_hint"], daily=True)
+        elif _is_tw_monthly_text(it["subject"], it["body_text"]):
+            tr = extract_trades_from_text(it["body_text"], fallback_date=it["date_hint"], daily=False)
+        else:
+            tr = []
+            for pdf_path in it["pdf_paths"]:
+                tr.extend(extract_trades_from_pdf(pdf_path, fallback_date=it["date_hint"]))
+        for t in tr:
+            t["_subject"] = it["subject"][:80]
+        all_trades.extend(tr)
+    portfolio = _aggregate_portfolio(all_trades)
+    # date 物件 → str 方便 JSON
+    for t in all_trades:
+        if t.get("date"):
+            t["date"] = str(t["date"])
+    return {"trade_count": len(all_trades), "portfolio": portfolio, "trades": all_trades}
