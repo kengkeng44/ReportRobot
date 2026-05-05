@@ -74,17 +74,19 @@ def get_institutional_trades(target_date=None):
                 except (ValueError, IndexError, AttributeError):
                     continue
 
+                # 注意：「外資及陸資(不含外資自營商)」字串內含「自營商」三字，
+                # 用 in 判斷會誤匹配。改用 startswith 從開頭判斷。
                 if "投信" in category:
                     result["investment_trust"] = diff
-                elif "外資" in category and "自營商" in category:
+                elif category.startswith("外資自營商"):
                     foreign_sub = diff
-                elif "外資" in category:
+                elif category.startswith("外資"):  # 外資及陸資(...)
                     foreign_main = diff
-                elif "自營商" in category and "自行買賣" in category:
+                elif category.startswith("自營商(自行買賣)") or "自行買賣" in category:
                     dealer_self = diff
-                elif "自營商" in category and "避險" in category:
+                elif category.startswith("自營商(避險)") or "避險" in category:
                     dealer_hedge = diff
-                elif "自營商" in category:
+                elif category.startswith("自營商"):
                     dealer_total = diff
                 elif "合計" in category:
                     result["total"] = diff
