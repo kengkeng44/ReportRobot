@@ -1,4 +1,4 @@
-# 喵管家 LINE 情報機器人 (ReportRobot)
+#  LINE 情報機器人 (ReportRobot)
 
 每天台灣早上 8 點自動推播每日情報到 LINE 群組，**並且支援即時對話查詢個股、ETF、持倉、待辦提醒**。
 
