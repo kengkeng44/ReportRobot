@@ -130,7 +130,7 @@ LINE Group ←─┐
    │  │ /admin/...     │  │
    │  └────────────────┘  │
    │  ┌────────────────┐  │
-   │  │ apscheduler    │ ───► 每日 08:00 推送
+   │  │ apscheduler    │ ───► 每日 06:00 推送
    │  └────────────────┘  │
    └──────────┬───────────┘
               │
@@ -152,7 +152,7 @@ LINE Group ←─┐
 | `command_router.py` | LINE 訊息解析：`/2330`、`查台積`、`仁和持股`、`/help` 多種觸發 |
 | `weather.py` | CWA 鄉鎮預報 + OpenWeatherMap 輔助 + AI 整理 + 近期活動 web_search |
 | `markets.py` | Yahoo Finance v8 chart API 通用報價 wrapper |
-| `premarket.py` | 盤前報告組裝（國際指數 + ADR + 匯率原物料 + 三大法人 + AI 重點），週末 skip |
+| `premarket.py` | 盤前報告組裝（Nasdaq / 費半 / TSMC ADR / 黃金 + 三大法人 + AI 重點），AI 取用真實籌碼數字寫昨日資金流向，週末 skip |
 | `chips.py` | 證交所 OpenAPI 抓三大法人買賣超，5 日 fallback 走過假日 |
 | `stock_news.py` | 個股報告：股價、簡介、ETF 持股、基本面、新聞、論壇、AI 解讀 |
 | `gmail_reader.py` | 抓 Gmail 對帳單，雙市場 + 雙 pass 解析持倉 |
