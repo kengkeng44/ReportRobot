@@ -33,7 +33,14 @@ def answer(query):
     prompt = f"""你是首席投資策略師（Chief Investment Strategist），CFA 等級分析。
 使用者問：「{query}」
 
-先用 web_search 主動查 5-8 次（涵蓋至少 3 個獨立來源），蒐集 24-72 小時內資料 + 主要券商/機構最新報告，再開始回答。
+⚠️ 絕對要求：
+- 必須完整輸出對應結構的全部段落（A 型 6 塊 / B 型 6-10 條 / C 型 6 塊），少一塊視為錯誤
+- 不可寫到一半就停（例如只寫「技術面：金價 4/24 失守...」就結束 → 視為失敗）
+- 預測類 query → 強制走 C 型 6 塊，技術面只是其中第 1 塊的一部分，不可代表整體回答
+- 先想好 6 塊各要寫什麼，確認 token 預算夠 → 再開始輸出；每塊至少 50 字
+- 寧可 web_search 少查 1-2 次，也要把全部 6 塊寫完整
+
+先用 web_search 查 4-5 次（聚焦於最重要的資料源，不要花在無關搜尋），蒐集 24-72 小時內資料 + 主要券商/機構最新報告，再開始回答。
 回答前先判斷 query 屬於哪一型，套對應結構：
 
 ═══════════════════════════════
@@ -115,20 +122,27 @@ C 型｜未來展望／價格預測／趨勢預測（query 含「未來」「預
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         msg = client.messages.create(
             model="claude-sonnet-4-5",
-            max_tokens=3500,
+            max_tokens=4096,
             tools=[{
                 "type": "web_search_20250305",
                 "name": "web_search",
-                "max_uses": 8,
+                "max_uses": 5,
             }],
             messages=[{"role": "user", "content": prompt}],
         )
         usage_tracker.track("claude-sonnet-4-5", msg)
-        text = ""
+        # 蒐集所有 text block 的文字（可能有多個 — web_search 之間會穿插推理 text）
+        texts = []
         for block in msg.content:
             if getattr(block, "type", None) == "text":
-                text = block.text
-        text = text.strip()
+                texts.append(block.text)
+        text = "\n\n".join(t for t in texts if t and t.strip()).strip()
+        # log stop_reason 方便診斷被截斷或提早停的問題
+        print(f"[free_query] stop_reason={msg.stop_reason} "
+              f"text_blocks={len(texts)} chars={len(text)} "
+              f"input={msg.usage.input_tokens} output={msg.usage.output_tokens}")
+        if msg.stop_reason == "max_tokens":
+            text += "\n\n（⚠️ 回答被 token 上限截斷，可再問一次更窄的問題）"
         if not text:
             return "找不到相關資料"
         return text
