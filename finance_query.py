@@ -91,12 +91,14 @@ def get_autopay(days=35):
 
 
 # ─────────────────────────────────────────────────────────
-# 格式化（直接列）
+# AI 整理：三類合一給 Haiku 摘要成「總覽」
+# 這是唯一對外的 entry point；同義詞 /財務 /帳單 /訂閱 /扣款 都走這支
 # ─────────────────────────────────────────────────────────
 
-def _format_list(items, title, empty_msg, limit=15):
+def _format_list_fallback(items, title, limit=15):
+    """AI 失敗時的 fallback：直接列原始 email 主旨。"""
     if not items:
-        return f"📭 {empty_msg}"
+        return ""
     lines = [f"<b>📬 {title}（{len(items)} 筆）</b>"]
     for it in items[:limit]:
         lines.append(f"• {it['subject']}")
@@ -105,31 +107,6 @@ def _format_list(items, title, empty_msg, limit=15):
         lines.append(f"…還有 {len(items) - limit} 筆未列出")
     return "\n".join(lines)
 
-
-def format_bills():
-    return _format_list(
-        get_bills(), "信用卡帳單 / 對帳單（近 35 天）",
-        "近 35 天沒找到帳單信件",
-    )
-
-
-def format_subscriptions():
-    return _format_list(
-        get_subscriptions(), "訂閱 / 月費收據（近 60 天）",
-        "近 60 天沒找到訂閱相關信件",
-    )
-
-
-def format_autopay():
-    return _format_list(
-        get_autopay(), "自動扣款 / 繳費通知（近 35 天）",
-        "近 35 天沒找到扣款通知",
-    )
-
-
-# ─────────────────────────────────────────────────────────
-# AI 整理：把三類合一給 Haiku 摘要成「總覽」
-# ─────────────────────────────────────────────────────────
 
 def format_overview():
     """三類合一 + AI 摘要。Haiku 看 subject + from + snippet 抽金額/分類。"""
@@ -175,5 +152,10 @@ def format_overview():
         return f"<b>💳 財務總覽</b>\n\n{text.strip()}"
     except Exception as e:
         print(f"[finance] AI 摘要失敗 fallback list：{e}")
-        # AI 失敗 fallback：list 三類
-        return "\n\n".join([format_bills(), format_subscriptions(), format_autopay()])
+        # AI 失敗 fallback：直接列三類原始主旨
+        parts = [
+            _format_list_fallback(bills, "信用卡帳單 / 對帳單（近 35 天）"),
+            _format_list_fallback(subs, "訂閱 / 月費收據（近 60 天）"),
+            _format_list_fallback(auto, "自動扣款 / 繳費通知（近 35 天）"),
+        ]
+        return "\n\n".join(p for p in parts if p) or "📭 近期沒找到財務相關信件"

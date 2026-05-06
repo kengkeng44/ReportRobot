@@ -28,11 +28,13 @@ _TODO_LIST_KEYWORDS = {"待辦", "todo", "待辦清單"}
 _PREVIEW_KEYWORDS = {"預覽", "preview", "Preview", "PREVIEW", "test", "預覽報告"}
 
 # Admin-only（user 本人 LINE userId == ADMIN_LINE_USER_ID 才能用）
-# Gmail 含財務 PII 一律歸這類
-_FINANCE_BILLS_KEYWORDS = {"帳單", "信用卡", "信用卡帳單", "對帳單"}
-_FINANCE_SUBS_KEYWORDS = {"訂閱", "訂閱費", "月費", "subscription", "subscriptions"}
-_FINANCE_AUTOPAY_KEYWORDS = {"扣款", "自動扣繳", "繳費", "autopay"}
-_FINANCE_OVERVIEW_KEYWORDS = {"財務", "我的財務", "finance", "財務總覽"}
+# Gmail 含財務 PII 一律歸這類；統一一個 /財務 指令包帳單 / 訂閱 / 扣款三類
+_FINANCE_OVERVIEW_KEYWORDS = {
+    "財務", "我的財務", "finance", "Finance", "FINANCE", "財務總覽",
+    "帳單", "信用卡", "信用卡帳單", "對帳單",
+    "訂閱", "訂閱費", "月費", "subscription", "subscriptions",
+    "扣款", "自動扣繳", "繳費", "autopay",
+}
 
 PERSONAL_ONLY_MSG = (
     "🤫 這是私人指令，請在 1 對 1 chat 跟我說。\n"
@@ -91,10 +93,8 @@ HELP_TEXT = (
     "  ℹ️ 1-2 分鐘內 push 一份天氣 + 盤前給你（force 強跑、不發群組）\n"
     "\n"
     "💳 個人 Gmail 財務查詢（限本人 LINE 帳號）\n"
-    "  • /財務        ← 三類合一 + AI 整理金額\n"
-    "  • /帳單        ← 信用卡 / 銀行對帳單（近 35 天）\n"
-    "  • /訂閱        ← Netflix / Apple / Google 等月費（近 60 天）\n"
-    "  • /扣款        ← 自動扣繳 / 繳費通知（近 35 天）\n"
+    "  • /財務   ← 信用卡帳單 + 訂閱月費 + 自動扣款，AI 整理金額分類\n"
+    "  • 同義詞：/帳單 /訂閱 /扣款 都會觸發同一份財務總覽\n"
     "  ℹ️ 要設 ADMIN_LINE_USER_ID 環境變數，其他人用會被擋下\n"
     "\n"
     "🆘 顯示這個說明\n"
@@ -221,13 +221,7 @@ def parse(text):
     if cleaned in _PREVIEW_KEYWORDS:
         return ("preview", None)
 
-    # 個人 Gmail 財務查詢（admin-only）
-    if cleaned in _FINANCE_BILLS_KEYWORDS:
-        return ("finance_bills", None)
-    if cleaned in _FINANCE_SUBS_KEYWORDS:
-        return ("finance_subs", None)
-    if cleaned in _FINANCE_AUTOPAY_KEYWORDS:
-        return ("finance_autopay", None)
+    # 個人 Gmail 財務查詢（admin-only）— 帳單 / 訂閱 / 扣款都走同一個 overview
     if cleaned in _FINANCE_OVERVIEW_KEYWORDS:
         return ("finance_overview", None)
 
@@ -283,7 +277,7 @@ _PERSONAL_KINDS = {"reminder_add", "reminder_list", "reminder_cancel",
                    "todo", "todo_list", "preview"}
 
 # Admin-only kinds（要 1 對 1 + LINE userId == ADMIN_LINE_USER_ID）
-_ADMIN_KINDS = {"finance_bills", "finance_subs", "finance_autopay", "finance_overview"}
+_ADMIN_KINDS = {"finance_overview"}
 
 
 def _is_personal_chat(ctx):
@@ -463,18 +457,6 @@ def handle(text, ctx=None):
 
         if kind == "preview":
             return _handle_preview(ctx["user_id"])
-
-        if kind == "finance_bills":
-            import finance_query
-            return finance_query.format_bills()
-
-        if kind == "finance_subs":
-            import finance_query
-            return finance_query.format_subscriptions()
-
-        if kind == "finance_autopay":
-            import finance_query
-            return finance_query.format_autopay()
 
         if kind == "finance_overview":
             import finance_query
