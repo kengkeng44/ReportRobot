@@ -26,6 +26,7 @@ _REMINDER_CANCEL_RE = re.compile(r"^(?:取消提醒|cancel)\s+(\d+)$")
 _TODO_RE = re.compile(r"^(?:待辦|todo)\s*(.*)$", re.IGNORECASE)
 _TODO_LIST_KEYWORDS = {"待辦", "todo", "待辦清單"}
 _PREVIEW_KEYWORDS = {"預覽", "preview", "Preview", "PREVIEW", "test", "預覽報告"}
+_WHOAMI_KEYWORDS = {"我的id", "我的ID", "我的Id", "myid", "MyID", "MYID", "whoami", "我是誰"}
 
 # Admin-only（user 本人 LINE userId == ADMIN_LINE_USER_ID 才能用）
 # Gmail 含財務 PII 一律歸這類；統一一個 /財務 指令包帳單 / 訂閱 / 扣款三類
@@ -95,7 +96,11 @@ HELP_TEXT = (
     "💳 個人 Gmail 財務查詢（限本人 LINE 帳號）\n"
     "  • /財務   ← 信用卡帳單 + 訂閱月費 + 自動扣款，AI 整理金額分類\n"
     "  • 同義詞：/帳單 /訂閱 /扣款 都會觸發同一份財務總覽\n"
-    "  ℹ️ 要設 ADMIN_LINE_USER_ID 環境變數，其他人用會被擋下\n"
+    "  ℹ️ 要先設 ADMIN_LINE_USER_ID（用 /我的id 取得自己的 LINE userId）\n"
+    "\n"
+    "🆔 取得自己的 LINE userId（首次設定 admin 用）\n"
+    "  • /我的id 或 /whoami\n"
+    "  ℹ️ 把回傳的 U 開頭字串貼到 Infisical 的 ADMIN_LINE_USER_ID\n"
     "\n"
     "🆘 顯示這個說明\n"
     "  • help / 說明 / ?\n"
@@ -221,6 +226,9 @@ def parse(text):
     if cleaned in _PREVIEW_KEYWORDS:
         return ("preview", None)
 
+    if cleaned in _WHOAMI_KEYWORDS:
+        return ("whoami", None)
+
     # 個人 Gmail 財務查詢（admin-only）— 帳單 / 訂閱 / 扣款都走同一個 overview
     if cleaned in _FINANCE_OVERVIEW_KEYWORDS:
         return ("finance_overview", None)
@@ -274,7 +282,7 @@ def parse(text):
 
 
 _PERSONAL_KINDS = {"reminder_add", "reminder_list", "reminder_cancel",
-                   "todo", "todo_list", "preview"}
+                   "todo", "todo_list", "preview", "whoami"}
 
 # Admin-only kinds（要 1 對 1 + LINE userId == ADMIN_LINE_USER_ID）
 _ADMIN_KINDS = {"finance_overview"}
@@ -461,6 +469,16 @@ def handle(text, ctx=None):
         if kind == "finance_overview":
             import finance_query
             return finance_query.format_overview()
+
+        if kind == "whoami":
+            uid = ctx.get("user_id") or "(unknown)"
+            return (
+                "🆔 你的 LINE userId：\n\n"
+                f"{uid}\n\n"
+                "把這串複製貼到 Infisical / Railway 的 ADMIN_LINE_USER_ID 環境變數，"
+                "之後 /財務 等管理員指令就會認得你。\n"
+                "（其他人即使知道這串也用不出去，是 LINE 平台內部識別碼。）"
+            )
     except Exception as e:
         print(f"指令處理失敗 ({kind}/{arg})：{e}")
         import traceback; traceback.print_exc()
