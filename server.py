@@ -161,12 +161,20 @@ def _post_deploy_notify_async():
             print(f"[startup] deploy 通知 push 失敗：{e}")
 
         # 讀 commit message 的 Auto-Run trailer
+        # 限定只在「最後一個段落」找（git trailer block convention），這樣
+        # body 內若提到「Auto-Run: /<cmd>」當說明文字不會被誤匹配。
+        # 段落用空行分隔；trailer 要求單行 fullmatch「Auto-Run: <token>」。
         import re
-        m = re.search(r"Auto-Run:\s*(\S.*?)\s*(?:\n|$)", commit_msg)
+        paragraphs = re.split(r"\n\s*\n", commit_msg.strip())
+        last_block = paragraphs[-1] if paragraphs else ""
+        m = re.search(
+            r"^Auto-Run:[ \t]+(\S+)\s*$",
+            last_block,
+            re.MULTILINE,
+        )
         if not m:
-            print("[startup] 沒 Auto-Run trailer，skip auto-run")
+            print("[startup] 沒 Auto-Run trailer（last paragraph），skip auto-run")
             return
-
         cmd = m.group(1).strip()
         print(f"[startup] auto-run 觸發指令：{cmd!r}")
         try:
