@@ -42,6 +42,22 @@ def get_live_price(ticker):
         return None
 
 
+def _get_usd_twd():
+    """抓即時 USD/TWD 匯率（Yahoo TWD=X），失敗回 None。"""
+    try:
+        r = http_utils.get(
+            "https://query1.finance.yahoo.com/v8/finance/chart/TWD=X",
+            params={"interval": "1d", "range": "1d"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10,
+        )
+        meta = ((r.json().get('chart') or {}).get('result') or [{}])[0].get('meta', {})
+        return meta.get('regularMarketPrice') or meta.get('previousClose')
+    except Exception as e:
+        print(f"  USD/TWD 匯率抓取失敗：{e}")
+        return None
+
+
 def _format_price(value, is_us):
     if value is None:
         return "N/A"
@@ -133,5 +149,23 @@ def build_portfolio_summary(portfolio):
         lines.append("")
         lines.append("<b>💰 總報酬</b>")
         lines.extend(summary_parts)
+
+    # 淨值合計（按即時 USD/TWD 折算成 NTD 一個總數）
+    if tw_value > 0 or us_value > 0:
+        lines.append("")
+        rate = _get_usd_twd()
+        if rate and us_value > 0:
+            net_ntd = tw_value + us_value * rate
+            lines.append(
+                f"<b>💎 淨值合計</b>：NTD {net_ntd:,.0f}"
+                f"（USD/TWD={rate:.2f}）"
+            )
+        elif rate is None and us_value > 0:
+            lines.append(
+                f"<b>💎 淨值</b>：台股 NTD {tw_value:,.0f}"
+                f" + 美股 USD {us_value:,.0f}（匯率抓取失敗無法合計）"
+            )
+        else:
+            lines.append(f"<b>💎 淨值</b>：NTD {tw_value:,.0f}")
 
     return "\n".join(lines)

@@ -27,9 +27,19 @@ _TODO_RE = re.compile(r"^(?:待辦|todo)\s*(.*)$", re.IGNORECASE)
 _TODO_LIST_KEYWORDS = {"待辦", "todo", "待辦清單"}
 _PREVIEW_KEYWORDS = {"預覽", "preview", "Preview", "PREVIEW", "test", "預覽報告"}
 
+# Admin-only（user 本人 LINE userId == ADMIN_LINE_USER_ID 才能用）
+# Gmail 含財務 PII 一律歸這類
+_FINANCE_BILLS_KEYWORDS = {"帳單", "信用卡", "信用卡帳單", "對帳單"}
+_FINANCE_SUBS_KEYWORDS = {"訂閱", "訂閱費", "月費", "subscription", "subscriptions"}
+_FINANCE_AUTOPAY_KEYWORDS = {"扣款", "自動扣繳", "繳費", "autopay"}
+_FINANCE_OVERVIEW_KEYWORDS = {"財務", "我的財務", "finance", "財務總覽"}
+
 PERSONAL_ONLY_MSG = (
     "🤫 這是私人指令，請在 1 對 1 chat 跟我說。\n"
     "在 LINE 找「鄭家大總管」單獨對話，不會打擾家庭群組。"
+)
+ADMIN_ONLY_MSG = (
+    "🔒 這個指令會讀取本人 Gmail 財務資訊，只有專案擁有者本人能用。"
 )
 
 HELP_TEXT = (
@@ -79,6 +89,13 @@ HELP_TEXT = (
     "🧪 預覽明天的每日情報（只在 1 對 1 chat 有效）\n"
     "  • /預覽 或 /preview\n"
     "  ℹ️ 1-2 分鐘內 push 一份天氣 + 盤前給你（force 強跑、不發群組）\n"
+    "\n"
+    "💳 個人 Gmail 財務查詢（限本人 LINE 帳號）\n"
+    "  • /財務        ← 三類合一 + AI 整理金額\n"
+    "  • /帳單        ← 信用卡 / 銀行對帳單（近 35 天）\n"
+    "  • /訂閱        ← Netflix / Apple / Google 等月費（近 60 天）\n"
+    "  • /扣款        ← 自動扣繳 / 繳費通知（近 35 天）\n"
+    "  ℹ️ 要設 ADMIN_LINE_USER_ID 環境變數，其他人用會被擋下\n"
     "\n"
     "🆘 顯示這個說明\n"
     "  • help / 說明 / ?\n"
@@ -204,6 +221,16 @@ def parse(text):
     if cleaned in _PREVIEW_KEYWORDS:
         return ("preview", None)
 
+    # 個人 Gmail 財務查詢（admin-only）
+    if cleaned in _FINANCE_BILLS_KEYWORDS:
+        return ("finance_bills", None)
+    if cleaned in _FINANCE_SUBS_KEYWORDS:
+        return ("finance_subs", None)
+    if cleaned in _FINANCE_AUTOPAY_KEYWORDS:
+        return ("finance_autopay", None)
+    if cleaned in _FINANCE_OVERVIEW_KEYWORDS:
+        return ("finance_overview", None)
+
     # 個人指令：提醒
     if cleaned in _REMINDER_LIST_KEYWORDS:
         return ("reminder_list", None)
@@ -255,9 +282,24 @@ def parse(text):
 _PERSONAL_KINDS = {"reminder_add", "reminder_list", "reminder_cancel",
                    "todo", "todo_list", "preview"}
 
+# Admin-only kinds（要 1 對 1 + LINE userId == ADMIN_LINE_USER_ID）
+_ADMIN_KINDS = {"finance_bills", "finance_subs", "finance_autopay", "finance_overview"}
+
 
 def _is_personal_chat(ctx):
     return bool(ctx) and ctx.get("source_type") == "user"
+
+
+def _is_admin(ctx):
+    """admin = 在 1 對 1 chat + user_id 對到 ADMIN_LINE_USER_ID。
+    沒設 ADMIN_LINE_USER_ID 一律 deny（不要因 misconfig 變全開）。"""
+    import os
+    if not _is_personal_chat(ctx):
+        return False
+    admin_id = os.environ.get("ADMIN_LINE_USER_ID", "")
+    if not admin_id:
+        return False
+    return ctx.get("user_id") == admin_id
 
 
 def _handle_todo_subcmd(user_id, body):
@@ -349,7 +391,9 @@ def handle(text, ctx=None):
 
     kind, arg = parsed
 
-    # 個人指令權限檢查
+    # 權限檢查
+    if kind in _ADMIN_KINDS and not _is_admin(ctx):
+        return ADMIN_ONLY_MSG
     if kind in _PERSONAL_KINDS and not _is_personal_chat(ctx):
         return PERSONAL_ONLY_MSG
 
@@ -419,6 +463,22 @@ def handle(text, ctx=None):
 
         if kind == "preview":
             return _handle_preview(ctx["user_id"])
+
+        if kind == "finance_bills":
+            import finance_query
+            return finance_query.format_bills()
+
+        if kind == "finance_subs":
+            import finance_query
+            return finance_query.format_subscriptions()
+
+        if kind == "finance_autopay":
+            import finance_query
+            return finance_query.format_autopay()
+
+        if kind == "finance_overview":
+            import finance_query
+            return finance_query.format_overview()
     except Exception as e:
         print(f"指令處理失敗 ({kind}/{arg})：{e}")
         import traceback; traceback.print_exc()

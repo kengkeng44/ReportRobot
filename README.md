@@ -24,7 +24,7 @@
 | 比較 | `/比較 0050 0056 1y` | 兩檔績效對比 |
 | 自由問答（精簡） | `/Fed 最新動向` / `/黃金未來價格` | Sonnet + web_search，3-5 條 bullet、約 200-350 字 |
 | 自由問答（詳細） | `/詳細 黃金未來價格` / `/full report on NVDA` | 機構級 IC Memo（A/B/C 型 6 塊，含 bull/base/bear 三情境）。觸發詞：詳細 / 完整 / 深入 / 深度 / detail / full / report |
-| 持倉 | `仁和持股` / `持股` | 全持倉現價損益，台股顯示中文名、末尾分台/美股總報酬 |
+| 持倉 | `仁和持股` / `持股` | 全持倉現價損益，台股顯示中文名、分台/美股總報酬、最末以即時 USD/TWD 折算淨值合計 |
 | 用量 | `/cost` / `/用量` | AI 累積成本 |
 | 說明 | `/help` / `說明` / `?` | 完整指令清單 |
 
@@ -39,6 +39,15 @@
 | `/提醒 明天 9:30 X` | 絕對時間提醒 |
 | `/提醒` | 看所有進行中提醒 |
 | `/預覽` / `/preview` | 立刻預覽明天的每日情報（force 強跑、不發群組） |
+
+**僅本人 Gmail 帳號（admin-only，要設 `ADMIN_LINE_USER_ID`）**：
+
+| 範例 | 說明 |
+|---|---|
+| `/財務` | 信用卡帳單 / 訂閱 / 扣款三類合一 + Haiku AI 抽金額分類 |
+| `/帳單` | 信用卡帳單 / 銀行對帳單（近 35 天）|
+| `/訂閱` | Netflix / Apple / Google / OpenAI 等月費（近 60 天）|
+| `/扣款` | 自動扣繳 / 繳費通知（近 35 天）|
 
 **保守觸發策略**：`hi` / `ok`、純中文聊天、「我買台積」這種句子都不會觸發。短英文與無前綴中文不視為指令，避免家人聊天被打擾。
 
@@ -159,7 +168,8 @@ LINE Group ←─┐
 | `chips.py` | 證交所 RWD + OpenAPI v1 雙來源抓三大法人買賣超（外資 / 自營商雙列累加），5 日 fallback 走過假日 |
 | `stock_news.py` | 個股報告：股價、簡介、ETF 持股、基本面、新聞、論壇、AI 解讀 |
 | `gmail_reader.py` | 抓 Gmail 對帳單，雙市場 + 雙 pass 解析持倉 |
-| `portfolio.py` | 持倉現價/損益計算（台股顯中文名、末尾分台/美股總報酬，避免幣別混算）|
+| `portfolio.py` | 持倉現價/損益計算（台股顯中文名、分台/美股總報酬，最末以即時 USD/TWD 折算淨值合計）|
+| `finance_query.py` | 個人 Gmail 財務查詢（admin-only）：信用卡帳單 / 訂閱 / 扣款，可選 Haiku AI 抽金額分類 |
 | `line_sender.py` | LINE Messaging API push / reply 包裝（HTML strip + 切片） |
 | `personal.py` | 個人待辦 / 提醒邏輯（in-memory + apscheduler 排 one-shot） |
 | `app_state.py` | 跨模組共享 scheduler ref（避免循環 import） |
@@ -293,6 +303,8 @@ DAILY_CRON = "0 22 * * *"  # UTC 22:00 = 台北 06:00
 - [x] 三大法人籌碼：RWD + OpenAPI 雙來源、外資 / 自營商雙列累加、AI 盤前重點 prompt 取用真實籌碼數字寫昨日資金流向
 - [x] 月對帳單 PDF 黏字 fix：用 amount 反推切點，自動拆解 pdfplumber 把「股數 + 單價」黏成一個 token 的 case
 - [x] `/預覽` 個人指令：1 對 1 chat 立刻產一份明天的每日情報（force 強跑、不發群組）
+- [x] 持股加淨值合計：以即時 USD/TWD 折算成 NTD 一個總數
+- [x] 個人 Gmail 財務查詢：`/財務` / `/帳單` / `/訂閱` / `/扣款`，admin-only（比對 ADMIN_LINE_USER_ID），其他家人 1 對 1 也擋掉
 
 ### v2 規劃（個人深度功能）
 
