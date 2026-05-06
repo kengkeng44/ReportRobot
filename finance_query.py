@@ -1,138 +1,206 @@
 """
-個人 Gmail 財務查詢：信用卡帳單、訂閱、扣款通知。
+個人 Gmail 財務查詢：自動化記帳。
 
-權限：只有 ADMIN_LINE_USER_ID（user 本人 LINE userId）能觸發；
-其他人即使 1 對 1 跟 bot 對話也擋下，因為 Gmail 內容是私人。
+權限：admin-only（command_router 比對 ADMIN_LINE_USER_ID）。
+
+流程：
+1. 用 Gmail search 撈本月 / 近 35 天的「交易類」email（嚴格排除廣告 / 登入通知 /
+   職位推薦 / 安全性快訊 / 優惠推廣）
+2. 撈完整 body（不是 metadata）給 AI 看
+3. Sonnet 分類成 3 區（信用卡刷卡 / 訂閱 / 證券交易）+ 月度加總
+4. 國泰 Cube 卡的「消費彙整通知」內文有列每筆消費，AI 直接抽
+
+回傳格式：
+- 信用卡刷卡：日期 / 商家 / 金額 / 是否定期
+- 訂閱：服務 / 每 N 個月金額 / 下次續訂
+- 證券：台幣/美金手續費總計
+- 月度加總：本月實際扣款合計（NT$ + USD 分開）
 """
 
 import os
 
-from gmail_reader import get_gmail_service
+from gmail_reader import _get_email_body, get_gmail_service
 
 
-def _query_emails(query, max_results=30):
-    """通用：query Gmail 回 list of {subject, from, date, snippet}。
-    用 metadata format 抓 headers，不下載完整 body 省成本與 PII 風險。"""
+# ─────────────────────────────────────────────────────────
+# Gmail search query：嚴格排除雜訊
+# ─────────────────────────────────────────────────────────
+
+# 主旨「應該要有」的關鍵字（含一個就保留）
+_INCLUDE_SUBJECT = (
+    "消費 OR 結帳 OR 帳單 OR 對帳單 OR 付款 OR 已付 OR 收據 OR 發票 "
+    "OR receipt OR invoice OR billing OR payment OR charged "
+    "OR 已扣款 OR 自動扣繳 OR 已成交 OR 交易明細"
+)
+
+# 寄件人 whitelist（銀行、券商、訂閱服務 — 含一個就保留）
+_INCLUDE_FROM = (
+    "cathay OR ctbc OR esun OR fubon OR taishin OR sinopac OR megabank "
+    "OR 富邦 OR 國泰 OR 中信 OR 中國信託 OR 玉山 OR 台新 OR 永豐 OR 兆豐 "
+    "OR fbs.com.tw "
+    "OR netflix OR spotify OR apple OR adobe OR openai OR anthropic "
+    "OR notion OR microsoft OR github OR aws OR amazon OR youtube "
+    "OR figma OR zoom OR cursor"
+)
+
+# 主旨「絕對不要」的關鍵字（含一個就排除 — 這是 user 抱怨的雜訊類）
+_EXCLUDE_SUBJECT = (
+    "安全 OR 登入 OR alert OR security OR sign-in OR login "
+    "OR 職位 OR 求職 OR 求才 OR job OR jobs OR career OR digest "
+    "OR 推廣 OR 行銷 OR 優惠 OR promotion OR newsletter OR sale "
+    "OR 推薦 OR 推送 OR 訂閱通知 "
+    "OR 公告 OR 警示 OR 提醒 OR 通知您 OR 廣告"
+)
+
+# 寄件人 blacklist
+_EXCLUDE_FROM = (
+    "linkedin OR quora OR jobs OR career OR newsletter OR no-reply "
+    "OR noreply OR 行銷 OR marketing OR ads"
+)
+
+
+def _build_query(days):
+    return (
+        f"newer_than:{days}d AND "
+        f"(subject:({_INCLUDE_SUBJECT}) OR from:({_INCLUDE_FROM})) "
+        f"AND -subject:({_EXCLUDE_SUBJECT}) "
+        f"AND -from:({_EXCLUDE_FROM})"
+    )
+
+
+# ─────────────────────────────────────────────────────────
+# 抓 email + body
+# ─────────────────────────────────────────────────────────
+
+def _fetch_finance_emails(days=35, max_results=40):
     try:
         service = get_gmail_service()
     except Exception as e:
         print(f"[finance] Gmail service 失敗：{e}")
         return []
 
+    query = _build_query(days)
     try:
         results = service.users().messages().list(
             userId='me', q=query, maxResults=max_results,
         ).execute()
     except Exception as e:
-        print(f"[finance] Gmail list 失敗 (q={query[:80]})：{e}")
+        print(f"[finance] Gmail list 失敗：{e}")
         return []
 
+    msgs = results.get('messages', [])
+    print(f"[finance] query 命中 {len(msgs)} 封 (近 {days} 天)")
+
     out = []
-    for msg in results.get('messages', []):
+    for msg in msgs:
         try:
             m = service.users().messages().get(
-                userId='me', id=msg['id'],
-                format='metadata',
-                metadataHeaders=['Subject', 'From', 'Date'],
+                userId='me', id=msg['id'], format='full',
             ).execute()
         except Exception as e:
             print(f"[finance] Gmail get 失敗：{e}")
             continue
+        payload = m.get('payload', {})
         headers = {
             h['name'].lower(): h['value']
-            for h in m.get('payload', {}).get('headers', [])
+            for h in payload.get('headers', [])
         }
+        body = _get_email_body(payload)
         out.append({
-            'subject': headers.get('subject', '')[:90],
-            'from': headers.get('from', '')[:60],
+            'subject': headers.get('subject', '')[:120],
+            'from': headers.get('from', '')[:80],
             'date': headers.get('date', ''),
-            'snippet': m.get('snippet', '')[:140],
+            # 內文取前 2500 字（已含金額/日期欄位通常在表頭）給 AI
+            'body': (body or '')[:2500],
         })
     return out
 
 
 # ─────────────────────────────────────────────────────────
-# 三類查詢
+# 對外 entry：format_overview()
 # ─────────────────────────────────────────────────────────
-
-def get_bills(days=35):
-    """信用卡帳單 / 銀行對帳單。台灣常見銀行寄件人 + 主旨關鍵字。"""
-    q = (
-        f'newer_than:{days}d AND ('
-        f'subject:(信用卡 OR 帳單 OR 對帳單 OR 應繳 OR 帳款 OR statement OR billing OR 結帳) '
-        f'OR from:(cathay OR ctbc OR esun OR fubon OR taishin OR sinopac OR megabank '
-        f'OR 富邦 OR 國泰 OR 中信 OR 中國信託 OR 玉山 OR 台新 OR 永豐 OR 兆豐 OR 北富銀)'
-        f')'
-    )
-    return _query_emails(q)
-
-
-def get_subscriptions(days=60):
-    """訂閱 / 月費 / 年費 receipt。"""
-    q = (
-        f'newer_than:{days}d AND ('
-        f'subject:(subscription OR receipt OR 訂閱 OR 收據 OR 發票 '
-        f'OR auto-renew OR renewal OR 續訂 OR 續約 OR 自動續訂) '
-        f'OR from:(netflix OR spotify OR apple OR google OR adobe '
-        f'OR openai OR anthropic OR notion OR microsoft OR github '
-        f'OR youtube OR disney OR linkedin OR figma OR zoom)'
-        f')'
-    )
-    return _query_emails(q)
-
-
-def get_autopay(days=35):
-    """自動扣款 / 電信 / 水電瓦斯 / 房租。"""
-    q = (
-        f'newer_than:{days}d AND '
-        f'subject:(扣款 OR 自動扣繳 OR 已扣款 OR 已收款 OR direct\\ debit OR payment OR 繳費 OR 已繳)'
-    )
-    return _query_emails(q)
-
-
-# ─────────────────────────────────────────────────────────
-# AI 整理：三類合一給 Haiku 摘要成「總覽」
-# 這是唯一對外的 entry point；同義詞 /財務 /帳單 /訂閱 /扣款 都走這支
-# ─────────────────────────────────────────────────────────
-
-def _format_list_fallback(items, title, limit=15):
-    """AI 失敗時的 fallback：直接列原始 email 主旨。"""
-    if not items:
-        return ""
-    lines = [f"<b>📬 {title}（{len(items)} 筆）</b>"]
-    for it in items[:limit]:
-        lines.append(f"• {it['subject']}")
-        lines.append(f"  └ {it['from']}")
-    if len(items) > limit:
-        lines.append(f"…還有 {len(items) - limit} 筆未列出")
-    return "\n".join(lines)
-
 
 def format_overview():
-    """三類合一 + AI 摘要。Haiku 看 subject + from + snippet 抽金額/分類。"""
-    bills = get_bills(days=35)
-    subs = get_subscriptions(days=60)
-    auto = get_autopay(days=35)
+    """主指令 /財務 / /帳單 / /訂閱 / /扣款 都走這支。"""
+    items = _fetch_finance_emails(days=35)
+    if not items:
+        return "📭 近 35 天沒找到財務相關交易信件"
 
-    if not (bills or subs or auto):
-        return "📭 近期沒找到財務相關信件（帳單 / 訂閱 / 扣款）"
-
-    # 直接列前若干筆給 AI 看
-    raw = []
-    for label, items in [("帳單", bills), ("訂閱", subs), ("扣款", auto)]:
-        for it in items[:20]:
-            raw.append(f"[{label}] {it['from']} | {it['subject']} | {it['snippet']}")
-    raw_text = "\n".join(raw)
-
-    prompt = (
-        "以下是使用者過去 35-60 天的財務相關 email metadata（含寄件人、主旨、預覽摘要）。\n"
-        "請整理成 3 段：信用卡帳單、訂閱服務、自動扣款；每段列 5-10 條要點，"
-        "盡量從 subject / snippet 抓出金額（NT$ / NTD / TWD / USD / $）、到期日、銀行/服務名。\n"
-        "格式：純文字繁體中文、不要 Markdown、每點 1 行。\n"
-        "找不到金額就只寫服務名 + 通知類型。禁止編造金額。\n\n"
-        "資料：\n" + raw_text + "\n\n"
-        "輸出："
+    raw = "\n\n━━━━━━━━━━\n\n".join(
+        f"[{i + 1}] FROM: {it['from']}\n"
+        f"SUBJECT: {it['subject']}\n"
+        f"DATE: {it['date']}\n"
+        f"BODY:\n{it['body']}"
+        for i, it in enumerate(items)
     )
+
+    from datetime import date
+    today = date.today()
+    month_str = today.strftime("%Y/%m")
+
+    prompt = f"""你是個人財務記帳助理。今天是 {today.strftime("%Y/%m/%d")}。
+
+以下是使用者過去 35 天 Gmail 內所有「金融/付款相關」email 完整內容（已先過濾掉廣告 / 登入通知 / 職位推薦 / 安全性快訊）。
+
+任務：
+
+═══════════════════════════════
+步驟 1｜過濾「實際付款」
+═══════════════════════════════
+**只**保留「真的有付錢」的紀錄。下列**不算付款**，全部丟掉：
+- 任何「安全性快訊 / 登入通知 / 帳號活動」
+- 任何「廣告 / 推廣 / 優惠 / 行銷 / 信用貸款推銷」
+- 任何「職位推薦 / 求職通知 / LinkedIn 通知」
+- 任何「OAuth 應用授權通知 / GitHub 通知」
+- 任何只是「你做了交易」的 email 但沒實際金額
+- 「房屋稅開徵推廣」等政府公告（除非已扣款）
+
+═══════════════════════════════
+步驟 2｜分類整理（純文字、繁體中文、不要 Markdown ## ** 等）
+═══════════════════════════════
+
+💳 信用卡刷卡（依日期由近到遠排）
+  • MM/DD｜商家名｜NT$X,XXX 或 US$XX.XX｜[卡別末四碼]｜[單次/定期]
+  • 國泰世華 Cube 卡的「消費彙整通知」內文會列每筆消費明細，**逐筆抽出**
+    （不是整封信寫 1 行，是一筆消費 1 行）
+  • 看不到金額的整筆跳過，禁止編造
+
+🔁 訂閱服務（每月／每年定期）
+  • 服務名｜每 N 月/年 NT$XXX 或 US$XX｜下次續訂 MM/DD（如能算出）
+  • 例：Netflix｜每月 NT$390｜下次 5/15
+  • 只列「明確有扣費」的，不列「免費試用 / 通知」
+
+📈 證券交易手續費（國泰 / 富邦證券）
+  • 這段只要兩行總計，**不要列每筆**：
+  • 台幣證券（台股）手續費合計：NT$XXX
+  • 美金證券（複委託）手續費合計：US$XX.XX
+  • 從成交回報內文抓「手續費」「佣金」欄位金額加總
+
+═══════════════════════════════
+步驟 3｜月度加總（最重要！）
+═══════════════════════════════
+📊 {month_str} 已扣款合計
+  💳 信用卡：NT$X,XXX (+ US$XX.XX 如有外幣消費)
+  🔁 訂閱：NT$XXX + US$XX.XX
+  📈 證券手續費：NT$XXX + US$XX.XX
+  ━━━━━━━━━━
+  本月總支出：NT$X,XXX + US$XX.XX
+
+═══════════════════════════════
+規則
+═══════════════════════════════
+- 純文字、繁體中文、emoji 用 utf-8 直接打、禁止 Markdown
+- 找不到金額的整筆跳過，**禁止編造數字**
+- 月度加總只算當月（{month_str}）已扣款的
+- 沒任何一類資料時該段寫「（本月無）」一行
+- 直接從「💳 信用卡刷卡」開始，禁止開場白
+- 結尾就是「本月總支出」那行，禁止結語
+
+═══════════════════════════════
+原始 email 資料（{len(items)} 封）：
+═══════════════════════════════
+{raw}
+"""
 
     try:
         import anthropic
@@ -140,22 +208,26 @@ def format_overview():
         from premarket import ANTHROPIC_API_KEY
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         msg = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=1500,
+            model="claude-sonnet-4-5",
+            max_tokens=3500,
             messages=[{"role": "user", "content": prompt}],
         )
-        usage_tracker.track("claude-haiku-4-5-20251001", msg)
+        usage_tracker.track("claude-sonnet-4-5", msg)
         text = ""
         for block in msg.content:
             if getattr(block, "type", None) == "text":
-                text = block.text
-        return f"<b>💳 財務總覽</b>\n\n{text.strip()}"
+                text += block.text
+        text = text.strip()
+        print(f"[finance] sonnet stop_reason={msg.stop_reason} chars={len(text)} "
+              f"input={msg.usage.input_tokens} output={msg.usage.output_tokens}")
+        if not text:
+            return "📭 AI 無回應，可能本月確實沒交易"
+        return f"<b>💳 財務總覽（{month_str}）</b>\n\n{text}"
     except Exception as e:
-        print(f"[finance] AI 摘要失敗 fallback list：{e}")
-        # AI 失敗 fallback：直接列三類原始主旨
-        parts = [
-            _format_list_fallback(bills, "信用卡帳單 / 對帳單（近 35 天）"),
-            _format_list_fallback(subs, "訂閱 / 月費收據（近 60 天）"),
-            _format_list_fallback(auto, "自動扣款 / 繳費通知（近 35 天）"),
-        ]
-        return "\n\n".join(p for p in parts if p) or "📭 近期沒找到財務相關信件"
+        print(f"[finance] AI 整理失敗：{e}")
+        # AI 失敗 fallback：直接列原始 email 主旨
+        lines = [f"<b>💳 財務 raw 列表（{len(items)} 封，AI 整理失敗）</b>"]
+        for it in items[:20]:
+            lines.append(f"• {it['subject']}")
+            lines.append(f"  └ {it['from']}")
+        return "\n".join(lines)
