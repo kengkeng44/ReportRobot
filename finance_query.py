@@ -120,11 +120,57 @@ def _fetch_finance_emails(days=35, max_results=40):
 # 對外 entry：format_overview()
 # ─────────────────────────────────────────────────────────
 
+def _portfolio_brief():
+    """精簡持股概況：台股 NTD 市值 + 美股 USD 市值 + 折算淨值。失敗回 None。"""
+    try:
+        from gmail_reader import get_portfolio_from_gmail
+        from portfolio import get_live_price, _is_tw_ticker, _get_usd_twd
+    except Exception as e:
+        print(f"[finance] portfolio import 失敗：{e}")
+        return None
+
+    try:
+        portfolio = get_portfolio_from_gmail()
+    except Exception as e:
+        print(f"[finance] 持股抓取失敗：{e}")
+        return None
+
+    if not portfolio:
+        return None
+
+    tw_value = us_value = 0.0
+    for ticker, p in portfolio.items():
+        current = get_live_price(ticker)
+        if current is None:
+            continue
+        mv = p["shares"] * current
+        if _is_tw_ticker(ticker):
+            tw_value += mv
+        else:
+            us_value += mv
+
+    rate = _get_usd_twd()
+    lines = ["<b>💼 持股概況</b>"]
+    if tw_value > 0:
+        lines.append(f"  🇹🇼 台股市值：NT$ {tw_value:,.0f}")
+    if us_value > 0:
+        lines.append(f"  🇺🇸 美股市值：US$ {us_value:,.2f}")
+    if rate and tw_value > 0 and us_value > 0:
+        net = tw_value + us_value * rate
+        lines.append(f"  💎 淨值合計：NT$ {net:,.0f}（USD/TWD={rate:.2f}）")
+    elif tw_value > 0 and us_value <= 0:
+        lines.append(f"  💎 淨值：NT$ {tw_value:,.0f}")
+    return "\n".join(lines) if len(lines) > 1 else None
+
+
 def format_overview():
-    """主指令 /財務 / /帳單 / /訂閱 / /扣款 都走這支。"""
+    """主指令 /財務 / /帳單 / /訂閱 / /扣款 都走這支。
+    輸出順序：持股概況（即時市值）→ AI 整理（刷卡/訂閱/扣款/手續費 + 月加總）"""
+    portfolio_block = _portfolio_brief()
     items = _fetch_finance_emails(days=35)
     if not items:
-        return "📭 近 35 天沒找到財務相關交易信件"
+        head = portfolio_block + "\n\n" if portfolio_block else ""
+        return head + "📭 近 35 天沒找到財務相關交易信件"
 
     raw = "\n\n━━━━━━━━━━\n\n".join(
         f"[{i + 1}] FROM: {it['from']}\n"
@@ -222,11 +268,16 @@ def format_overview():
               f"input={msg.usage.input_tokens} output={msg.usage.output_tokens}")
         if not text:
             return "📭 AI 無回應，可能本月確實沒交易"
-        return f"<b>💳 財務總覽（{month_str}）</b>\n\n{text}"
+        head = (portfolio_block + "\n\n") if portfolio_block else ""
+        return f"{head}<b>💳 財務總覽（{month_str}）</b>\n\n{text}"
     except Exception as e:
         print(f"[finance] AI 整理失敗：{e}")
-        # AI 失敗 fallback：直接列原始 email 主旨
-        lines = [f"<b>💳 財務 raw 列表（{len(items)} 封，AI 整理失敗）</b>"]
+        # AI 失敗 fallback：列原始 email 主旨（含持股概況頭）
+        lines = []
+        if portfolio_block:
+            lines.append(portfolio_block)
+            lines.append("")
+        lines.append(f"<b>💳 財務 raw 列表（{len(items)} 封，AI 整理失敗）</b>")
         for it in items[:20]:
             lines.append(f"• {it['subject']}")
             lines.append(f"  └ {it['from']}")
