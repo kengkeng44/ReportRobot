@@ -13,9 +13,9 @@ from stock_news import get_stock_name
 
 
 def _load_manual_prices():
-    """env var MANUAL_PRICES 格式：AU9901=17818,XX=123；預設帶台銀金牌告。"""
-    # 預設值：user 確認三竹報價 AU9901 = NT$17,818（每張）
-    out = {"AU9901": 17818.0}
+    """env var MANUAL_PRICES 格式：KEY=VALUE,KEY=VALUE。
+    AU9901 不在這裡 hardcode — 改用即時國際金價計算（見 _get_gold_ntd_per_gram）。"""
+    out = {}
     raw = os.environ.get("MANUAL_PRICES", "") or ""
     for pair in raw.split(","):
         if "=" not in pair:
@@ -29,6 +29,13 @@ def _load_manual_prices():
 
 
 _MANUAL_PRICES = _load_manual_prices()
+
+
+# 黃金存摺每張多少 g。
+# 預設 3.75g（1 錢）— 從 user 成交 NT$17,360 / 國際金價反推最接近的 unit。
+# 若實際是 1 兩（37.5g）→ 設 GOLD_GRAM_PER_SHARE=37.5 環境變數覆寫。
+_GOLD_GRAM_PER_SHARE = float(os.environ.get("GOLD_GRAM_PER_SHARE", "3.75"))
+_TROY_OZ_TO_GRAM = 31.1034768
 
 
 # 台股代號：4-6 位數字 + 可選 1 個英文字母（槓桿/反向 ETF 如 00631L）
@@ -52,12 +59,27 @@ def _to_yahoo_symbol(ticker):
 
 def get_live_price(ticker):
     """用 Yahoo Finance v8 chart API 抓最新股價，失敗回傳 None。
-    特殊代號（黃金存摺/興櫃）優先查 MANUAL_PRICES 覆寫表。"""
+    特殊代號分流：
+      AU 開頭 (黃金存摺) → 用國際金價 × USD/TWD ÷ 31.10 g/oz × g/張
+      其他 in MANUAL_PRICES → 手動指定價
+      _is_special_security 但都沒對應 → N/A"""
     t = (ticker or "").upper()
     if t in _MANUAL_PRICES:
         return _MANUAL_PRICES[t]
+    if t.startswith("AU"):
+        # 黃金存摺：用即時國際金價計算
+        ntd_per_g = _get_gold_ntd_per_gram()
+        if ntd_per_g is None:
+            print(f"  {ticker} 金價抓取失敗，現價 N/A")
+            return None
+        price = ntd_per_g * _GOLD_GRAM_PER_SHARE
+        print(
+            f"  {ticker} 計算：NT${ntd_per_g:.0f}/g × "
+            f"{_GOLD_GRAM_PER_SHARE}g/張 = NT${price:,.0f}/張"
+        )
+        return price
     if _is_special_security(ticker):
-        print(f"  {ticker} 是黃金存摺/興櫃，yfinance 抓不到，現價 N/A")
+        print(f"  {ticker} 是興櫃 / 特殊代號，yfinance 抓不到，現價 N/A")
         return None
     symbol = _to_yahoo_symbol(ticker)
     try:
@@ -92,6 +114,34 @@ def _get_usd_twd():
         return meta.get('regularMarketPrice') or meta.get('previousClose')
     except Exception as e:
         print(f"  USD/TWD 匯率抓取失敗：{e}")
+        return None
+
+
+def _get_gold_ntd_per_gram():
+    """抓國際金價（GC=F 黃金期貨 USD/oz）+ USD/TWD 匯率 → 換算 NT$/g。
+    失敗回 None。"""
+    try:
+        r = http_utils.get(
+            "https://query1.finance.yahoo.com/v8/finance/chart/GC=F",
+            params={"interval": "1d", "range": "1d"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10,
+        )
+        meta = ((r.json().get('chart') or {}).get('result') or [{}])[0].get('meta', {})
+        usd_per_oz = meta.get('regularMarketPrice') or meta.get('previousClose')
+        if not usd_per_oz:
+            return None
+        rate = _get_usd_twd()
+        if not rate:
+            return None
+        ntd_per_g = usd_per_oz * rate / _TROY_OZ_TO_GRAM
+        print(
+            f"  金價：USD${usd_per_oz:.2f}/oz × {rate:.2f} TWD/USD ÷ "
+            f"31.10 g/oz = NT${ntd_per_g:.0f}/g"
+        )
+        return ntd_per_g
+    except Exception as e:
+        print(f"  金價抓取失敗：{e}")
         return None
 
 
