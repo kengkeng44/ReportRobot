@@ -6,8 +6,8 @@ LINE Free Plan 每月 200 則 push（reply 不算）。我們追蹤已用量，�
 
 支援指令：/額度 顯示當月用量。
 
-注意：in-memory，redeploy 重置（同月迄今 push 計數會歸零）。要長期追蹤需要
-等 Notion / Postgres 持久化做完。
+持久化：每次 bump 同步寫 Notion LineQuota DB；啟動時從 Notion 載入當月計數。
+Notion 失敗 fallback in-memory（不阻塞主流程）。
 
 設定：
 - LINE_PUSH_QUOTA：env var，預設 200。Light Plan 是 4000，自行調整。
@@ -19,8 +19,12 @@ from datetime import date, timedelta
 
 
 _LOCK = threading.Lock()
-# date.isoformat() → push 次數
+# date.isoformat() → push 次數（in-memory cache）
 _DAILY_COUNT = {}
+# 當月 Notion 持久化的 base count（啟動時從 Notion load）+ 本期 deploy 累積
+# 真實當月用量 = _NOTION_BASE_COUNT[month] + 本期 in-memory daily 加總
+_NOTION_BASE_COUNT = {}
+_LOADED_MONTHS = set()  # 已 load 過 Notion base 的月份
 # 當月已警示過的門檻 set，避免每天重推
 # key 格式：「YYYY-MM:80」
 _WARNED = set()
@@ -33,18 +37,60 @@ def _quota():
 WARN_THRESHOLDS = (80, 90, 100)
 
 
+def _ensure_loaded(month_str):
+    """確保當月 base count 已從 Notion load 過（每月只 load 一次）。"""
+    if month_str in _LOADED_MONTHS:
+        return
+    try:
+        import notion_db
+        if not notion_db.is_configured():
+            _LOADED_MONTHS.add(month_str)
+            return
+        _, base = notion_db.quota_get_month(month_str)
+        with _LOCK:
+            _NOTION_BASE_COUNT[month_str] = base
+            _LOADED_MONTHS.add(month_str)
+        if base > 0:
+            print(f"[line_quota] 從 Notion load {month_str}={base}")
+    except Exception as e:
+        print(f"[line_quota] load Notion 失敗：{e}")
+        _LOADED_MONTHS.add(month_str)  # 標記避免每次都試
+
+
+def _persist_to_notion():
+    """把當月最新總數同步寫 Notion（best-effort）。"""
+    try:
+        import notion_db
+        if not notion_db.is_configured():
+            return
+        today = date.today()
+        month_str = today.strftime("%Y-%m")
+        total = get_month_count()
+        notion_db.quota_set_month(month_str, total)
+    except Exception as e:
+        print(f"[line_quota] persist Notion 失敗：{e}")
+
+
 def bump():
     """每次 LINE push 成功呼叫。reply 不要呼叫（LINE reply 不計配額）。"""
-    today = date.today().isoformat()
+    today_iso = date.today().isoformat()
+    month_str = date.today().strftime("%Y-%m")
+    _ensure_loaded(month_str)
     with _LOCK:
-        _DAILY_COUNT[today] = _DAILY_COUNT.get(today, 0) + 1
+        _DAILY_COUNT[today_iso] = _DAILY_COUNT.get(today_iso, 0) + 1
+    _persist_to_notion()
 
 
 def get_month_count():
+    """真實當月用量 = Notion 載入的 base + 本期 deploy 後的 in-memory 累積。"""
     today = date.today()
-    prefix = today.strftime("%Y-%m")
+    month_str = today.strftime("%Y-%m")
+    _ensure_loaded(month_str)
+    prefix = month_str
     with _LOCK:
-        return sum(c for d, c in _DAILY_COUNT.items() if d.startswith(prefix))
+        in_mem = sum(c for d, c in _DAILY_COUNT.items() if d.startswith(prefix))
+        base = _NOTION_BASE_COUNT.get(month_str, 0)
+    return base + in_mem
 
 
 def get_stats():
@@ -84,6 +130,11 @@ def format_stats():
     proj_warn = ""
     if s["projected_month_end"] > s["quota"]:
         proj_warn = "  ⚠️ 月底推估超出配額\n"
+    try:
+        import notion_db
+        persist = "✅ Notion 持久化" if notion_db.is_configured() else "⚠️ in-memory 計數（redeploy 歸零）"
+    except Exception:
+        persist = "⚠️ in-memory 計數（redeploy 歸零）"
     return (
         f"<b>📊 LINE Push 月配額（{s['month']}）</b>\n"
         f"{emoji} 已用 {s['used']} / {s['quota']}（{pct:.1f}%）\n"
@@ -91,7 +142,7 @@ def format_stats():
         f"  日均 {s['daily_avg']:.1f} 則｜剩餘 {s['days_remaining']} 天\n"
         f"  月底推估：{s['projected_month_end']:.0f} 則\n"
         f"{proj_warn}"
-        f"\nℹ️ in-memory 計數，redeploy 後歸零。"
+        f"\nℹ️ {persist}"
     )
 
 
