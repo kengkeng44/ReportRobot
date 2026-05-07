@@ -36,7 +36,19 @@ def _env(name):
 
 
 LINE_CHANNEL_SECRET = _env("LINE_CHANNEL_SECRET")
-DAILY_CRON = os.environ.get("DAILY_CRON", "0 22 * * *")  # 預設 UTC 22:00 = 台北 06:00
+
+# DAILY_CRON 必須是 5 欄位的 crontab（minute hour day month dow）
+# 用 env override 但若格式錯亂（空字串 / 欄位數不對）→ fallback 預設值，不讓 startup crash
+DAILY_CRON_DEFAULT = "0 22 * * *"  # UTC 22:00 = 台北 06:00
+_daily_cron_raw = os.environ.get("DAILY_CRON", DAILY_CRON_DEFAULT) or DAILY_CRON_DEFAULT
+if len(_daily_cron_raw.split()) == 5:
+    DAILY_CRON = _daily_cron_raw
+else:
+    print(
+        f"⚠️ DAILY_CRON env 格式錯誤 ({_daily_cron_raw!r}，需要 5 個空白分隔的欄位)，"
+        f"fallback 用預設 {DAILY_CRON_DEFAULT!r}"
+    )
+    DAILY_CRON = DAILY_CRON_DEFAULT
 
 
 scheduler = AsyncIOScheduler()
