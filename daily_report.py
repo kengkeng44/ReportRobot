@@ -33,10 +33,10 @@ async def run_daily_report(force_premarket=False):
     print(f"開始執行每日情報... (force_premarket={force_premarket})")
     today = date.today().strftime("%Y-%m-%d")
 
-    # 1. 天氣 + 近期活動
+    # 1. 天氣 + 近期活動（直接從天氣報告開始，不要「每日情報」總標題）
     def _weather():
         weather_msg, _ = get_weather_report()  # chart_path 不用，LINE 不傳圖
-        return f"<b>🌅 每日情報</b>  {today}\n\n<b>🌤️ 天氣報告</b>\n\n{weather_msg}"
+        return f"<b>🌤️ 天氣報告</b>  {today}\n\n{weather_msg}"
     await _push_safe("天氣", _weather)
 
     # 2. 盤前報告（含國際指數/匯率/三大法人/AI 重點；週末略過，force=True bypass）

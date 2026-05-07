@@ -208,8 +208,9 @@ def _build_prompt(today, month_str, raw, n_items, detailed):
 
 def _build_prompt_concise(today, month_str, raw, n_items):
     """精簡版：只給信用卡分類加總 + ≥NT$3000 大筆。
-    訂閱、手續費、逐筆細項全部不顯示。"""
-    return f"""你是個人財務記帳助理。今天是 {today.strftime("%Y/%m/%d")}。
+    訂閱、手續費、逐筆細項全部不顯示。所有日期一律 YYYY-MM-DD。"""
+    today_iso = today.strftime("%Y-%m-%d")
+    return f"""你是個人財務記帳助理。今天是 {today_iso}（嚴格依此日期判斷「本月」）。
 
 以下是使用者過去 35 天 Gmail「金融/付款相關」email 完整內容。
 
@@ -231,10 +232,10 @@ def _build_prompt_concise(today, month_str, raw, n_items):
   沒金額的分類整行省略；外幣消費另起一行 (US$XX.XX)。
 
 ⚡ 大筆消費（≥ NT$3,000）
-  逐筆列出：
-  • MM/DD｜商家名｜NT$X,XXX｜[分類 emoji]
+  逐筆列出（**日期一律用 YYYY-MM-DD 格式**）：
+  • YYYY-MM-DD｜商家名｜NT$X,XXX｜[分類 emoji]
   外幣 ≥ US$100 也列：
-  • MM/DD｜商家名｜US$XX.XX｜[分類 emoji]
+  • YYYY-MM-DD｜商家名｜US$XX.XX｜[分類 emoji]
   沒有就寫一行：「本月無 ≥ NT$3,000 單筆消費」
 
 📊 信用卡支出小計：NT$X,XXX (+ US$XX.XX 如有外幣)
@@ -243,6 +244,7 @@ def _build_prompt_concise(today, month_str, raw, n_items):
 規則
 ═══════════════════════════════
 - 純文字繁體中文，emoji 直接打、禁止 Markdown
+- **所有日期一律 YYYY-MM-DD（例 2026-05-07），禁用 5/7、05/07、5月7日 等格式**
 - 訂閱服務、證券手續費**不要顯示**（已折疊到詳細版）
 - 不列每筆刷卡細節（除非 ≥ NT$3,000 的大筆）
 - 找不到金額的整筆跳過，禁止編造
@@ -256,8 +258,10 @@ def _build_prompt_concise(today, month_str, raw, n_items):
 
 
 def _build_prompt_detailed(today, month_str, raw, n_items):
-    """詳細版：信用卡逐筆 + 訂閱 + 手續費（含 web 估算 fallback）+ 月加總 + 大筆。"""
-    return f"""你是個人財務記帳助理。今天是 {today.strftime("%Y/%m/%d")}。
+    """詳細版：信用卡逐筆 + 訂閱 + 手續費（含 web 估算 fallback）+ 月加總 + 大筆。
+    所有日期一律 YYYY-MM-DD。"""
+    today_iso = today.strftime("%Y-%m-%d")
+    return f"""你是個人財務記帳助理。今天是 {today_iso}（嚴格依此日期判斷「本月」）。
 
 以下是使用者過去 35 天 Gmail「金融/付款相關」email 完整內容。
 
@@ -272,13 +276,13 @@ def _build_prompt_detailed(today, month_str, raw, n_items):
 💳 信用卡刷卡（按分類分區，區內依日期由近到遠）
   分類：🍱 餐飲 / 🚗 交通 / 🛒 購物 / 🎬 娛樂 / 💊 醫療 / 💄 美妝
        / 🏠 居家 / 🛫 旅遊 / 📚 教育 / 💼 訂閱費 / ⚡ 其他
-  每筆：• MM/DD｜商家名｜NT$X,XXX 或 US$XX.XX｜[卡別末四碼]
+  每筆（日期用 YYYY-MM-DD）：• YYYY-MM-DD｜商家名｜NT$X,XXX 或 US$XX.XX｜[卡別末四碼]
   ≥ NT$3,000 或 ≥ US$100 → 行首加 ⚡
 
   國泰世華 Cube 卡「消費彙整通知」內文有逐筆消費明細，**全部抽出**。
 
 🔁 訂閱服務（每月／每年定期）
-  • 服務名｜每 N 月/年 NT$XXX 或 US$XX｜下次續訂 MM/DD（若可推算）
+  • 服務名｜每 N 月/年 NT$XXX 或 US$XX｜下次續訂 YYYY-MM-DD（若可推算）
   • 只列「明確有扣費」的，不列免費試用 / 通知
 
 📈 證券交易手續費（富邦 / 國泰證券）
@@ -298,7 +302,7 @@ def _build_prompt_detailed(today, month_str, raw, n_items):
   本月總支出：NT$X,XXX + US$XX.XX
 
 ⚡ 大筆消費（≥ NT$3,000）
-  • MM/DD｜商家｜NT$X,XXX｜[類型]
+  • YYYY-MM-DD｜商家｜NT$X,XXX｜[類型]
   列所有 ≥ NT$3,000 的單筆（信用卡 / 訂閱 / 扣款都算）
   沒有就寫：「本月無 ≥ NT$3,000 單筆消費」
 
@@ -306,6 +310,7 @@ def _build_prompt_detailed(today, month_str, raw, n_items):
 規則
 ═══════════════════════════════
 - 純文字繁體中文、禁止 Markdown
+- **所有日期一律 YYYY-MM-DD（例 2026-05-07），禁用 5/7、05/07、5月7日 等格式**
 - 找不到金額的整筆跳過，禁止編造
 - 月加總只算當月（{month_str}）已扣款的
 - 沒任何一類資料時該段寫「（本月無）」一行
@@ -363,11 +368,10 @@ def format_overview(detailed=False):
         if not text:
             return "📭 AI 無回應，可能本月確實沒交易"
         head = (portfolio_block + "\n\n") if portfolio_block else ""
-        title = "💳 財務總覽（詳細）" if detailed else "💳 財務總覽"
         suffix = ""
         if not detailed:
             suffix = "\n\nℹ️ 想看每筆細項 / 訂閱 / 手續費請輸入：/財務詳細"
-        return f"{head}<b>{title}（{month_str}）</b>\n\n{text}{suffix}"
+        return f"{head}{text}{suffix}"
     except Exception as e:
         print(f"[finance] AI 整理失敗：{e}")
         # AI 失敗 fallback：列原始 email 主旨（含持股概況頭）

@@ -101,6 +101,12 @@ def get_institutional_trades(target_date=None):
                 result["dealer"] = dealer_total
 
             if "foreign" in result or "investment_trust" in result or "dealer" in result:
+                # 警示：抓到的日期落後 today >= 2 個交易日，AI 可能引用過期資料
+                today = date.today()
+                gap = (today - d).days
+                if gap >= 2 and today.weekday() < 5:
+                    print(f"  ⚠️ [chips] 抓到的是 {d}（落後 {gap} 天），"
+                          f"今天 {today} 應該已有更新數據；可能 TWSE API 異常")
                 return result
         except Exception as e:
             print(f"三大法人抓取失敗 {date_str}: {e}")
