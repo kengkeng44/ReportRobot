@@ -1,11 +1,34 @@
 """
-持倉概覽：用 Yahoo Finance 抓現價，算市值、損益、損益%，格式化成 Telegram 區塊。
+持倉概覽：用 Yahoo Finance 抓現價，算市值、損益、損益%，格式化成 LINE 區塊。
+
+特殊代號（黃金存摺、興櫃）yfinance 抓不到，用 _MANUAL_PRICES 手動指定。
+可用 env var MANUAL_PRICES 覆蓋（格式：AU9901=17818,XX=123）。
 """
 
+import os
 import re
 
 import http_utils
 from stock_news import get_stock_name
+
+
+def _load_manual_prices():
+    """env var MANUAL_PRICES 格式：AU9901=17818,XX=123；預設帶台銀金牌告。"""
+    # 預設值：user 確認三竹報價 AU9901 = NT$17,818（每張）
+    out = {"AU9901": 17818.0}
+    raw = os.environ.get("MANUAL_PRICES", "") or ""
+    for pair in raw.split(","):
+        if "=" not in pair:
+            continue
+        k, v = pair.split("=", 1)
+        try:
+            out[k.strip().upper()] = float(v.strip().replace(",", ""))
+        except ValueError:
+            pass
+    return out
+
+
+_MANUAL_PRICES = _load_manual_prices()
 
 
 # 台股代號：4-6 位數字 + 可選 1 個英文字母（槓桿/反向 ETF 如 00631L）
@@ -28,7 +51,11 @@ def _to_yahoo_symbol(ticker):
 
 
 def get_live_price(ticker):
-    """用 Yahoo Finance v8 chart API 抓最新股價，失敗回傳 None。"""
+    """用 Yahoo Finance v8 chart API 抓最新股價，失敗回傳 None。
+    特殊代號（黃金存摺/興櫃）優先查 MANUAL_PRICES 覆寫表。"""
+    t = (ticker or "").upper()
+    if t in _MANUAL_PRICES:
+        return _MANUAL_PRICES[t]
     if _is_special_security(ticker):
         print(f"  {ticker} 是黃金存摺/興櫃，yfinance 抓不到，現價 N/A")
         return None

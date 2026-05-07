@@ -29,12 +29,16 @@ _PREVIEW_KEYWORDS = {"預覽", "preview", "Preview", "PREVIEW", "test", "預覽�
 _WHOAMI_KEYWORDS = {"我的id", "我的ID", "我的Id", "myid", "MyID", "MYID", "whoami", "我是誰"}
 
 # Admin-only（user 本人 LINE userId == ADMIN_LINE_USER_ID 才能用）
-# Gmail 含財務 PII 一律歸這類；統一一個 /財務 指令包帳單 / 訂閱 / 扣款三類
+# Gmail 含財務 PII 一律歸這類
 _FINANCE_OVERVIEW_KEYWORDS = {
     "財務", "我的財務", "finance", "Finance", "FINANCE", "財務總覽",
     "帳單", "信用卡", "信用卡帳單", "對帳單",
     "訂閱", "訂閱費", "月費", "subscription", "subscriptions",
     "扣款", "自動扣繳", "繳費", "autopay",
+}
+_FINANCE_DETAIL_KEYWORDS = {
+    "財務詳細", "詳細財務", "財務 詳細", "詳細 財務",
+    "finance detail", "finance details", "finance full",
 }
 
 PERSONAL_ONLY_MSG = (
@@ -94,8 +98,9 @@ HELP_TEXT = (
     "  ℹ️ 1-2 分鐘內 push 一份天氣 + 盤前給你（force 強跑、不發群組）\n"
     "\n"
     "💳 個人 Gmail 財務查詢（限本人 LINE 帳號）\n"
-    "  • /財務   ← 信用卡帳單 + 訂閱月費 + 自動扣款，AI 整理金額分類\n"
-    "  • 同義詞：/帳單 /訂閱 /扣款 都會觸發同一份財務總覽\n"
+    "  • /財務     ← 精簡版：持股概況 + 信用卡分類總和 + ⚡ 大筆消費(≥3000)\n"
+    "  • /財務詳細 ← 詳細版：信用卡逐筆 + 訂閱 + 證券手續費 + 月加總\n"
+    "  • 同義詞：/帳單 /訂閱 /扣款 都觸發精簡版\n"
     "  ℹ️ 要先設 ADMIN_LINE_USER_ID（用 /我的id 取得自己的 LINE userId）\n"
     "\n"
     "🆔 取得自己的 LINE userId（首次設定 admin 用）\n"
@@ -229,7 +234,9 @@ def parse(text):
     if cleaned in _WHOAMI_KEYWORDS:
         return ("whoami", None)
 
-    # 個人 Gmail 財務查詢（admin-only）— 帳單 / 訂閱 / 扣款都走同一個 overview
+    # 個人 Gmail 財務查詢（admin-only）— /財務詳細 優先比對（含「財務」字也算詳細）
+    if cleaned in _FINANCE_DETAIL_KEYWORDS:
+        return ("finance_overview_detail", None)
     if cleaned in _FINANCE_OVERVIEW_KEYWORDS:
         return ("finance_overview", None)
 
@@ -285,7 +292,7 @@ _PERSONAL_KINDS = {"reminder_add", "reminder_list", "reminder_cancel",
                    "todo", "todo_list", "preview", "whoami"}
 
 # Admin-only kinds（要 1 對 1 + LINE userId == ADMIN_LINE_USER_ID）
-_ADMIN_KINDS = {"finance_overview"}
+_ADMIN_KINDS = {"finance_overview", "finance_overview_detail"}
 
 
 def _is_personal_chat(ctx):
@@ -468,7 +475,11 @@ def handle(text, ctx=None):
 
         if kind == "finance_overview":
             import finance_query
-            return finance_query.format_overview()
+            return finance_query.format_overview(detailed=False)
+
+        if kind == "finance_overview_detail":
+            import finance_query
+            return finance_query.format_overview(detailed=True)
 
         if kind == "whoami":
             uid = ctx.get("user_id") or "(unknown)"

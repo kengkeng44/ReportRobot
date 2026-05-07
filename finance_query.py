@@ -138,34 +138,190 @@ def _portfolio_brief():
     if not portfolio:
         return None
 
-    tw_value = us_value = 0.0
+    tw_cost = us_cost = tw_value = us_value = 0.0
     for ticker, p in portfolio.items():
         current = get_live_price(ticker)
         if current is None:
             continue
+        cost = p["shares"] * p["avg_cost"]
         mv = p["shares"] * current
-        if _is_tw_ticker(ticker):
+        # AU9901 黃金存摺也歸入台幣（user 提供 TWD 報價）
+        is_tw_like = _is_tw_ticker(ticker) or (ticker or "").upper().startswith("AU")
+        if is_tw_like:
+            tw_cost += cost
             tw_value += mv
         else:
+            us_cost += cost
             us_value += mv
+
+    def _row(flag, label, c, v, prefix):
+        pnl = v - c
+        pct = pnl / c * 100 if c > 0 else 0
+        sign = "+" if pnl >= 0 else ""
+        return (
+            f"  {flag} {label}｜成本 {prefix}{c:,.0f}"
+            f"｜市值 {prefix}{v:,.0f}"
+            f"｜{sign}{pct:.1f}% ({sign}{prefix}{pnl:,.0f})"
+        )
 
     rate = _get_usd_twd()
     lines = ["<b>💼 持股概況</b>"]
-    if tw_value > 0:
-        lines.append(f"  🇹🇼 台股市值：NT$ {tw_value:,.0f}")
-    if us_value > 0:
-        lines.append(f"  🇺🇸 美股市值：US$ {us_value:,.2f}")
+    if tw_cost > 0:
+        lines.append(_row("🇹🇼", "台股", tw_cost, tw_value, "NT$"))
+    if us_cost > 0:
+        lines.append(_row("🇺🇸", "美股", us_cost, us_value, "US$"))
     if rate and tw_value > 0 and us_value > 0:
         net = tw_value + us_value * rate
-        lines.append(f"  💎 淨值合計：NT$ {net:,.0f}（USD/TWD={rate:.2f}）")
-    elif tw_value > 0 and us_value <= 0:
-        lines.append(f"  💎 淨值：NT$ {tw_value:,.0f}")
+        total_cost = tw_cost + us_cost * rate
+        total_pnl = net - total_cost
+        total_pct = total_pnl / total_cost * 100 if total_cost > 0 else 0
+        sign = "+" if total_pnl >= 0 else ""
+        lines.append(
+            f"  💎 淨值合計：NT$ {net:,.0f}"
+            f"｜{sign}{total_pct:.1f}% ({sign}NT${total_pnl:,.0f})"
+            f"｜USD/TWD={rate:.2f}"
+        )
     return "\n".join(lines) if len(lines) > 1 else None
 
 
-def format_overview():
-    """主指令 /財務 / /帳單 / /訂閱 / /扣款 都走這支。
-    輸出順序：持股概況（即時市值）→ AI 整理（刷卡/訂閱/扣款/手續費 + 月加總）"""
+# ─────────────────────────────────────────────────────────
+# Prompt 兩版：精簡（預設）vs 詳細（/財務詳細）
+# ─────────────────────────────────────────────────────────
+
+_FILTER_RULES = """═══════════════════════════════
+過濾「實際付款」（非常重要）
+═══════════════════════════════
+**只**保留「真的有付錢」的紀錄。下列**不算付款**，全部丟掉：
+- 任何「安全性快訊 / 登入通知 / 帳號活動」
+- 任何「廣告 / 推廣 / 優惠 / 行銷 / 信用貸款推銷」
+- 任何「職位推薦 / 求職通知 / LinkedIn 通知」
+- 任何「OAuth 應用授權通知 / GitHub 通知」
+- 任何只是「你做了交易」的 email 但沒實際金額
+- 「房屋稅開徵推廣」等政府公告（除非已扣款）"""
+
+
+def _build_prompt(today, month_str, raw, n_items, detailed):
+    if detailed:
+        return _build_prompt_detailed(today, month_str, raw, n_items)
+    return _build_prompt_concise(today, month_str, raw, n_items)
+
+
+def _build_prompt_concise(today, month_str, raw, n_items):
+    """精簡版：只給信用卡分類加總 + ≥NT$3000 大筆。
+    訂閱、手續費、逐筆細項全部不顯示。"""
+    return f"""你是個人財務記帳助理。今天是 {today.strftime("%Y/%m/%d")}。
+
+以下是使用者過去 35 天 Gmail「金融/付款相關」email 完整內容。
+
+任務：
+
+{_FILTER_RULES}
+
+═══════════════════════════════
+精簡輸出（純文字繁體中文，禁止 Markdown）
+═══════════════════════════════
+
+💳 信用卡分類（{month_str}）
+  分類用：🍱 餐飲 / 🚗 交通 / 🛒 購物 / 🎬 娛樂 / 💊 醫療 / 💄 美妝
+         / 🏠 居家 / 🛫 旅遊 / 📚 教育 / 💼 訂閱費 / ⚡ 其他
+  每行格式（**只列分類總和，不列單筆**）：
+    🍱 餐飲：NT$X,XXX (N 筆)
+    🚗 交通：NT$X,XXX (N 筆)
+    ...
+  沒金額的分類整行省略；外幣消費另起一行 (US$XX.XX)。
+
+⚡ 大筆消費（≥ NT$3,000）
+  逐筆列出：
+  • MM/DD｜商家名｜NT$X,XXX｜[分類 emoji]
+  外幣 ≥ US$100 也列：
+  • MM/DD｜商家名｜US$XX.XX｜[分類 emoji]
+  沒有就寫一行：「本月無 ≥ NT$3,000 單筆消費」
+
+📊 信用卡支出小計：NT$X,XXX (+ US$XX.XX 如有外幣)
+
+═══════════════════════════════
+規則
+═══════════════════════════════
+- 純文字繁體中文，emoji 直接打、禁止 Markdown
+- 訂閱服務、證券手續費**不要顯示**（已折疊到詳細版）
+- 不列每筆刷卡細節（除非 ≥ NT$3,000 的大筆）
+- 找不到金額的整筆跳過，禁止編造
+- 直接從「💳 信用卡分類」開始，禁止開場白與結語
+
+═══════════════════════════════
+原始 email 資料（{n_items} 封）：
+═══════════════════════════════
+{raw}
+"""
+
+
+def _build_prompt_detailed(today, month_str, raw, n_items):
+    """詳細版：信用卡逐筆 + 訂閱 + 手續費（含 web 估算 fallback）+ 月加總 + 大筆。"""
+    return f"""你是個人財務記帳助理。今天是 {today.strftime("%Y/%m/%d")}。
+
+以下是使用者過去 35 天 Gmail「金融/付款相關」email 完整內容。
+
+任務：
+
+{_FILTER_RULES}
+
+═══════════════════════════════
+詳細輸出（純文字繁體中文，禁止 Markdown）
+═══════════════════════════════
+
+💳 信用卡刷卡（按分類分區，區內依日期由近到遠）
+  分類：🍱 餐飲 / 🚗 交通 / 🛒 購物 / 🎬 娛樂 / 💊 醫療 / 💄 美妝
+       / 🏠 居家 / 🛫 旅遊 / 📚 教育 / 💼 訂閱費 / ⚡ 其他
+  每筆：• MM/DD｜商家名｜NT$X,XXX 或 US$XX.XX｜[卡別末四碼]
+  ≥ NT$3,000 或 ≥ US$100 → 行首加 ⚡
+
+  國泰世華 Cube 卡「消費彙整通知」內文有逐筆消費明細，**全部抽出**。
+
+🔁 訂閱服務（每月／每年定期）
+  • 服務名｜每 N 月/年 NT$XXX 或 US$XX｜下次續訂 MM/DD（若可推算）
+  • 只列「明確有扣費」的，不列免費試用 / 通知
+
+📈 證券交易手續費（富邦 / 國泰證券）
+  從成交回報內文抓「手續費」「佣金」欄位加總；
+  若內文沒列出明確金額，用富邦標準估算（並標明「(估)」）：
+    - 台股：成交金額 × 0.1425% × 0.6（電子下單 6 折常見）
+    - 美股複委託：成交金額 × 0.5%（最低 USD 25 / 筆）
+  輸出兩行總計：
+    台幣證券手續費合計：NT$XXX (含 N 筆估算)
+    美金證券手續費合計：US$XX.XX (含 N 筆估算)
+
+📊 {month_str} 已扣款合計
+  💳 信用卡：NT$X,XXX (+ US$XX.XX 如有外幣消費)
+  🔁 訂閱：NT$XXX + US$XX.XX
+  📈 證券手續費：NT$XXX + US$XX.XX
+  ━━━━━━━━━━
+  本月總支出：NT$X,XXX + US$XX.XX
+
+⚡ 大筆消費（≥ NT$3,000）
+  • MM/DD｜商家｜NT$X,XXX｜[類型]
+  列所有 ≥ NT$3,000 的單筆（信用卡 / 訂閱 / 扣款都算）
+  沒有就寫：「本月無 ≥ NT$3,000 單筆消費」
+
+═══════════════════════════════
+規則
+═══════════════════════════════
+- 純文字繁體中文、禁止 Markdown
+- 找不到金額的整筆跳過，禁止編造
+- 月加總只算當月（{month_str}）已扣款的
+- 沒任何一類資料時該段寫「（本月無）」一行
+- 直接從「💳 信用卡刷卡」開始，禁止開場白與結語
+
+═══════════════════════════════
+原始 email 資料（{n_items} 封）：
+═══════════════════════════════
+{raw}
+"""
+
+
+def format_overview(detailed=False):
+    """主指令 /財務（精簡）/ /財務詳細（詳細）。
+    精簡：持股概況 + 信用卡分類總和 + 大筆消費（≥NT$3,000）
+    詳細：持股概況 + 信用卡逐筆 + 訂閱 + 證券手續費 + 月加總 + 大筆"""
     portfolio_block = _portfolio_brief()
     items = _fetch_finance_emails(days=35)
     if not items:
@@ -184,79 +340,7 @@ def format_overview():
     today = date.today()
     month_str = today.strftime("%Y/%m")
 
-    prompt = f"""你是個人財務記帳助理。今天是 {today.strftime("%Y/%m/%d")}。
-
-以下是使用者過去 35 天 Gmail 內所有「金融/付款相關」email 完整內容（已先過濾掉廣告 / 登入通知 / 職位推薦 / 安全性快訊）。
-
-任務：
-
-═══════════════════════════════
-步驟 1｜過濾「實際付款」
-═══════════════════════════════
-**只**保留「真的有付錢」的紀錄。下列**不算付款**，全部丟掉：
-- 任何「安全性快訊 / 登入通知 / 帳號活動」
-- 任何「廣告 / 推廣 / 優惠 / 行銷 / 信用貸款推銷」
-- 任何「職位推薦 / 求職通知 / LinkedIn 通知」
-- 任何「OAuth 應用授權通知 / GitHub 通知」
-- 任何只是「你做了交易」的 email 但沒實際金額
-- 「房屋稅開徵推廣」等政府公告（除非已扣款）
-
-═══════════════════════════════
-步驟 2｜分類整理（純文字、繁體中文、不要 Markdown ## ** 等）
-═══════════════════════════════
-
-💳 信用卡刷卡（按「分類」分區呈現，每區內依日期由近到遠排）
-  分類用：🍱 餐飲 / 🚗 交通 / 🛒 購物 / 🎬 娛樂 / 💊 醫療 / 💄 美妝 / 🏠 居家
-         / 🛫 旅遊 / 📚 教育 / 💼 訂閱費 / ⚡ 其他
-  每筆格式：
-    • MM/DD｜商家名｜NT$X,XXX 或 US$XX.XX｜[卡別末四碼]
-    • **金額 ≥ NT$3,000（外幣 ≥ US$100）的筆，行首加 ⚡ 額外標明大筆消費**
-    例：⚡ 5/3｜Apple 線上購物｜NT$5,890｜末四碼6120
-  國泰世華 Cube 卡的「消費彙整通知」內文會列每筆消費明細，**逐筆抽出**
-    （不是整封信寫 1 行，是一筆消費 1 行）
-  看不到金額的整筆跳過，禁止編造
-
-🔁 訂閱服務（每月／每年定期）
-  • 服務名｜每 N 月/年 NT$XXX 或 US$XX｜下次續訂 MM/DD（如能算出）
-  • 例：Netflix｜每月 NT$390｜下次 5/15
-  • 只列「明確有扣費」的，不列「免費試用 / 通知」
-
-📈 證券交易手續費（國泰 / 富邦證券）
-  • 這段只要兩行總計，**不要列每筆**：
-  • 台幣證券（台股）手續費合計：NT$XXX
-  • 美金證券（複委託）手續費合計：US$XX.XX
-  • 從成交回報內文抓「手續費」「佣金」欄位金額加總
-
-═══════════════════════════════
-步驟 3｜月度加總（最重要！）
-═══════════════════════════════
-📊 {month_str} 已扣款合計
-  💳 信用卡：NT$X,XXX (+ US$XX.XX 如有外幣消費)
-  🔁 訂閱：NT$XXX + US$XX.XX
-  📈 證券手續費：NT$XXX + US$XX.XX
-  ━━━━━━━━━━
-  本月總支出：NT$X,XXX + US$XX.XX
-
-⚡ 大筆消費（NT$3,000 以上）
-  • MM/DD｜商家｜NT$X,XXX
-  • 列所有 ≥ NT$3,000 的單筆消費（信用卡 / 訂閱 / 扣款都算）
-  • 沒有的話寫一行：「本月無 NT$3,000 以上單筆消費」
-
-═══════════════════════════════
-規則
-═══════════════════════════════
-- 純文字、繁體中文、emoji 用 utf-8 直接打、禁止 Markdown
-- 找不到金額的整筆跳過，**禁止編造數字**
-- 月度加總只算當月（{month_str}）已扣款的
-- 沒任何一類資料時該段寫「（本月無）」一行
-- 直接從「💳 信用卡刷卡」開始，禁止開場白
-- 結尾就是「本月總支出」那行，禁止結語
-
-═══════════════════════════════
-原始 email 資料（{len(items)} 封）：
-═══════════════════════════════
-{raw}
-"""
+    prompt = _build_prompt(today, month_str, raw, len(items), detailed)
 
     try:
         import anthropic
@@ -279,7 +363,11 @@ def format_overview():
         if not text:
             return "📭 AI 無回應，可能本月確實沒交易"
         head = (portfolio_block + "\n\n") if portfolio_block else ""
-        return f"{head}<b>💳 財務總覽（{month_str}）</b>\n\n{text}"
+        title = "💳 財務總覽（詳細）" if detailed else "💳 財務總覽"
+        suffix = ""
+        if not detailed:
+            suffix = "\n\nℹ️ 想看每筆細項 / 訂閱 / 手續費請輸入：/財務詳細"
+        return f"{head}<b>{title}（{month_str}）</b>\n\n{text}{suffix}"
     except Exception as e:
         print(f"[finance] AI 整理失敗：{e}")
         # AI 失敗 fallback：列原始 email 主旨（含持股概況頭）
