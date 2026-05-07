@@ -16,12 +16,22 @@ def _is_tw_ticker(ticker):
     return bool(_TW_TICKER_RE.fullmatch(ticker or ''))
 
 
+def _is_special_security(ticker):
+    """興櫃 / 黃金存摺等 yfinance 抓不到的特殊代號。
+    AU9901 = 臺灣銀行黃金存摺，需用台銀牌告，這裡先 skip 顯 N/A。"""
+    t = (ticker or "").upper()
+    return t.startswith("AU")  # AU9901 黃金存摺
+
+
 def _to_yahoo_symbol(ticker):
     return f"{ticker}.TW" if _is_tw_ticker(ticker) else ticker
 
 
 def get_live_price(ticker):
     """用 Yahoo Finance v8 chart API 抓最新股價，失敗回傳 None。"""
+    if _is_special_security(ticker):
+        print(f"  {ticker} 是黃金存摺/興櫃，yfinance 抓不到，現價 N/A")
+        return None
     symbol = _to_yahoo_symbol(ticker)
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
@@ -97,9 +107,13 @@ def build_portfolio_summary(portfolio):
         display = ticker if is_us else (name or ticker)
 
         if current is None:
+            note = "（黃金存摺/興櫃，現價需手動）" if _is_special_security(ticker) else ""
             rows.append({
                 'sort_key': shares * avg_cost,
-                'line': f"{display}｜{shares}股｜均價{_format_price(avg_cost, is_us)}｜現價N/A",
+                'line': (
+                    f"{display}｜{shares}股｜均價{_format_price(avg_cost, is_us)}"
+                    f"｜現價N/A{note}"
+                ),
             })
             continue
 
