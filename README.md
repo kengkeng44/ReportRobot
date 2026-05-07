@@ -26,6 +26,7 @@
 | 自由問答（詳細） | `/詳細 黃金未來價格` / `/full report on NVDA` | 機構級 IC Memo（A/B/C 型 6 塊，含 bull/base/bear 三情境）。觸發詞：詳細 / 完整 / 深入 / 深度 / detail / full / report |
 | 持倉 | `仁和持股` / `持股` | 全持倉現價損益，台股顯示中文名、分台/美股總報酬、最末以即時 USD/TWD 折算淨值合計 |
 | 用量 | `/cost` / `/用量` | AI 累積成本 |
+| LINE 配額 | `/額度` / `/quota` | LINE Push 月配額用量（含進度條 + 月底推估）|
 | 說明 | `/help` / `說明` / `?` | 完整指令清單 |
 
 **1 對 1 chat 額外指令**（在群組打會被擋下）：
@@ -44,7 +45,16 @@
 
 | 範例 | 說明 |
 |---|---|
-| `/財務` | 信用卡帳單（35 天）+ 訂閱月費（60 天）+ 自動扣款（35 天）三類合一 + Haiku AI 抽金額分類。同義詞：`/帳單` `/訂閱` `/扣款` 都觸發同一份財務總覽 |
+| `/財務` | 精簡版：持股概況（含 P&L）+ 信用卡分類總和 + ⚡ ≥ NT$3,000 大筆消費。同義詞：`/帳單` `/訂閱` `/扣款` 都觸發精簡版 |
+| `/財務詳細` | 完整 IC Memo：信用卡逐筆分類 + 訂閱 + 證券手續費（web 估算 fallback）+ 月加總 |
+
+**自動推送（背景，每 5 分鐘輪詢，不用打指令）：**
+
+| 來源 | 條件 | 推送對象 |
+|---|---|---|
+| CWA 顯著有感地震（E-A0015-001）| 規模 ≥ `EQ_MIN_MAGNITUDE`（預設 4.0）| 群組 + admin |
+| CWA 颱風警報（W-C0033-001）| 新一筆 advisory | 群組 + admin |
+| 重要 Gmail 即時轉發 | `GMAIL_FORWARD_FROM` env 列的寄件人新信 | admin |
 
 **保守觸發策略**：`hi` / `ok`、純中文聊天、「我買台積」這種句子都不會觸發。短英文與無前綴中文不視為指令，避免家人聊天被打擾。
 
@@ -68,7 +78,7 @@
 
 ## 設計亮點
 
-> 個人 side project · 約 4,000 行 Python · 19 個模組 · LINE webhook + 排程整合 · 部署於 Railway
+> 個人 side project · 約 4,500 行 Python · 21 個模組 · LINE webhook + 排程整合 + 即時警示 · 部署於 Railway
 
 **解決的痛點**：早上要分別查股價、看新聞、查天氣太瑣碎；券商對帳單是加密 PDF 沒辦法直接看持倉；想查個股還要打開 App、找代號、看新聞、滑論壇、抓 ETF 成分。一個 LINE bot 全部解決，且家人也能直接用。
 
@@ -149,6 +159,7 @@ LINE Group ←─┐
               ├──► 中央氣象署 / OpenWeatherMap (天氣)
               ├──► 證交所 OpenAPI (三大法人)
               ├──► PTT / Reddit / Dcard / StockTwits (論壇)
+              ├──► CWA 地震 / 颱風 (即時警示，5 分鐘輪詢)
               └──► Anthropic Claude (簡介 / 解讀 / 盤前 / web_search)
 ```
 
@@ -165,8 +176,10 @@ LINE Group ←─┐
 | `chips.py` | 證交所 RWD + OpenAPI v1 雙來源抓三大法人買賣超（外資 / 自營商雙列累加），5 日 fallback 走過假日 |
 | `stock_news.py` | 個股報告：股價、簡介、ETF 持股、基本面、新聞、論壇、AI 解讀 |
 | `gmail_reader.py` | 抓 Gmail 對帳單，雙市場 + 雙 pass 解析持倉 |
-| `portfolio.py` | 持倉現價/損益計算（台股顯中文名、分台/美股總報酬，最末以即時 USD/TWD 折算淨值合計）|
-| `finance_query.py` | 個人 Gmail 財務查詢（admin-only）：信用卡帳單 / 訂閱 / 扣款，可選 Haiku AI 抽金額分類 |
+| `portfolio.py` | 持倉現價/損益計算（台股顯中文名、分台/美股總報酬，最末以即時 USD/TWD 折算淨值合計；AU9901 黃金存摺用即時國際金價計算）|
+| `finance_query.py` | 個人 Gmail 財務查詢（admin-only）：精簡版（分類總和+大筆消費）vs 詳細版（IC Memo），Sonnet AI 抽金額分類 + 月加總 |
+| `alerts.py` | 即時警示（CWA 地震 / CWA 颱風 / 重要 Gmail 即時轉發），5 分鐘輪詢，in-memory state 防重推 |
+| `line_quota.py` | LINE Push 月配額計數器（Free Plan 200/月），超 80%/90%/100% 自動 warn admin，提供 `/額度` 指令 |
 | `line_sender.py` | LINE Messaging API push / reply 包裝（HTML strip + 切片） |
 | `personal.py` | 個人待辦 / 提醒邏輯（in-memory + apscheduler 排 one-shot） |
 | `app_state.py` | 跨模組共享 scheduler ref（避免循環 import） |
@@ -221,10 +234,15 @@ Gmail / 對帳單
 | 變數 | 用途 |
 |---|---|
 | `MANUAL_STOCKS` | 預留：手動追蹤股票清單（逗號分隔）|
+| `MANUAL_PRICES` | 手動覆寫特殊代號現價，格式 `KEY=VALUE,KEY=VALUE`（例：興櫃股 / 黃金存摺有特殊報價來源）|
+| `GOLD_GRAM_PER_SHARE` | 黃金存摺每張幾公克（預設 `3.75` = 1 錢；若是 1 兩設 `37.5`）|
 | `WEATHER_LOCATIONS` | 天氣地點，逗號分隔（例：`淡水區,金山區`）|
 | `ADMIN_TOKEN` | `/admin/run-daily` endpoint 保護用 |
-| `ADMIN_LINE_USER_ID` | 管理員錯誤通知目標（自己的 LINE userId）；未設定則 notify_admin 變 no-op |
+| `ADMIN_LINE_USER_ID` | 管理員錯誤通知 + admin-only 指令權限（自己的 LINE userId，用 `/我的id` 取得）|
 | `DAILY_CRON` | 排程 cron 表達式（預設 `"0 22 * * *"` = UTC 22:00 = 台北 06:00）|
+| `LINE_PUSH_QUOTA` | LINE 月 push 配額（預設 `200` = Free Plan；Light Plan 設 `4000`）|
+| `EQ_MIN_MAGNITUDE` | 地震警示規模門檻（預設 `4.0`）|
+| `GMAIL_FORWARD_FROM` | 重要 Gmail 即時轉發的寄件人 watchlist，逗號分隔（例：`bossmail@xxx,landlord@yyy`）|
 | `PYTHONUNBUFFERED` | 設 `1`，讓 print 即時顯示在 Railway log |
 
 ## 部署
@@ -282,7 +300,7 @@ DAILY_CRON = "0 22 * * *"  # UTC 22:00 = 台北 06:00
 
 ### v1 已完成
 
-- [x] 每日 LINE 群組推播（天氣 + 盤前報告，每天台北 08:00）
+- [x] 每日 LINE 群組推播（天氣 + 盤前報告，每天台北 06:00）
 - [x] LINE 互動指令：個股、ETF、持倉、比較、自由問答、用量、help
 - [x] 中文公司名反查、上市/上櫃自動判斷（`.TW` / `.TWO`）
 - [x] ETF 前五大持股（台股 / 美股都顯示中文名）
@@ -300,26 +318,27 @@ DAILY_CRON = "0 22 * * *"  # UTC 22:00 = 台北 06:00
 - [x] 三大法人籌碼：RWD + OpenAPI 雙來源、外資 / 自營商雙列累加、AI 盤前重點 prompt 取用真實籌碼數字寫昨日資金流向
 - [x] 月對帳單 PDF 黏字 fix：用 amount 反推切點，自動拆解 pdfplumber 把「股數 + 單價」黏成一個 token 的 case
 - [x] `/預覽` 個人指令：1 對 1 chat 立刻產一份明天的每日情報（force 強跑、不發群組）
-- [x] 持股加淨值合計：以即時 USD/TWD 折算成 NTD 一個總數
-- [x] 個人 Gmail 財務查詢：`/財務`（同義詞：`/帳單` `/訂閱` `/扣款`，全合併成單一指令），admin-only（比對 ADMIN_LINE_USER_ID），其他家人 1 對 1 也擋掉
+- [x] 持股加淨值合計（含 P&L%）：以即時 USD/TWD 折算成 NTD 一個總數；台股+黃金存摺合算
+- [x] AU9901 黃金存摺即時計算：抓 GC=F × USD/TWD ÷ 31.10 g/oz × 3.75 g/張
+- [x] 個人 Gmail 財務查詢：`/財務`（精簡）+ `/財務詳細`（IC Memo），admin-only
+- [x] CWA 顯著有感地震即時警示（規模 ≥ 4，5 分鐘輪詢，群組 + admin）
+- [x] CWA 颱風警報即時警示（W-C0033-001，新 advisory 推群組）
+- [x] 重要 Gmail 即時轉發（GMAIL_FORWARD_FROM 寄件人 watchlist → admin）
+- [x] LINE Push 月配額計數器：`/額度` 即時查；超 80%/90%/100% 自動 warn admin
+- [x] `/我的id` 取得自己的 LINE userId（首次設定 admin 用）
 
 ### v2 規劃（個人深度功能）
 
-- [ ] **持久化儲存**（待辦/提醒搬到 Notion DB 或 Postgres，避免 redeploy 丟失）
-- [ ] **信用卡帳單管家**：Gmail 抓信用卡帳單 → 月支出統計、各類別比例
+- [ ] **持久化儲存**（待辦 / 提醒 / LINE 配額計數搬到 Notion DB，避免 redeploy 丟失）
 - [ ] **多輪對話 AI 助理**：1 對 1 chat 不需要 / 前綴，bot 記住對話脈絡
-- [ ] **健康/習慣追蹤**：`/喝水` `/運動` `/睡眠` + 月底自動報告
 - [ ] **Google Calendar 整合**：「明天行程」、「/排 週四 9 點開會」
 - [ ] **Notion 雙向同步**：LINE 待辦 ↔ Notion DB
 
-### v3 規劃（即時警示與整合）
+### v3 規劃（暫不做或後做）
 
-- [ ] **持股漲跌即時警示**（突破 ±5% 自動 push，不用等隔天）
-- [ ] **重要 Gmail 即時轉發**（特定寄件人）
-- [ ] **CWA 颱風 / 地震警示**
+- [ ] **多人 1 對 1 私人功能**（家人各自有自己的待辦 / 提醒）
 - [ ] **Notion 知識庫整合**：問題自動查 Notion 筆記
 - [ ] **語音輸入**：LINE 傳語音 → bot 用 STT 解析成指令
-- [ ] **多人 1 對 1 私人功能**（家人各自有自己的待辦/提醒）
 
 ## 授權
 
