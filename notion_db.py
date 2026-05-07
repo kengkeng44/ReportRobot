@@ -198,3 +198,116 @@ def quota_set_month(month_str, count):
     except Exception as e:
         print(f"[notion] quota_set_month 失敗：{e}")
         return False
+
+
+# ─────────────────────────────────────────────────────────
+# Todos：每筆待辦 = Notion DB 一個 page
+# ─────────────────────────────────────────────────────────
+
+def todos_load_for_user(user_id):
+    """載入該 user 所有未完成待辦，回 list of dict
+    {page_id, local_id, text, done}。失敗回 []。"""
+    db_id = get_or_create_db("Todos")
+    client = _get_client()
+    if not db_id or not client:
+        return []
+    try:
+        # 篩 user + done=False
+        res = client.databases.query(
+            database_id=db_id,
+            filter={
+                "and": [
+                    {"property": "UserId", "rich_text": {"equals": user_id}},
+                    {"property": "Done", "checkbox": {"equals": False}},
+                ]
+            },
+            sorts=[{"property": "LocalId", "direction": "ascending"}],
+            page_size=100,
+        )
+        out = []
+        for r in res.get("results", []):
+            props = r.get("properties", {}) or {}
+            name_blocks = (props.get("Name", {}) or {}).get("title", []) or []
+            text = "".join(b.get("plain_text", "") for b in name_blocks)
+            local_id = (props.get("LocalId", {}) or {}).get("number") or 0
+            done = (props.get("Done", {}) or {}).get("checkbox", False)
+            out.append({
+                "page_id": r["id"],
+                "local_id": int(local_id),
+                "text": text,
+                "done": bool(done),
+            })
+        return out
+    except Exception as e:
+        print(f"[notion] todos_load_for_user 失敗：{e}")
+        return []
+
+
+def todos_load_all_users():
+    """載入所有 user 的未完成待辦（給排程提醒掃描用）。
+    回 dict {user_id: [todo dict, ...]}。"""
+    db_id = get_or_create_db("Todos")
+    client = _get_client()
+    if not db_id or not client:
+        return {}
+    try:
+        res = client.databases.query(
+            database_id=db_id,
+            filter={"property": "Done", "checkbox": {"equals": False}},
+            page_size=100,
+        )
+        out = {}
+        for r in res.get("results", []):
+            props = r.get("properties", {}) or {}
+            uid_blocks = (props.get("UserId", {}) or {}).get("rich_text", []) or []
+            user_id = "".join(b.get("plain_text", "") for b in uid_blocks)
+            if not user_id:
+                continue
+            name_blocks = (props.get("Name", {}) or {}).get("title", []) or []
+            text = "".join(b.get("plain_text", "") for b in name_blocks)
+            local_id = (props.get("LocalId", {}) or {}).get("number") or 0
+            out.setdefault(user_id, []).append({
+                "page_id": r["id"],
+                "local_id": int(local_id),
+                "text": text,
+                "done": False,
+            })
+        return out
+    except Exception as e:
+        print(f"[notion] todos_load_all_users 失敗：{e}")
+        return {}
+
+
+def todos_create(user_id, text, local_id):
+    """建立一筆待辦。回 page_id 或 None。"""
+    db_id = get_or_create_db("Todos")
+    client = _get_client()
+    if not db_id or not client:
+        return None
+    try:
+        page = client.pages.create(
+            parent={"database_id": db_id},
+            properties={
+                "Name": {"title": [{"text": {"content": text}}]},
+                "UserId": {"rich_text": [{"text": {"content": user_id}}]},
+                "Done": {"checkbox": False},
+                "LocalId": {"number": int(local_id)},
+            },
+        )
+        return page["id"]
+    except Exception as e:
+        print(f"[notion] todos_create 失敗：{e}")
+        return None
+
+
+def todos_delete(page_id):
+    """archived=True 等同刪除。"""
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        client.pages.update(page_id=page_id, archived=True)
+        return True
+    except Exception as e:
+        print(f"[notion] todos_delete 失敗：{e}")
+        return False

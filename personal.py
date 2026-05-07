@@ -1,7 +1,11 @@
 """
 個人功能：待辦清單 + 提醒。
-in-memory 儲存，Railway redeploy 會清空（v2 會搬到 Notion / Postgres）。
-所有函式以 user_id 隔離（不同人各自一份清單）。
+
+待辦：Notion 持久化（NOTION_TOKEN 設定時）+ in-memory cache 加速。
+      未設 Notion 退回純 in-memory（redeploy 歸零）。
+提醒：仍純 in-memory（下一輪做持久化 + APScheduler reschedule on startup）。
+
+所有函式以 user_id 隔離。
 """
 
 import re
@@ -13,13 +17,53 @@ from security_utils import mask
 
 _LOCK = threading.Lock()
 
-# user_id → list of {id, text, done, created_at}
+# user_id → list of {id, text, done, created_at, page_id}
 _TODOS = {}
 _TODO_NEXT_ID = {}
+_TODOS_LOADED_USERS = set()  # 已從 Notion load 過的 user_id
 
 # user_id → list of {id, text, fire_at}
 _REMINDERS = {}
 _REMINDER_NEXT_ID = {}
+
+
+def _notion_enabled():
+    try:
+        import notion_db
+        return notion_db.is_configured()
+    except Exception:
+        return False
+
+
+def _ensure_todos_loaded(user_id):
+    """從 Notion load 該 user 未完成待辦到 in-memory cache。每 user 只 load 一次。"""
+    if user_id in _TODOS_LOADED_USERS:
+        return
+    if not _notion_enabled():
+        _TODOS_LOADED_USERS.add(user_id)
+        return
+    try:
+        import notion_db
+        rows = notion_db.todos_load_for_user(user_id)
+        with _LOCK:
+            _TODOS[user_id] = []
+            max_local_id = 0
+            for r in rows:
+                _TODOS[user_id].append({
+                    "id": r["local_id"],
+                    "text": r["text"],
+                    "done": False,
+                    "created_at": datetime.now(),
+                    "page_id": r["page_id"],
+                })
+                max_local_id = max(max_local_id, r["local_id"])
+            _TODO_NEXT_ID[user_id] = max_local_id
+            _TODOS_LOADED_USERS.add(user_id)
+        if rows:
+            print(f"[personal/todos] 從 Notion load {len(rows)} 筆給 {mask(user_id)}")
+    except Exception as e:
+        print(f"[personal/todos] load Notion 失敗：{e}")
+        _TODOS_LOADED_USERS.add(user_id)
 
 
 # ════════════════════════════════════════
@@ -27,46 +71,78 @@ _REMINDER_NEXT_ID = {}
 # ════════════════════════════════════════
 
 def add_todo(user_id, text):
+    _ensure_todos_loaded(user_id)
     with _LOCK:
         next_id = _TODO_NEXT_ID.get(user_id, 0) + 1
         _TODO_NEXT_ID[user_id] = next_id
-        _TODOS.setdefault(user_id, []).append({
+        item = {
             "id": next_id, "text": text, "done": False,
             "created_at": datetime.now(),
-        })
-        return next_id
+            "page_id": None,
+        }
+        _TODOS.setdefault(user_id, []).append(item)
+    # Notion 寫在 lock 外（避免持鎖打網路 IO）
+    if _notion_enabled():
+        try:
+            import notion_db
+            page_id = notion_db.todos_create(user_id, text, next_id)
+            if page_id:
+                with _LOCK:
+                    item["page_id"] = page_id
+        except Exception as e:
+            print(f"[personal/todos] Notion create 失敗：{e}")
+    return next_id
 
 
 def list_todos(user_id):
+    _ensure_todos_loaded(user_id)
     with _LOCK:
         return list(_TODOS.get(user_id, []))
 
 
 def complete_todo(user_id, todo_id):
-    with _LOCK:
-        for t in _TODOS.get(user_id, []):
-            if t["id"] == todo_id:
-                t["done"] = True
-                return True
-    return False
+    """目前 UI 設計：完成 = 直接刪除（沒有 done 待保留）。
+    保留此函式做相容，內部呼叫 delete_todo。"""
+    return delete_todo(user_id, todo_id)
 
 
 def delete_todo(user_id, todo_id):
+    _ensure_todos_loaded(user_id)
+    page_id = None
     with _LOCK:
         items = _TODOS.get(user_id, [])
         for i, t in enumerate(items):
             if t["id"] == todo_id:
+                page_id = t.get("page_id")
                 del items[i]
-                return True
-    return False
+                break
+        else:
+            return False
+    if page_id and _notion_enabled():
+        try:
+            import notion_db
+            notion_db.todos_delete(page_id)
+        except Exception as e:
+            print(f"[personal/todos] Notion delete 失敗：{e}")
+    return True
 
 
 def clear_done(user_id):
+    _ensure_todos_loaded(user_id)
     with _LOCK:
         items = _TODOS.get(user_id, [])
+        done_pages = [t.get("page_id") for t in items if t["done"] and t.get("page_id")]
         before = len(items)
         _TODOS[user_id] = [t for t in items if not t["done"]]
-        return before - len(_TODOS[user_id])
+        removed = before - len(_TODOS[user_id])
+    if _notion_enabled():
+        try:
+            import notion_db
+            for pid in done_pages:
+                notion_db.todos_delete(pid)
+        except Exception as e:
+            print(f"[personal/todos] Notion clear_done 失敗：{e}")
+    return removed
 
 
 def format_todos(user_id):
@@ -86,13 +162,30 @@ def format_todos(user_id):
 
 
 def send_pending_reminders(push_func):
-    """掃所有 user 的待辦清單，各推一份提醒。每 4 小時被 cron 觸發。"""
-    with _LOCK:
-        snapshot = [(uid, list(items))
-                    for uid, items in _TODOS.items() if items]
+    """掃所有 user 的待辦清單，各推一份提醒。台北 06/09/12/18 點 cron 觸發。
+    優先從 Notion load 全 user 未完成待辦（in-memory 不夠完整 — 沒講過話的 user
+    in-mem 沒紀錄但 Notion 有）。"""
+    snapshot = []
+    if _notion_enabled():
+        try:
+            import notion_db
+            all_users = notion_db.todos_load_all_users()
+            for uid, rows in all_users.items():
+                snapshot.append((uid, [
+                    {"id": r["local_id"], "text": r["text"]} for r in rows
+                ]))
+        except Exception as e:
+            print(f"[personal/todos] Notion load_all 失敗 fallback in-mem：{e}")
+
+    if not snapshot:
+        with _LOCK:
+            snapshot = [(uid, list(items))
+                        for uid, items in _TODOS.items() if items]
 
     sent = 0
     for user_id, items in snapshot:
+        if not items:
+            continue
         try:
             text = "<b>📋 你還有未完成的待辦</b>\n"
             for t in items:
