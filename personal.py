@@ -270,7 +270,9 @@ def parse_reminder_input(text):
 
 
 def add_reminder(user_id, text, fire_at, push_func):
-    """登記提醒並 schedule。push_func(user_id, text) 在到時被呼叫（同步函式）。"""
+    """登記提醒並 schedule。push_func(user_id, text) 在到時被呼叫（同步函式）。
+    Notion 持久化：提醒同步寫 Notion，redeploy 後 restore_reminders_from_notion()
+    會把未到期的重新 schedule。"""
     from app_state import get_scheduler
     scheduler = get_scheduler()
     if not scheduler:
@@ -279,9 +281,22 @@ def add_reminder(user_id, text, fire_at, push_func):
     with _LOCK:
         next_id = _REMINDER_NEXT_ID.get(user_id, 0) + 1
         _REMINDER_NEXT_ID[user_id] = next_id
-        _REMINDERS.setdefault(user_id, []).append({
+        item = {
             "id": next_id, "text": text, "fire_at": fire_at,
-        })
+            "page_id": None,
+        }
+        _REMINDERS.setdefault(user_id, []).append(item)
+
+    # 寫 Notion（lock 外）
+    if _notion_enabled():
+        try:
+            import notion_db
+            page_id = notion_db.reminders_create(user_id, text, fire_at, next_id)
+            if page_id:
+                with _LOCK:
+                    item["page_id"] = page_id
+        except Exception as e:
+            print(f"[personal/reminders] Notion create 失敗：{e}")
 
     job_id = f"reminder-{user_id}-{next_id}"
     scheduler.add_job(
@@ -296,7 +311,7 @@ def add_reminder(user_id, text, fire_at, push_func):
 
 
 def _fire_reminder(user_id, reminder_id, push_func):
-    """到時觸發：找出該筆內容、push 給 user、從清單移除。"""
+    """到時觸發：找出該筆內容、push 給 user、從清單移除、Notion 標 fired。"""
     target = None
     with _LOCK:
         items = _REMINDERS.get(user_id, [])
@@ -306,11 +321,19 @@ def _fire_reminder(user_id, reminder_id, push_func):
                 break
         if target:
             items.remove(target)
-    if target:
+    if not target:
+        return
+    try:
+        push_func(user_id, f"⏰ 提醒：{target['text']}")
+    except Exception as e:
+        print(f"提醒 push 失敗 {mask(user_id)}/{reminder_id}: {e}")
+    # Notion 標 fired
+    if target.get("page_id") and _notion_enabled():
         try:
-            push_func(user_id, f"⏰ 提醒：{target['text']}")
+            import notion_db
+            notion_db.reminders_set_status(target["page_id"], "fired")
         except Exception as e:
-            print(f"提醒 push 失敗 {mask(user_id)}/{reminder_id}: {e}")
+            print(f"[personal/reminders] Notion set fired 失敗：{e}")
 
 
 def list_reminders(user_id):
@@ -321,18 +344,96 @@ def list_reminders(user_id):
 def cancel_reminder(user_id, reminder_id):
     from app_state import get_scheduler
     scheduler = get_scheduler()
+    page_id = None
     with _LOCK:
         items = _REMINDERS.get(user_id, [])
         for i, t in enumerate(items):
             if t["id"] == reminder_id:
+                page_id = t.get("page_id")
                 del items[i]
                 if scheduler:
                     try:
                         scheduler.remove_job(f"reminder-{user_id}-{reminder_id}")
                     except Exception:
                         pass
+                # Notion 標 cancelled
+                if page_id and _notion_enabled():
+                    try:
+                        import notion_db
+                        notion_db.reminders_set_status(page_id, "cancelled")
+                    except Exception as e:
+                        print(f"[personal/reminders] Notion set cancelled 失敗：{e}")
                 return True
     return False
+
+
+def restore_reminders_from_notion(push_func):
+    """startup 時從 Notion 載入所有 pending reminders 並 reschedule。
+    過期的（fire_at < now）標 fired，不 reschedule。"""
+    if not _notion_enabled():
+        return 0
+    try:
+        import notion_db
+        rows = notion_db.reminders_load_pending_all()
+    except Exception as e:
+        print(f"[personal/reminders] restore load 失敗：{e}")
+        return 0
+
+    if not rows:
+        return 0
+
+    from app_state import get_scheduler
+    scheduler = get_scheduler()
+    if not scheduler:
+        print("[personal/reminders] scheduler 未就緒，restore skip")
+        return 0
+
+    now = datetime.now(rows[0]["fire_at"].tzinfo) if rows[0]["fire_at"].tzinfo else datetime.now()
+    restored = 0
+    expired = 0
+
+    for r in rows:
+        user_id = r["user_id"]
+        local_id = r["local_id"]
+        text = r["text"]
+        fire_at = r["fire_at"]
+        page_id = r["page_id"]
+
+        if fire_at <= now:
+            # 已過期，Notion 標 fired，不 reschedule
+            try:
+                notion_db.reminders_set_status(page_id, "fired")
+            except Exception:
+                pass
+            expired += 1
+            continue
+
+        # 還原 in-mem state
+        with _LOCK:
+            _REMINDERS.setdefault(user_id, []).append({
+                "id": local_id, "text": text, "fire_at": fire_at,
+                "page_id": page_id,
+            })
+            cur_max = _REMINDER_NEXT_ID.get(user_id, 0)
+            if local_id > cur_max:
+                _REMINDER_NEXT_ID[user_id] = local_id
+
+        job_id = f"reminder-{user_id}-{local_id}"
+        try:
+            scheduler.add_job(
+                _fire_reminder,
+                "date",
+                run_date=fire_at,
+                args=[user_id, local_id, push_func],
+                id=job_id,
+                replace_existing=True,
+            )
+            restored += 1
+        except Exception as e:
+            print(f"[personal/reminders] reschedule 失敗 {job_id}：{e}")
+
+    print(f"[personal/reminders] restore 完成：reschedule {restored} 個 / 過期清理 {expired} 個")
+    return restored
 
 
 def format_reminders(user_id):

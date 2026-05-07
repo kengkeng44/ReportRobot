@@ -18,7 +18,7 @@ Notion 持久化基礎設施。
 
 import os
 import threading
-from datetime import datetime, timezone
+from datetime import datetime
 
 
 _TOKEN = os.environ.get("NOTION_TOKEN", "")
@@ -310,4 +310,94 @@ def todos_delete(page_id):
         return True
     except Exception as e:
         print(f"[notion] todos_delete 失敗：{e}")
+        return False
+
+
+# ─────────────────────────────────────────────────────────
+# Reminders：每筆提醒 = 一個 page，FireAt 是 datetime（含 +08:00 時區）
+# Status: pending / fired / cancelled
+# ─────────────────────────────────────────────────────────
+
+def reminders_load_pending_all():
+    """載入「所有 user 的 pending reminders」（給 startup reschedule 用）。
+    回 list of dict {page_id, user_id, local_id, text, fire_at(datetime)}。
+    fire_at 一律 timezone-aware (TPE)。"""
+    db_id = get_or_create_db("Reminders")
+    client = _get_client()
+    if not db_id or not client:
+        return []
+    try:
+        res = client.databases.query(
+            database_id=db_id,
+            filter={"property": "Status", "select": {"equals": "pending"}},
+            page_size=100,
+        )
+        out = []
+        for r in res.get("results", []):
+            props = r.get("properties", {}) or {}
+            uid_blocks = (props.get("UserId", {}) or {}).get("rich_text", []) or []
+            user_id = "".join(b.get("plain_text", "") for b in uid_blocks)
+            name_blocks = (props.get("Name", {}) or {}).get("title", []) or []
+            text = "".join(b.get("plain_text", "") for b in name_blocks)
+            local_id = (props.get("LocalId", {}) or {}).get("number") or 0
+            fire_obj = (props.get("FireAt", {}) or {}).get("date")
+            if not fire_obj or not fire_obj.get("start"):
+                continue
+            fire_at = datetime.fromisoformat(fire_obj["start"])
+            out.append({
+                "page_id": r["id"],
+                "user_id": user_id,
+                "local_id": int(local_id),
+                "text": text,
+                "fire_at": fire_at,
+            })
+        return out
+    except Exception as e:
+        print(f"[notion] reminders_load_pending_all 失敗：{e}")
+        return []
+
+
+def reminders_load_for_user(user_id):
+    """載入該 user 的 pending reminders。"""
+    return [r for r in reminders_load_pending_all() if r["user_id"] == user_id]
+
+
+def reminders_create(user_id, text, fire_at, local_id):
+    """建一筆 pending reminder。fire_at 必須含時區。回 page_id 或 None。"""
+    db_id = get_or_create_db("Reminders")
+    client = _get_client()
+    if not db_id or not client:
+        return None
+    try:
+        # Notion date 接受 ISO 8601 with timezone offset
+        iso = fire_at.isoformat() if fire_at.tzinfo else fire_at.isoformat() + "+08:00"
+        page = client.pages.create(
+            parent={"database_id": db_id},
+            properties={
+                "Name": {"title": [{"text": {"content": text}}]},
+                "UserId": {"rich_text": [{"text": {"content": user_id}}]},
+                "FireAt": {"date": {"start": iso}},
+                "Status": {"select": {"name": "pending"}},
+                "LocalId": {"number": int(local_id)},
+            },
+        )
+        return page["id"]
+    except Exception as e:
+        print(f"[notion] reminders_create 失敗：{e}")
+        return None
+
+
+def reminders_set_status(page_id, status):
+    """status in {pending, fired, cancelled}。"""
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        client.pages.update(
+            page_id=page_id,
+            properties={"Status": {"select": {"name": status}}},
+        )
+        return True
+    except Exception as e:
+        print(f"[notion] reminders_set_status 失敗：{e}")
         return False

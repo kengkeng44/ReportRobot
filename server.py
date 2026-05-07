@@ -146,6 +146,13 @@ async def lifespan(app: FastAPI):
     print(f"Scheduler 啟動，每日報排程：{DAILY_CRON} (UTC)")
     print("待辦定期提醒：台北 06:00 / 09:00 / 12:00 / 18:00（沒待辦時不發）")
     print("LINE push 月配額警示：每天 09:00 TPE")
+    # Notion 持久化：把上次 deploy 前還沒 fire 的提醒重新 schedule
+    try:
+        from personal import restore_reminders_from_notion
+        from line_sender import push_to_user_sync
+        restore_reminders_from_notion(push_to_user_sync)
+    except Exception as e:
+        print(f"[startup] reminders restore 失敗（非致命）：{e}")
     yield
     scheduler.shutdown()
 
