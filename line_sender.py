@@ -72,6 +72,15 @@ def _post(url, payload):
         return False
 
 
+def _bump_quota():
+    """LINE push 成功後計數一次（reply 不算）。"""
+    try:
+        import line_quota
+        line_quota.bump()
+    except Exception:
+        pass
+
+
 async def push_message(text):
     """推播到群組（每日報用）。LINE 沒設定就 no-op。"""
     if not (LINE_CHANNEL_TOKEN and LINE_GROUP_ID):
@@ -81,10 +90,11 @@ async def push_message(text):
         return
     # push 一次只能對一個 to，多 chunks 拆多次 request
     for chunk in chunks:
-        _post(PUSH_URL, {
+        if _post(PUSH_URL, {
             "to": LINE_GROUP_ID,
             "messages": [{"type": "text", "text": chunk}],
-        })
+        }):
+            _bump_quota()
 
 
 def push_to_user_sync(user_id, text):
@@ -95,10 +105,11 @@ def push_to_user_sync(user_id, text):
     if not chunks:
         return
     for chunk in chunks:
-        _post(PUSH_URL, {
+        if _post(PUSH_URL, {
             "to": user_id,
             "messages": [{"type": "text", "text": chunk}],
-        })
+        }):
+            _bump_quota()
 
 
 def push_message_sync(text):
@@ -109,10 +120,11 @@ def push_message_sync(text):
     if not chunks:
         return
     for chunk in chunks:
-        _post(PUSH_URL, {
+        if _post(PUSH_URL, {
             "to": LINE_GROUP_ID,
             "messages": [{"type": "text", "text": chunk}],
-        })
+        }):
+            _bump_quota()
 
 
 async def reply_message(reply_token, text):

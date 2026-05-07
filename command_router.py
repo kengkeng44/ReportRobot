@@ -18,6 +18,9 @@ _HELP_KEYWORDS = {
 _COST_KEYWORDS = {
     "cost", "Cost", "COST", "用量", "費用", "成本", "stats",
 }
+_LINE_QUOTA_KEYWORDS = {
+    "額度", "line額度", "LINE額度", "line配額", "LINE配額", "quota", "Quota", "QUOTA",
+}
 
 # 個人指令（只在 1 對 1 chat 觸發）
 _REMINDER_RE = re.compile(r"^(?:提醒|remind)\s*(.*)$", re.IGNORECASE)
@@ -84,6 +87,10 @@ HELP_TEXT = (
     "💰 看 AI 用量與費用\n"
     "  • /cost 或 /用量 或 /費用\n"
     "\n"
+    "📊 LINE Push 月配額\n"
+    "  • /額度 或 /quota\n"
+    "  ℹ️ Free Plan 200 則/月；超 80%/90%/100% 自動 warn admin\n"
+    "\n"
     "📋 待辦清單（只在 1 對 1 chat 有效）\n"
     "  • /待辦 加 [內容]    新增\n"
     "  • /待辦              看清單\n"
@@ -123,9 +130,10 @@ HELP_TEXT = (
     "  • /健康             本月統計\n"
     "  • /健康 週          本週統計\n"
     "\n"
-    "⚠️ 即時警示（自動推送，不用打指令）\n"
-    "  • CWA 規模 ≥ 4 顯著有感地震 → 群組 + admin 雙推\n"
-    "  • 每 5 分鐘背景檢查\n"
+    "⚠️ 即時警示（自動推送，不用打指令；每 5 分鐘背景檢查）\n"
+    "  • CWA 規模 ≥ 4 顯著有感地震 → 群組 + admin\n"
+    "  • CWA 颱風警報新發布 → 群組 + admin\n"
+    "  • 重要 Gmail（GMAIL_FORWARD_FROM 設的寄件人）→ admin\n"
     "\n"
     "🆘 顯示這個說明\n"
     "  • help / 說明 / ?\n"
@@ -244,6 +252,9 @@ def parse(text):
 
     if cleaned in _COST_KEYWORDS:
         return ("cost", None)
+
+    if cleaned in _LINE_QUOTA_KEYWORDS:
+        return ("line_quota", None)
 
     if cleaned in _PORTFOLIO_KEYWORDS:
         return ("portfolio", None)
@@ -443,6 +454,10 @@ def handle(text, ctx=None):
         if kind == "cost":
             from usage_tracker import get_stats
             return _format_cost_stats(get_stats())
+
+        if kind == "line_quota":
+            import line_quota
+            return line_quota.format_stats()
 
         if kind == "portfolio":
             from gmail_reader import get_portfolio_from_gmail

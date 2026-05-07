@@ -113,12 +113,12 @@ async def lifespan(app: FastAPI):
         misfire_grace_time=300,
         replace_existing=True,
     )
-    # 地震警示：每 5 分鐘抓 CWA E-A0015-001，新地震規模 ≥ EQ_MIN_MAG 時推群組
-    from alerts import check_and_push as _check_earthquake
+    # 即時警示（地震 / 颱風 / 重要 Gmail）：每 5 分鐘檢查一輪
+    from alerts import check_and_push_all as _check_alerts
     scheduler.add_job(
-        _check_earthquake,
+        _check_alerts,
         IntervalTrigger(minutes=5),
-        id="earthquake_alert",
+        id="alerts_loop",
         max_instances=1,
         coalesce=True,
         misfire_grace_time=120,
@@ -128,98 +128,26 @@ async def lifespan(app: FastAPI):
         _scheduler_error_listener,
         EVENT_JOB_ERROR | EVENT_JOB_MISSED,
     )
+    # LINE push 月配額警示：每天 09:00 (TPE) 檢查當月用量，超 80%/90%/100% 推 admin
+    from line_quota import check_and_warn as _check_quota
+    scheduler.add_job(
+        _check_quota,
+        CronTrigger(hour=9, minute=0, timezone="Asia/Taipei"),
+        id="line_quota_warn",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
+        replace_existing=True,
+    )
     scheduler.start()
     # 注入 scheduler 給 personal.py 用（提醒功能要排 one-shot job）
     import app_state
     app_state.set_scheduler(scheduler)
     print(f"Scheduler 啟動，每日報排程：{DAILY_CRON} (UTC)")
     print("待辦定期提醒：台北 06:00 / 09:00 / 12:00 / 18:00（沒待辦時不發）")
-    # Deploy 完成 → 通知 admin、可選 auto-run（不卡 startup）
-    _post_deploy_notify_async()
+    print("LINE push 月配額警示：每天 09:00 TPE")
     yield
     scheduler.shutdown()
-
-
-def _post_deploy_notify_async():
-    """背景 thread 推「✅ deploy 完成」訊息給 admin。
-    若 commit message 含 `Auto-Run: /xxx` trailer，自動跑該指令並推結果。
-    沒設 ADMIN_LINE_USER_ID 一律 skip，不卡 startup。"""
-    import threading
-
-    def _bg():
-        admin_id = os.environ.get("ADMIN_LINE_USER_ID", "")
-        if not admin_id:
-            print("[startup] no ADMIN_LINE_USER_ID, skip post-deploy push")
-            return
-
-        sha = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "")[:7]
-        commit_msg = os.environ.get("RAILWAY_GIT_COMMIT_MESSAGE", "") or ""
-        branch = os.environ.get("RAILWAY_GIT_BRANCH", "main")
-        first_line = commit_msg.split("\n")[0][:120] if commit_msg else "(無 commit message)"
-
-        from datetime import datetime, timezone, timedelta
-        ts = datetime.now(timezone(timedelta(hours=8))).strftime("%H:%M")
-        notify_text = (
-            f"✅ ReportRobot deploy 完成（{ts} TPE）\n"
-            f"  branch：{branch}\n"
-            f"  commit：{sha}\n"
-            f"  題目：{first_line}"
-        )
-
-        try:
-            from line_sender import push_to_user_sync
-            push_to_user_sync(admin_id, notify_text)
-        except Exception as e:
-            print(f"[startup] deploy 通知 push 失敗：{e}")
-
-        # 讀 commit message 的 Auto-Run trailer
-        # 限定只在「最後一個段落」找（git trailer block convention），這樣
-        # body 內若提到「Auto-Run: /<cmd>」當說明文字不會被誤匹配。
-        # 段落用空行分隔；trailer 要求單行 fullmatch「Auto-Run: <token>」。
-        import re
-        paragraphs = re.split(r"\n\s*\n", commit_msg.strip())
-        last_block = paragraphs[-1] if paragraphs else ""
-        m = re.search(
-            r"^Auto-Run:[ \t]+(\S+)\s*$",
-            last_block,
-            re.MULTILINE,
-        )
-        if not m:
-            print("[startup] 沒 Auto-Run trailer（last paragraph），skip auto-run")
-            return
-        cmd = m.group(1).strip()
-        print(f"[startup] auto-run 觸發指令：{cmd!r}")
-        try:
-            import command_router
-            ctx = {
-                "source_type": "user",
-                "user_id": admin_id,
-                "group_id": None,
-            }
-            result = command_router.handle(cmd, ctx=ctx)
-            from line_sender import push_to_user_sync
-            if result:
-                push_to_user_sync(
-                    admin_id,
-                    f"🤖 Auto-Run 結果（{cmd}）\n\n{result}",
-                )
-            else:
-                push_to_user_sync(
-                    admin_id,
-                    f"🤖 Auto-Run（{cmd}）：指令無回應",
-                )
-        except Exception as e:
-            print(f"[startup] auto-run 失敗：{e}")
-            try:
-                from line_sender import push_to_user_sync
-                push_to_user_sync(
-                    admin_id,
-                    f"⚠️ Auto-Run（{cmd}）失敗：{e}",
-                )
-            except Exception:
-                pass
-
-    threading.Thread(target=_bg, daemon=True).start()
 
 
 app = FastAPI(lifespan=lifespan)
