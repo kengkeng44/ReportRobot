@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI, Header, HTTPException, Request
 
 import command_router
@@ -110,6 +111,17 @@ async def lifespan(app: FastAPI):
         max_instances=1,
         coalesce=True,
         misfire_grace_time=300,
+        replace_existing=True,
+    )
+    # 地震警示：每 5 分鐘抓 CWA E-A0015-001，新地震規模 ≥ EQ_MIN_MAG 時推群組
+    from alerts import check_and_push as _check_earthquake
+    scheduler.add_job(
+        _check_earthquake,
+        IntervalTrigger(minutes=5),
+        id="earthquake_alert",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=120,
         replace_existing=True,
     )
     scheduler.add_listener(

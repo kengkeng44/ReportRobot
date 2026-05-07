@@ -101,6 +101,20 @@ def push_to_user_sync(user_id, text):
         })
 
 
+def push_message_sync(text):
+    """同步版本：推播到群組（給 apscheduler 警示用）。LINE 沒設定就 no-op。"""
+    if not (LINE_CHANNEL_TOKEN and LINE_GROUP_ID):
+        return
+    chunks = _chunks(text)
+    if not chunks:
+        return
+    for chunk in chunks:
+        _post(PUSH_URL, {
+            "to": LINE_GROUP_ID,
+            "messages": [{"type": "text", "text": chunk}],
+        })
+
+
 async def reply_message(reply_token, text):
     """回覆使用者訊息（webhook 互動用）。reply_token 只能用 1 次、有效 30 秒。"""
     if not (LINE_CHANNEL_TOKEN and reply_token):

@@ -28,6 +28,13 @@ _TODO_LIST_KEYWORDS = {"待辦", "todo", "待辦清單"}
 _PREVIEW_KEYWORDS = {"預覽", "preview", "Preview", "PREVIEW", "test", "預覽報告"}
 _WHOAMI_KEYWORDS = {"我的id", "我的ID", "我的Id", "myid", "MyID", "MYID", "whoami", "我是誰"}
 
+# 健康追蹤：1 對 1 限定。/喝水 /運動 /睡眠 /體重 / 健康
+_HEALTH_LOG_RE = re.compile(
+    r"^(喝水|水|運動|workout|睡眠|睡覺|體重|weight|water|exercise|sleep)\s*(.*)$",
+    re.IGNORECASE,
+)
+_HEALTH_SUMMARY_KEYWORDS = {"健康", "health", "Health", "HEALTH"}
+
 # Admin-only（user 本人 LINE userId == ADMIN_LINE_USER_ID 才能用）
 # Gmail 含財務 PII 一律歸這類
 _FINANCE_OVERVIEW_KEYWORDS = {
@@ -106,6 +113,19 @@ HELP_TEXT = (
     "🆔 取得自己的 LINE userId（首次設定 admin 用）\n"
     "  • /我的id 或 /whoami\n"
     "  ℹ️ 把回傳的 U 開頭字串貼到 Infisical 的 ADMIN_LINE_USER_ID\n"
+    "\n"
+    "🩺 健康追蹤（只在 1 對 1 chat 有效）\n"
+    "  • /喝水             今天 +1 杯\n"
+    "  • /喝水 3           今天 +3 杯\n"
+    "  • /運動 30 跑步     記 30 分鐘 + 備註\n"
+    "  • /睡眠 7.5         記 7.5 小時\n"
+    "  • /體重 70.5        記 70.5 kg\n"
+    "  • /健康             本月統計\n"
+    "  • /健康 週          本週統計\n"
+    "\n"
+    "⚠️ 即時警示（自動推送，不用打指令）\n"
+    "  • CWA 規模 ≥ 4 顯著有感地震 → 群組 + admin 雙推\n"
+    "  • 每 5 分鐘背景檢查\n"
     "\n"
     "🆘 顯示這個說明\n"
     "  • help / 說明 / ?\n"
@@ -234,6 +254,15 @@ def parse(text):
     if cleaned in _WHOAMI_KEYWORDS:
         return ("whoami", None)
 
+    # 健康追蹤
+    if cleaned in _HEALTH_SUMMARY_KEYWORDS:
+        return ("health_summary", "month")
+    if cleaned in {"健康 週", "健康週", "health week"}:
+        return ("health_summary", "week")
+    m = _HEALTH_LOG_RE.match(cleaned)
+    if m:
+        return ("health_log", (m.group(1), m.group(2).strip()))
+
     # 個人 Gmail 財務查詢（admin-only）— /財務詳細 優先比對（含「財務」字也算詳細）
     if cleaned in _FINANCE_DETAIL_KEYWORDS:
         return ("finance_overview_detail", None)
@@ -289,7 +318,8 @@ def parse(text):
 
 
 _PERSONAL_KINDS = {"reminder_add", "reminder_list", "reminder_cancel",
-                   "todo", "todo_list", "preview", "whoami"}
+                   "todo", "todo_list", "preview", "whoami",
+                   "health_log", "health_summary"}
 
 # Admin-only kinds（要 1 對 1 + LINE userId == ADMIN_LINE_USER_ID）
 _ADMIN_KINDS = {"finance_overview", "finance_overview_detail"}
@@ -490,6 +520,20 @@ def handle(text, ctx=None):
                 "之後 /財務 等管理員指令就會認得你。\n"
                 "（其他人即使知道這串也用不出去，是 LINE 平台內部識別碼。）"
             )
+
+        if kind == "health_log":
+            keyword, args_str = arg
+            import health
+            cat = health.parse_keyword(keyword)
+            if not cat:
+                return f"未知健康類別：{keyword}"
+            value, note = health.parse_log_args(args_str)
+            ok, msg = health.log_entry(ctx["user_id"], cat, value=value, note=note)
+            return msg
+
+        if kind == "health_summary":
+            import health
+            return health.format_summary(ctx["user_id"], period=arg or "month")
     except Exception as e:
         print(f"指令處理失敗 ({kind}/{arg})：{e}")
         import traceback; traceback.print_exc()
