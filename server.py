@@ -68,7 +68,7 @@ def _scheduler_error_listener(event):
 def _periodic_todo_reminder():
     """每 4 小時提醒所有 user 未完成的待辦。同步函式（apscheduler 直接呼叫）。"""
     from personal import send_pending_reminders
-    from line_sender import push_to_user_sync
+    from telegram_sender import push_to_user_sync
     send_pending_reminders(push_to_user_sync)
 
 
@@ -161,7 +161,7 @@ async def lifespan(app: FastAPI):
     # Notion 持久化：把上次 deploy 前還沒 fire 的提醒重新 schedule
     try:
         from personal import restore_reminders_from_notion
-        from line_sender import push_to_user_sync
+        from telegram_sender import push_to_user_sync
         restore_reminders_from_notion(push_to_user_sync)
     except Exception as e:
         print(f"[startup] reminders restore 失敗（非致命）：{e}")
