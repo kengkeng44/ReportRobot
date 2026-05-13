@@ -374,7 +374,7 @@ def _handle_preview(user_id):
     from datetime import date
 
     def _bg():
-        from line_sender import push_to_user_sync
+        from telegram_sender import push_to_user_sync
         try:
             today = date.today().strftime("%Y-%m-%d")
             try:
@@ -464,7 +464,7 @@ def handle(text, ctx=None):
 
         if kind == "reminder_add":
             import personal
-            from line_sender import push_to_user_sync
+            from telegram_sender import push_to_user_sync
             parsed_time = personal.parse_reminder_input(arg)
             if not parsed_time:
                 return ("無法解析時間，可用格式：\n"
