@@ -230,6 +230,12 @@ Gmail / 對帳單
 | `CWA_API_KEY` | 中央氣象署 |
 | `OWM_API_KEY` | OpenWeatherMap |
 
+Notion 持久化(待辦 / 提醒 / LINE 配額)
+| 變數 | 用途 |
+|---|---|
+| `NOTION_TOKEN` | Internal integration token(`secret_xxx`),在 https://www.notion.so/my-integrations 建立 |
+| `NOTION_PARENT_PAGE_ID` | 父頁面 32 字元 ID(可帶 - 或不帶);使用前要在該頁面 Share → Connect to 你的 integration |
+
 設定
 | 變數 | 用途 |
 |---|---|
@@ -329,10 +335,10 @@ DAILY_CRON = "0 22 * * *"  # UTC 22:00 = 台北 06:00
 
 ### v2 規劃（個人深度功能）
 
-- [ ] **持久化儲存**（待辦 / 提醒 / LINE 配額計數搬到 Notion DB，避免 redeploy 丟失）
+- [x] **持久化儲存**（待辦 / 提醒 / LINE 配額計數搬到 Notion DB，避免 redeploy 丟失） ✅
 - [ ] **多輪對話 AI 助理**：1 對 1 chat 不需要 / 前綴，bot 記住對話脈絡
 - [ ] **Google Calendar 整合**：「明天行程」、「/排 週四 9 點開會」
-- [ ] **Notion 雙向同步**：LINE 待辦 ↔ Notion DB
+- [x] **Notion 雙向同步**：LINE 待辦 ↔ Notion DB ✅
 
 ### v3 規劃（暫不做或後做）
 
