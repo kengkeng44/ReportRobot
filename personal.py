@@ -153,49 +153,11 @@ def format_todos(user_id):
                 "  /待辦 加 [內容]\n"
                 "  /待辦 完成 [編號]   ← 完成會直接移除\n"
                 "  /待辦 刪 [編號]\n"
-                "  /待辦 清空           ← 清掉全部\n\n"
-                "ℹ️ 未完成的待辦會在每天 06:00 / 09:00 / 12:00 / 18:00 自動提醒")
+                "  /待辦 清空           ← 清掉全部")
     lines = ["<b>📋 待辦清單</b>"]
     for t in items:
         lines.append(f"  ⬜ [{t['id']}] {t['text']}")
     return "\n".join(lines)
-
-
-def send_pending_reminders(push_func):
-    """掃所有 user 的待辦清單，各推一份提醒。台北 06/09/12/18 點 cron 觸發。
-    優先從 Notion load 全 user 未完成待辦（in-memory 不夠完整 — 沒講過話的 user
-    in-mem 沒紀錄但 Notion 有）。"""
-    snapshot = []
-    if _notion_enabled():
-        try:
-            import notion_db
-            all_users = notion_db.todos_load_all_users()
-            for uid, rows in all_users.items():
-                snapshot.append((uid, [
-                    {"id": r["local_id"], "text": r["text"]} for r in rows
-                ]))
-        except Exception as e:
-            print(f"[personal/todos] Notion load_all 失敗 fallback in-mem：{e}")
-
-    if not snapshot:
-        with _LOCK:
-            snapshot = [(uid, list(items))
-                        for uid, items in _TODOS.items() if items]
-
-    sent = 0
-    for user_id, items in snapshot:
-        if not items:
-            continue
-        try:
-            text = "<b>📋 你還有未完成的待辦</b>\n"
-            for t in items:
-                text += f"  ⬜ [{t['id']}] {t['text']}\n"
-            text += "\n做完打 /待辦 完成 [編號]"
-            push_func(user_id, text)
-            sent += 1
-        except Exception as e:
-            print(f"待辦定期提醒 push 失敗 {mask(user_id)}: {e}")
-    print(f"待辦定期提醒：對 {sent} 位 user 推送")
 
 
 # ════════════════════════════════════════

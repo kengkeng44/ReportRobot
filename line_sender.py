@@ -1,8 +1,12 @@
 """
-LINE Messaging API 模組：
-- push_message(text)：推播到群組（每日報用）
-- reply_message(reply_token, text)：回覆使用者訊息（webhook 互動用）
-- 兩者都會自動 strip Telegram 風格的 HTML <b>/<a>，並切片送多則
+LINE Messaging API 模組：push / reply 訊息（文字 / Flex 卡片皆可）。
+
+對外介面接受三種型別：
+- str       純文字（自動 strip HTML、超過 4500 字會切多則）
+- dict      已成形的 LINE message dict（例：Flex Message，{"type": "flex", ...}）
+- list      混合上面兩種，會依序送
+
+push 走 push API 並計入月配額；reply 走 reply API（不計費，但 reply_token 限 1 次 / 30 秒）。
 """
 
 import os
@@ -28,7 +32,7 @@ LINE_GROUP_ID = _env("LINE_GROUP_ID")
 PUSH_URL = "https://api.line.me/v2/bot/message/push"
 REPLY_URL = "https://api.line.me/v2/bot/message/reply"
 MAX_CHARS = 4500       # 單則文字上限（LINE 5000，留 buffer）
-MAX_MESSAGES = 5       # 一次最多 5 則訊息（LINE limit）
+MAX_MESSAGES = 5       # 一次最多 5 則訊息（LINE API limit）
 
 
 def _headers():
@@ -60,6 +64,30 @@ def _chunks(text):
     return [plain[i:i + MAX_CHARS] for i in range(0, len(plain), MAX_CHARS)][:MAX_MESSAGES]
 
 
+def _to_messages(response):
+    """response → list[LINE message dict]，最多 MAX_MESSAGES。
+    str  → 切 chunk → text message
+    dict → 假設已是 LINE message dict（含 'type'），直接用
+    list → 上述兩種混合，依序展開
+    None/空字串 → []
+    """
+    if response is None:
+        return []
+    items = response if isinstance(response, list) else [response]
+    out = []
+    for it in items:
+        if it is None or it == "":
+            continue
+        if isinstance(it, dict):
+            out.append(it)
+        else:
+            for c in _chunks(str(it)):
+                out.append({"type": "text", "text": c})
+        if len(out) >= MAX_MESSAGES:
+            break
+    return out[:MAX_MESSAGES]
+
+
 def _post(url, payload):
     try:
         r = requests.post(url, json=payload, headers=_headers(), timeout=10)
@@ -81,69 +109,52 @@ def _bump_quota():
         pass
 
 
-async def push_message(text):
-    """推播到群組（每日報用）。LINE 沒設定就 no-op。"""
+def _push_one(target, message):
+    """送一則 LINE message 給 target，成功就 bump 一次配額。"""
+    if _post(PUSH_URL, {"to": target, "messages": [message]}):
+        _bump_quota()
+
+
+async def push_message(response):
+    """推播到群組（每日報用）。response 同上 _to_messages 規則。"""
     if not (LINE_CHANNEL_TOKEN and LINE_GROUP_ID):
         return
-    chunks = _chunks(text)
-    if not chunks:
+    for msg in _to_messages(response):
+        _push_one(LINE_GROUP_ID, msg)
+
+
+def push_message_sync(response):
+    """同步版本：推播到群組（給 apscheduler 警示用）。"""
+    if not (LINE_CHANNEL_TOKEN and LINE_GROUP_ID):
         return
-    # push 一次只能對一個 to，多 chunks 拆多次 request
-    for chunk in chunks:
-        if _post(PUSH_URL, {
-            "to": LINE_GROUP_ID,
-            "messages": [{"type": "text", "text": chunk}],
-        }):
-            _bump_quota()
+    for msg in _to_messages(response):
+        _push_one(LINE_GROUP_ID, msg)
 
 
-def push_to_user_sync(user_id, text):
-    """同步版本的 push（給 apscheduler / 提醒用）。直接 push 到指定 user_id。"""
+def push_to_user_sync(user_id, response):
+    """同步版本的 push（給 apscheduler / 提醒 / postback handler 用）。"""
     if not (LINE_CHANNEL_TOKEN and user_id):
         return
-    chunks = _chunks(text)
-    if not chunks:
-        return
-    for chunk in chunks:
-        if _post(PUSH_URL, {
-            "to": user_id,
-            "messages": [{"type": "text", "text": chunk}],
-        }):
-            _bump_quota()
+    for msg in _to_messages(response):
+        _push_one(user_id, msg)
 
 
-def push_message_sync(text):
-    """同步版本：推播到群組（給 apscheduler 警示用）。LINE 沒設定就 no-op。"""
-    if not (LINE_CHANNEL_TOKEN and LINE_GROUP_ID):
-        return
-    chunks = _chunks(text)
-    if not chunks:
-        return
-    for chunk in chunks:
-        if _post(PUSH_URL, {
-            "to": LINE_GROUP_ID,
-            "messages": [{"type": "text", "text": chunk}],
-        }):
-            _bump_quota()
-
-
-async def reply_message(reply_token, text):
-    """回覆使用者訊息（webhook 互動用）。reply_token 只能用 1 次、有效 30 秒。"""
+async def reply_message(reply_token, response):
+    """回覆使用者訊息（webhook 互動用）。reply_token 只能用 1 次、有效 30 秒。
+    一次 reply 可塞最多 5 則訊息，全打包同一 request。"""
     if not (LINE_CHANNEL_TOKEN and reply_token):
         return
-    chunks = _chunks(text)
-    if not chunks:
+    messages = _to_messages(response)
+    if not messages:
         return
-    # reply API 一次最多 5 則，全塞同一 request
     _post(REPLY_URL, {
         "replyToken": reply_token,
-        "messages": [{"type": "text", "text": c} for c in chunks],
+        "messages": messages,
     })
 
 
 # ── 舊介面相容（main.py 過渡期）──
 async def send_message(text):
-    """向後相容：等同 push_message。"""
     await push_message(text)
 
 

@@ -1,7 +1,6 @@
 """
 即時警示模組。
-- CWA 顯著有感地震（規模 ≥ EQ_MIN_MAGNITUDE，預設 4.0）
-- CWA 颱風警報（W-C0033-001，新一筆 typhoon advisory 就推）
+- CWA 颱風警報（W-C0033-001，新一筆 typhoon advisory 就推卡片式 Flex）
 - 重要 Gmail 即時轉發（特定寄件人，env GMAIL_FORWARD_FROM 逗號分隔）
 
 機制：scheduler 每 5 分鐘呼叫 check_and_push_all()，逐項比對狀態，新的推送。
@@ -13,7 +12,6 @@ import os
 import http_utils
 
 
-CWA_EARTHQUAKE_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/E-A0015-001"
 CWA_TYPHOON_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/W-C0033-001"
 
 
@@ -29,96 +27,13 @@ def _env(name):
 
 
 CWA_API_KEY = _env("CWA_API_KEY")
-EQ_MIN_MAG = float(os.environ.get("EQ_MIN_MAGNITUDE", "4.0"))
 
-_LAST_EQ_NUMBER = None
 _LAST_TYPHOON_KEY = None  # 颱風警報唯一識別（typhoon name + advisory bulletin no.）
 _GMAIL_FORWARD_SEEN = set()  # 已轉發過的 Gmail message id
 
 
-def _format_eq(eq):
-    """從 CWA E-A0015-001 一筆地震記錄組訊息字串。"""
-    info = eq.get("EarthquakeInfo", {}) or {}
-    epi = info.get("Epicenter", {}) or {}
-    mag = info.get("EarthquakeMagnitude", {}) or {}
-    depth = info.get("Depth", {}) or {}
-
-    origin = info.get("OriginTime", "?")
-    location = epi.get("Location", "?")
-    mag_value = mag.get("MagnitudeValue", "?")
-    depth_km = depth.get("Value", "?")
-
-    # 最大震度
-    max_intensity = "?"
-    intensity = eq.get("Intensity", {}) or {}
-    shaking = intensity.get("ShakingArea") or []
-    if shaking:
-        # ShakingArea[0] 是最強震度區
-        max_intensity = shaking[0].get("AreaIntensity", "?")
-
-    return (
-        f"⚠️ CWA 顯著有感地震\n"
-        f"時間：{origin}\n"
-        f"震央：{location}\n"
-        f"規模：M {mag_value}\n"
-        f"深度：{depth_km} 公里\n"
-        f"最大震度：{max_intensity}"
-    )
-
-
-def check_earthquake():
-    """抓 CWA 最新一筆地震，比對上次的 EarthquakeNo。
-    有新且規模 ≥ 門檻 → 回 (eq_number, message)；否則回 None。"""
-    global _LAST_EQ_NUMBER
-
-    if not CWA_API_KEY:
-        return None
-
-    try:
-        r = http_utils.get(
-            CWA_EARTHQUAKE_URL,
-            params={"Authorization": CWA_API_KEY, "limit": 1},
-            timeout=10,
-        )
-        eq_list = (r.json().get("records", {}) or {}).get("Earthquake") or []
-        if not eq_list:
-            return None
-        eq = eq_list[0]
-        no = eq.get("EarthquakeNo")
-        if no is None:
-            return None
-
-        # 第一次跑，只記錄不推（避免 redeploy 後立刻推一筆很久之前的）
-        if _LAST_EQ_NUMBER is None:
-            _LAST_EQ_NUMBER = no
-            print(f"[alert/eq] 初始化 _LAST_EQ_NUMBER={no}（不推送）")
-            return None
-
-        if no == _LAST_EQ_NUMBER:
-            return None
-
-        # 規模門檻
-        try:
-            mag_value = float(
-                (eq.get("EarthquakeInfo", {}) or {})
-                .get("EarthquakeMagnitude", {})
-                .get("MagnitudeValue", 0)
-            )
-        except (TypeError, ValueError):
-            mag_value = 0.0
-
-        _LAST_EQ_NUMBER = no  # 不論規模大小都更新，避免下次又抓到同一筆
-        if mag_value < EQ_MIN_MAG:
-            print(f"[alert/eq] 新地震 {no} 規模 {mag_value} < {EQ_MIN_MAG}，不推送")
-            return None
-
-        return (no, _format_eq(eq))
-    except Exception as e:
-        print(f"[alert/eq] CWA 地震抓取失敗：{e}")
-        return None
-
-
 def _push_to_group_and_admin(message, label):
+    """message 可以是 str 或 Flex dict（line_sender 會自動辨識）。"""
     try:
         from line_sender import push_message_sync
         push_message_sync(message)
@@ -138,7 +53,7 @@ def _push_to_group_and_admin(message, label):
 # ─────────────────────────────────────────────────────────
 
 def check_typhoon():
-    """抓 CWA 現有颱風警報。新一筆 advisory 就回 (key, message)；否則 None。"""
+    """抓 CWA 現有颱風警報。新一筆 advisory 就回 (key, flex_dict)；否則 None。"""
     global _LAST_TYPHOON_KEY
     if not CWA_API_KEY:
         return None
@@ -178,23 +93,18 @@ def check_typhoon():
             return None
         _LAST_TYPHOON_KEY = key
 
-        coord = latest.get("coordinate", "?")
-        wind = latest.get("maxWindSpeed", "?")
-        gust = latest.get("maxGustSpeed", "?")
-        pressure = latest.get("pressure", "?")
-        moving = latest.get("movingSpeed", "?")
-        moving_dir = latest.get("movingDirection", "?")
-
-        message = (
-            f"🌀 CWA 颱風警報更新\n"
-            f"颱風：{name_zh}\n"
-            f"觀測時間：{bulletin_time}\n"
-            f"位置：{coord}\n"
-            f"中心氣壓：{pressure} hPa\n"
-            f"近中心最大風速：{wind} m/s（陣風 {gust} m/s）\n"
-            f"移動：{moving_dir} {moving} km/h"
+        from flex_builder import typhoon_alert_flex
+        flex = typhoon_alert_flex(
+            name=name_zh,
+            time=bulletin_time,
+            location=latest.get("coordinate", "?"),
+            pressure=latest.get("pressure", "?"),
+            wind=latest.get("maxWindSpeed", "?"),
+            gust=latest.get("maxGustSpeed", "?"),
+            moving_dir=latest.get("movingDirection", "?"),
+            moving=latest.get("movingSpeed", "?"),
         )
-        return (key, message)
+        return (key, flex)
     except Exception as e:
         print(f"[alert/typhoon] CWA 颱風抓取失敗：{e}")
         return None
@@ -285,13 +195,7 @@ def check_gmail_forward(max_per_run=5):
 # ─────────────────────────────────────────────────────────
 
 def check_and_push_all():
-    """scheduler 入口：地震 + 颱風 + Gmail 一次檢查。"""
-    eq = check_earthquake()
-    if eq:
-        eq_no, msg = eq
-        print(f"[alert/eq] 推送地震 {eq_no}")
-        _push_to_group_and_admin(msg, "eq")
-
+    """scheduler 入口：颱風 + Gmail 一次檢查。"""
     ty = check_typhoon()
     if ty:
         key, msg = ty

@@ -50,11 +50,10 @@
 
 **自動推送（背景，每 5 分鐘輪詢，不用打指令）：**
 
-| 來源 | 條件 | 推送對象 |
-|---|---|---|
-| CWA 顯著有感地震（E-A0015-001）| 規模 ≥ `EQ_MIN_MAGNITUDE`（預設 4.0）| 群組 + admin |
-| CWA 颱風警報（W-C0033-001）| 新一筆 advisory | 群組 + admin |
-| 重要 Gmail 即時轉發 | `GMAIL_FORWARD_FROM` env 列的寄件人新信 | admin |
+| 來源 | 條件 | 推送對象 | 格式 |
+|---|---|---|---|
+| CWA 颱風警報（W-C0033-001）| 新一筆 advisory | 群組 + admin | Flex 卡片 |
+| 重要 Gmail 即時轉發 | `GMAIL_FORWARD_FROM` env 列的寄件人新信 | admin | 文字 |
 
 **保守觸發策略**：`hi` / `ok`、純中文聊天、「我買台積」這種句子都不會觸發。短英文與無前綴中文不視為指令，避免家人聊天被打擾。
 
@@ -178,9 +177,10 @@ LINE Group ←─┐
 | `gmail_reader.py` | 抓 Gmail 對帳單，雙市場 + 雙 pass 解析持倉 |
 | `portfolio.py` | 持倉現價/損益計算（台股顯中文名、分台/美股總報酬，最末以即時 USD/TWD 折算淨值合計；AU9901 黃金存摺用即時國際金價計算）|
 | `finance_query.py` | 個人 Gmail 財務查詢（admin-only）：精簡版（分類總和+大筆消費）vs 詳細版（IC Memo），Sonnet AI 抽金額分類 + 月加總 |
-| `alerts.py` | 即時警示（CWA 地震 / CWA 颱風 / 重要 Gmail 即時轉發），5 分鐘輪詢，in-memory state 防重推 |
-| `line_quota.py` | LINE Push 月配額計數器（Free Plan 200/月），超 80%/90%/100% 自動 warn admin，提供 `/額度` 指令 |
-| `line_sender.py` | LINE Messaging API push / reply 包裝（HTML strip + 切片） |
+| `alerts.py` | 即時警示（CWA 颱風 Flex 卡片 / 重要 Gmail 即時轉發），5 分鐘輪詢，in-memory state 防重推 |
+| `line_quota.py` | LINE Push 月配額計數器（輕用量 200/月），超 80%/90%/100% 自動 warn admin，提供 `/額度` 指令 |
+| `line_sender.py` | LINE Messaging API push / reply 包裝（接受 str / Flex dict / list 混合）|
+| `flex_builder.py` | LINE Flex Message 卡片產生器（待辦清單、提醒清單、颱風警報）|
 | `personal.py` | 個人待辦 / 提醒邏輯（in-memory + apscheduler 排 one-shot） |
 | `app_state.py` | 跨模組共享 scheduler ref（避免循環 import） |
 | `compare.py` | 兩檔績效比較（IX 指數對照、yfinance 算漲跌） |
@@ -246,8 +246,7 @@ Notion 持久化(待辦 / 提醒 / LINE 配額)
 | `ADMIN_TOKEN` | `/admin/run-daily` endpoint 保護用 |
 | `ADMIN_LINE_USER_ID` | 管理員錯誤通知 + admin-only 指令權限（自己的 LINE userId，用 `/我的id` 取得）|
 | `DAILY_CRON` | 排程 cron 表達式（預設 `"0 22 * * *"` = UTC 22:00 = 台北 06:00）|
-| `LINE_PUSH_QUOTA` | LINE 月 push 配額（預設 `200` = Free Plan；Light Plan 設 `4000`）|
-| `EQ_MIN_MAGNITUDE` | 地震警示規模門檻（預設 `4.0`）|
+| `LINE_PUSH_QUOTA` | LINE 月 push 配額（預設 `200` = 輕用量；中用量設 `3000`、高用量設 `6000`）|
 | `GMAIL_FORWARD_FROM` | 重要 Gmail 即時轉發的寄件人 watchlist，逗號分隔（例：`bossmail@xxx,landlord@yyy`）|
 | `PYTHONUNBUFFERED` | 設 `1`，讓 print 即時顯示在 Railway log |
 
@@ -312,8 +311,8 @@ DAILY_CRON = "0 22 * * *"  # UTC 22:00 = 台北 06:00
 - [x] ETF 前五大持股（台股 / 美股都顯示中文名）
 - [x] 台股基本面分析（月營收 / 季 EPS / 業務動態，24h cache）
 - [x] AI 用量追蹤 `/cost`（含成本估算）
-- [x] 1 對 1 待辦清單（完成自動移除，每天 06/09/12/18 點未完成自動提醒）
-- [x] 1 對 1 自訂提醒（`/提醒 30 分鐘後 X` / `/提醒 明天 9:30 X`，支援中文數字）
+- [x] 1 對 1 待辦清單（完成自動移除；Flex 卡片 + 「完成」postback 按鈕）
+- [x] 1 對 1 自訂提醒（`/提醒 30 分鐘後 X` / `/提醒 明天 9:30 X`，支援中文數字；響一次就結束、Flex 卡片 + 「延後 30 分 / 取消」postback 按鈕）
 - [x] 1 對 1 vs 群組權限分流（個人指令不在群組執行，避免家人看到）
 - [x] 多行訊息一次處理多個指令
 - [x] 資安補強：HMAC 驗章、log 脫敏（mask）
@@ -327,8 +326,7 @@ DAILY_CRON = "0 22 * * *"  # UTC 22:00 = 台北 06:00
 - [x] 持股加淨值合計（含 P&L%）：以即時 USD/TWD 折算成 NTD 一個總數；台股+黃金存摺合算
 - [x] AU9901 黃金存摺即時計算：抓 GC=F × USD/TWD ÷ 31.10 g/oz × 3.75 g/張
 - [x] 個人 Gmail 財務查詢：`/財務`（精簡）+ `/財務詳細`（IC Memo），admin-only
-- [x] CWA 顯著有感地震即時警示（規模 ≥ 4，5 分鐘輪詢，群組 + admin）
-- [x] CWA 颱風警報即時警示（W-C0033-001，新 advisory 推群組）
+- [x] CWA 颱風警報即時警示（W-C0033-001，新 advisory 推群組，Flex 卡片）
 - [x] 重要 Gmail 即時轉發（GMAIL_FORWARD_FROM 寄件人 watchlist → admin）
 - [x] LINE Push 月配額計數器：`/額度` 即時查；超 80%/90%/100% 自動 warn admin
 - [x] `/我的id` 取得自己的 LINE userId（首次設定 admin 用）

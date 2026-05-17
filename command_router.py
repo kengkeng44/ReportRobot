@@ -86,18 +86,18 @@ HELP_TEXT = (
     "\n"
     "📋 待辦清單（只在 1 對 1 chat 有效）\n"
     "  • /待辦 加 [內容]    新增\n"
-    "  • /待辦              看清單\n"
+    "  • /待辦              看清單卡片（可直接按「完成」按鈕）\n"
     "  • /待辦 完成 [編號]  完成（自動移除）\n"
     "  • /待辦 刪 [編號]    刪除\n"
     "  • /待辦 清空         清掉全部\n"
-    "  ℹ️ 未完成的會在每天 06/09/12/18 點自動提醒\n"
+    "  ℹ️ 不會自動 nag，請定期打 /待辦 看清單\n"
     "\n"
-    "⏰ 提醒（只在 1 對 1 chat 有效）\n"
+    "⏰ 提醒（只在 1 對 1 chat 有效，響一次就結束）\n"
     "  • /提醒 30 分鐘後 喝水\n"
     "  • /提醒 2 小時後 開會\n"
     "  • /提醒 明天 9:30 會議\n"
     "  • /提醒 今天 18:00 倒垃圾\n"
-    "  • /提醒              看所有進行中提醒\n"
+    "  • /提醒              看清單卡片（可直接按「延後 30 分」「取消」）\n"
     "  • /取消提醒 [編號]\n"
     "\n"
     "🧪 預覽明天的每日情報（只在 1 對 1 chat 有效）\n"
@@ -115,8 +115,7 @@ HELP_TEXT = (
     "  ℹ️ 把回傳的 U 開頭字串貼到 Infisical 的 ADMIN_LINE_USER_ID\n"
     "\n"
     "⚠️ 即時警示（自動推送，不用打指令；每 5 分鐘背景檢查）\n"
-    "  • CWA 規模 ≥ 4 顯著有感地震 → 群組 + admin\n"
-    "  • CWA 颱風警報新發布 → 群組 + admin\n"
+    "  • CWA 颱風警報新發布 → 群組 + admin（卡片式）\n"
     "  • 重要 Gmail（GMAIL_FORWARD_FROM 設的寄件人）→ admin\n"
     "\n"
     "🆘 顯示這個說明\n"
@@ -363,8 +362,9 @@ def _handle_todo_subcmd(user_id, body):
             personal.delete_todo(user_id, t["id"])
         return f"🧹 已清空 {len(items)} 筆待辦"
 
-    # 不認得 → 列清單
-    return personal.format_todos(user_id)
+    # 不認得 → 列清單卡片
+    from flex_builder import todo_list_flex
+    return todo_list_flex(personal.list_todos(user_id))
 
 
 def _handle_preview(user_id):
@@ -454,7 +454,8 @@ def handle(text, ctx=None):
 
         if kind == "reminder_list":
             import personal
-            return personal.format_reminders(ctx["user_id"])
+            from flex_builder import reminder_list_flex
+            return reminder_list_flex(personal.list_reminders(ctx["user_id"]))
 
         if kind == "reminder_cancel":
             import personal
@@ -484,7 +485,8 @@ def handle(text, ctx=None):
 
         if kind == "todo_list":
             import personal
-            return personal.format_todos(ctx["user_id"])
+            from flex_builder import todo_list_flex
+            return todo_list_flex(personal.list_todos(ctx["user_id"]))
 
         if kind == "todo":
             return _handle_todo_subcmd(ctx["user_id"], arg)
@@ -524,4 +526,94 @@ def handle(text, ctx=None):
             pass
         return f"查詢失敗：{e}"
 
+    return None
+
+
+# ════════════════════════════════════════
+# Postback handler（按 Flex 按鈕觸發的 webhook 事件）
+# ════════════════════════════════════════
+
+def handle_postback(data, user_id):
+    """處理 Flex 卡片按鈕的 postback。
+    data: 'action=todo_complete&id=5' urlencoded
+    user_id: 來自 event.source.userId（信任 LINE 平台，不從 data 取）
+    回 str | dict | list，給 reply_message 直接送。"""
+    from urllib.parse import parse_qs
+
+    if not data or not user_id:
+        return None
+
+    parsed = parse_qs(data)
+    action = (parsed.get("action") or [""])[0]
+    if not action:
+        return None
+
+    def _int_param(key, default=0):
+        try:
+            return int((parsed.get(key) or [str(default)])[0])
+        except (ValueError, TypeError):
+            return default
+
+    try:
+        if action == "todo_complete":
+            tid = _int_param("id")
+            import personal
+            from flex_builder import todo_list_flex
+            ok = personal.delete_todo(user_id, tid)
+            new_list = todo_list_flex(personal.list_todos(user_id))
+            if ok:
+                return [f"✅ 已完成 [{tid}]", new_list]
+            return f"找不到編號 {tid} 的待辦（可能已完成）"
+
+        if action == "reminder_cancel":
+            rid = _int_param("id")
+            import personal
+            from flex_builder import reminder_list_flex
+            ok = personal.cancel_reminder(user_id, rid)
+            new_list = reminder_list_flex(personal.list_reminders(user_id))
+            if ok:
+                return [f"🗑️ 已取消提醒 [{rid}]", new_list]
+            return f"找不到編號 {rid} 的提醒"
+
+        if action == "reminder_snooze":
+            from datetime import datetime, timedelta
+            rid = _int_param("id")
+            mins = _int_param("min", 30)
+            import personal
+            from line_sender import push_to_user_sync
+            from flex_builder import reminder_list_flex
+            # 找原提醒、取消、用同樣文字 reschedule
+            items = personal.list_reminders(user_id)
+            target = next((t for t in items if t["id"] == rid), None)
+            if not target:
+                return f"找不到編號 {rid} 的提醒"
+            personal.cancel_reminder(user_id, rid)
+            new_fire = datetime.now() + timedelta(minutes=mins)
+            new_id = personal.add_reminder(
+                user_id, target["text"], new_fire, push_to_user_sync,
+            )
+            if new_id is None:
+                return "⚠️ 排程系統未就緒，請稍後再試"
+            confirm = (
+                f"⏳ 已延後 {mins} 分至 {new_fire.strftime('%H:%M')}\n"
+                f"📝 {target['text']}"
+            )
+            new_list = reminder_list_flex(personal.list_reminders(user_id))
+            return [confirm, new_list]
+
+    except Exception as e:
+        print(f"Postback 處理失敗 (action={action})：{e}")
+        import traceback; traceback.print_exc()
+        try:
+            from admin_notify import notify_admin
+            notify_admin(e, {
+                "module": "command_router",
+                "section": f"postback/{action}",
+                "extra": f"data={data[:80]}",
+            })
+        except Exception:
+            pass
+        return f"操作失敗：{e}"
+
+    print(f"未知的 postback action：{action}")
     return None

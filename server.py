@@ -65,13 +65,6 @@ def _scheduler_error_listener(event):
     })
 
 
-def _periodic_todo_reminder():
-    """每 4 小時提醒所有 user 未完成的待辦。同步函式（apscheduler 直接呼叫）。"""
-    from personal import send_pending_reminders
-    from line_sender import push_to_user_sync
-    send_pending_reminders(push_to_user_sync)
-
-
 # 應用層冪等：每日報每天最多執行一次。flag 寫到 /tmp（Railway 容器內 ephemeral，
 # 重啟會清空；但搭配 apscheduler 的 coalesce + misfire_grace_time，已經能擋住
 # 90% 重啟剛好踩在排程點的場景）。
@@ -114,18 +107,7 @@ async def lifespan(app: FastAPI):
         misfire_grace_time=300,       # 錯過 5 分鐘內仍補跑，超過就放棄
         replace_existing=True,
     )
-    # 待辦定期提醒：台北時間每天 06:00 / 09:00 / 12:00 / 18:00
-    # 沒有未完成待辦時 send_pending_reminders 內部會 skip，不會吵
-    scheduler.add_job(
-        _periodic_todo_reminder,
-        CronTrigger(hour="6,9,12,18", minute=0, timezone="Asia/Taipei"),
-        id="periodic_todo_reminder",
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=300,
-        replace_existing=True,
-    )
-    # 即時警示（地震 / 颱風 / 重要 Gmail）：每 5 分鐘檢查一輪
+    # 即時警示（颱風 / 重要 Gmail）：每 5 分鐘檢查一輪
     from alerts import check_and_push_all as _check_alerts
     scheduler.add_job(
         _check_alerts,
@@ -156,7 +138,6 @@ async def lifespan(app: FastAPI):
     import app_state
     app_state.set_scheduler(scheduler)
     print(f"Scheduler 啟動，每日報排程：{DAILY_CRON} (UTC)")
-    print("待辦定期提醒：台北 06:00 / 09:00 / 12:00 / 18:00（沒待辦時不發）")
     print("LINE push 月配額警示：每天 09:00 TPE")
     # Notion 持久化：把上次 deploy 前還沒 fire 的提醒重新 schedule
     try:
@@ -231,16 +212,29 @@ async def line_webhook(
     events = payload.get("events", []) or []
 
     for event in events:
-        if event.get("type") != "message":
-            source = event.get("source", {}) or {}
-            print(f"[webhook] event={event.get('type')} source={mask_source(source)}")
+        event_type = event.get("type")
+        source = event.get("source", {}) or {}
+        reply_token = event.get("replyToken")
+
+        # Postback：Flex 卡片按鈕點擊事件
+        if event_type == "postback":
+            data = (event.get("postback", {}) or {}).get("data", "")
+            user_id = source.get("userId")
+            print(f"[webhook] postback data={data[:60]!r} source={mask_source(source)}")
+            if not (reply_token and user_id):
+                continue
+            response = command_router.handle_postback(data, user_id)
+            if response:
+                await reply_message(reply_token, response)
+            continue
+
+        if event_type != "message":
+            print(f"[webhook] event={event_type} source={mask_source(source)}")
             continue
         msg = event.get("message", {}) or {}
         if msg.get("type") != "text":
             continue
         text = msg.get("text", "")
-        reply_token = event.get("replyToken")
-        source = event.get("source", {}) or {}
         print(f"[webhook] message text={text[:30]!r} source={mask_source(source)}")
         if not reply_token:
             continue
@@ -252,19 +246,23 @@ async def line_webhook(
             "group_id": source.get("groupId"),
         }
 
-        # 多行訊息：每行各自當獨立指令，結果合併成一則 reply
+        # 多行訊息：每行各自當獨立指令，依序塞進同一 reply（最多 5 則 LINE 上限）
         # 限制最多 3 行，避免一次塞十個指令把 server 卡爆
         lines = [l.strip() for l in text.splitlines() if l.strip()]
         if len(lines) > 1:
             parts = []
             for line in lines[:3]:
                 r = command_router.handle(line, ctx=ctx)
-                if r:
+                if r is None:
+                    continue
+                # response 可能是 str / dict / list；攤平成 list
+                if isinstance(r, list):
+                    parts.extend(r)
+                else:
                     parts.append(r)
             if parts:
-                combined = "\n\n━━━━━━━━━━\n\n".join(parts)
-                print(f"LINE 多行指令命中 {len(parts)} 行 → 回覆 {len(combined)} 字")
-                await reply_message(reply_token, combined)
+                print(f"LINE 多行指令命中 {len(parts)} 則 → reply")
+                await reply_message(reply_token, parts)
             continue
 
         response = command_router.handle(text, ctx=ctx)
