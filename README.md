@@ -180,7 +180,7 @@ LINE Group ←─┐
 | `alerts.py` | 即時警示（CWA 颱風 Flex 卡片 / 重要 Gmail 即時轉發），5 分鐘輪詢，in-memory state 防重推 |
 | `line_quota.py` | LINE Push 月配額計數器（輕用量 200/月），超 80%/90%/100% 自動 warn admin，提供 `/額度` 指令 |
 | `line_sender.py` | LINE Messaging API push / reply 包裝（接受 str / Flex dict / list 混合）|
-| `flex_builder.py` | LINE Flex Message 卡片產生器（待辦 / 提醒 / 颱風 / 每日報 Carousel / 通用 text_bubble）|
+| `flex_builder.py` | LINE Flex Message 卡片產生器（待辦 / 提醒 / 颱風 / 每日報 Carousel / 個股 Carousel / 持倉表格 / 通用 text_bubble）|
 | `setup_richmenu.py` | LINE Rich Menu 一次性設定（PIL 生成 6 格選單圖、上傳、設 default）；對話框下方固定選單，**不計 push 配額** |
 | `personal.py` | 個人待辦 / 提醒邏輯（in-memory + apscheduler 排 one-shot） |
 | `app_state.py` | 跨模組共享 scheduler ref（避免循環 import） |
@@ -320,7 +320,7 @@ DAILY_CRON = "0 22 * * *"  # UTC 22:00 = 台北 06:00
 ### v1 已完成
 
 - [x] 每日 LINE 群組推播（天氣 + 盤前報告，每天台北 06:00，Flex Carousel 1 則 push）
-- [x] LINE 互動指令：個股、ETF、持倉、比較、自由問答、用量、help
+- [x] LINE 互動指令：個股（Flex Carousel 多 bubble）、ETF、持倉（Flex 表格）、比較、自由問答、用量、help
 - [x] 中文公司名反查、上市/上櫃自動判斷（`.TW` / `.TWO`）
 - [x] ETF 前五大持股（台股 / 美股都顯示中文名）
 - [x] 台股基本面分析（月營收 / 季 EPS / 業務動態，24h cache）

@@ -244,6 +244,8 @@ def reminder_list_flex(items):
 # ════════════════════════════════════════
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
+_BOLD_TAG_RE = re.compile(r"<b>([^<]+)</b>")
+_LEADING_BOLD_HEADER_RE = re.compile(r"^\s*<b>[^<]+</b>\s*\n+")
 
 
 def _strip_html(text):
@@ -253,24 +255,27 @@ def _strip_html(text):
     return unescape(_HTML_TAG_RE.sub("", text)).strip()
 
 
-def text_bubble(title, body, subtitle="", header_color=_BROWN, alt_emoji=""):
+def text_bubble(title, body, subtitle="", header_color=_BROWN, bold_subheaders=True):
     """通用 bubble：header（標題 + 副標）+ body（按 \\n\\n 拆成多段 text 元件）。
 
-    title:        header 主標（含 emoji 即可）
-    body:         多段純文字字串；會 strip HTML、按 \\n\\n 拆段；段內 \\n 保留（wrap）
-    subtitle:     header 副標（小字）
-    header_color: header 背景色
-    alt_emoji:    altText 前綴用的 emoji
+    - 自動拿掉 body 開頭重複的 <b>title</b> 段（避免跟 header 重複）
+    - bold_subheaders=True 時：多行段落第一行（≤30 字）視為次標 bold
+      single-bubble 多區塊內容（每日報的 premarket / weather）用 True
+      single-section 內容（個股 carousel 的單一 section）用 False
     """
+    if not body:
+        body = ""
+    # 拿掉 body 開頭重複的 <b>...</b>\n\n（避免跟 bubble header 撞）
+    body = _LEADING_BOLD_HEADER_RE.sub("", body, count=1)
     body = _strip_html(body)
+
     paragraphs = [p.strip() for p in body.split("\n\n") if p.strip()]
     contents = []
     for i, para in enumerate(paragraphs):
         if i > 0:
             contents.append(_separator())
-        # 多行段落：第一行通常是 emoji 標題 → bold；其餘 regular
         lines = para.split("\n")
-        if len(lines) > 1 and len(lines[0]) <= 30:
+        if bold_subheaders and len(lines) > 1 and len(lines[0]) <= 30:
             contents.append({
                 "type": "text", "text": lines[0],
                 "size": "sm", "weight": "bold",
@@ -341,6 +346,228 @@ def daily_report_carousel(weather_text, premarket_text, today_str):
         {"type": "carousel", "contents": bubbles},
         alt=f"📅 每日情報（{today_str}）",
     )
+
+
+# ════════════════════════════════════════
+# 個股報告 carousel（把 stock_news.get_stock_report 字串轉成多 bubble 橫滑）
+# ════════════════════════════════════════
+
+# 不同區塊用不同 header 色，視覺上比較有層次
+_STOCK_SECTION_COLORS = {
+    "📖": _BROWN,    # 簡介
+    "💰": _GREEN,    # 股價
+    "📦": "#5B8DA6", # ETF 持股
+    "📊": "#7A6D9C", # 基本面
+    "📰": _ORANGE,   # 新聞
+    "🗣️": "#5C8A8A", # PTT
+    "🌐": "#5C8A8A", # 英文論壇
+    "🎴": "#A0826D", # Dcard
+    "🤖": _BROWN,    # AI 解讀
+}
+
+
+def _section_color(header):
+    """根據 section 開頭 emoji 挑顏色；不認得回 _BROWN。"""
+    for emoji, color in _STOCK_SECTION_COLORS.items():
+        if header.startswith(emoji):
+            return color
+    return _BROWN
+
+
+def _parse_html_sections(text):
+    """把 stock_news 輸出的多段 HTML 字串切成 [(header, body), ...]。
+    格式：'<b>📌 ...</b>\\n\\n<b>📖 簡介</b>\\nbody1\\n\\n<b>💰 股價</b>\\nbody2...'
+    第一段如果只有 header 無 body，body 會是空字串。"""
+    parts = _BOLD_TAG_RE.split(text)
+    sections = []
+    # parts[0]=前置垃圾, parts[1]=第1個header, parts[2]=第1個body, parts[3]=第2個header...
+    for i in range(1, len(parts), 2):
+        head = parts[i].strip()
+        body = parts[i + 1].strip() if i + 1 < len(parts) else ""
+        sections.append((head, body))
+    return sections
+
+
+def stock_report_carousel(full_text):
+    """把 stock_news.get_stock_report 輸出的 HTML 字串轉成 Flex Carousel。
+    每個 <b>...</b> section 一張 bubble；首段「📌 ticker name」當 carousel altText、不變 bubble。
+    解析失敗 / 沒 section 回 None（呼叫端 fallback 文字）。"""
+    if not full_text:
+        return None
+    sections = _parse_html_sections(full_text)
+    if not sections:
+        return None
+
+    title = None
+    bubbles_data = []
+    for head, body in sections:
+        if head.startswith("📌") and not body:
+            title = head  # 例：「📌 2330 台積電」
+            continue
+        if not body:
+            continue
+        bubbles_data.append((head, body))
+
+    bubbles = []
+    for head, body in bubbles_data[:10]:  # carousel 上限 12，留點 buffer
+        bubbles.append(text_bubble(
+            head, body,
+            header_color=_section_color(head),
+            bold_subheaders=False,  # 單一 section bubble 不需要再分次標
+            subtitle=title.replace("📌 ", "") if title else "",
+        ))
+
+    if not bubbles:
+        return None
+    if len(bubbles) == 1:
+        return _wrap(bubbles[0], alt=title or "個股報告")
+    return _wrap(
+        {"type": "carousel", "contents": bubbles},
+        alt=title or "個股報告",
+    )
+
+
+# ════════════════════════════════════════
+# 持倉概覽 Flex
+# ════════════════════════════════════════
+
+def _portfolio_row(r):
+    """單檔持股 row：左邊 display + 股數 / 均價；右邊現價 + 漲跌% 色塊。"""
+    pct = r.get("pnl_pct")
+    if pct is None:
+        pct_text = "—"
+        pct_color = _TEXT_LIGHT
+    else:
+        sign = "+" if pct >= 0 else ""
+        pct_text = f"{sign}{pct:.1f}%"
+        pct_color = _GREEN if pct >= 0 else _RED
+
+    current = r.get("current_str") or "N/A"
+    avg = r.get("avg_str") or "—"
+    shares = r.get("shares")
+    display = r.get("display") or "—"
+
+    return {
+        "type": "box", "layout": "horizontal", "spacing": "sm",
+        "contents": [
+            {
+                "type": "box", "layout": "vertical",
+                "flex": 5, "spacing": "xs",
+                "contents": [
+                    {"type": "text", "text": display,
+                     "size": "sm", "weight": "bold",
+                     "color": _TEXT_DARK, "wrap": True},
+                    {"type": "text", "text": f"{shares} 股 @{avg}",
+                     "size": "xs", "color": _TEXT_LIGHT},
+                ],
+            },
+            {
+                "type": "box", "layout": "vertical",
+                "flex": 4, "spacing": "xs",
+                "contents": [
+                    {"type": "text", "text": current,
+                     "size": "sm", "color": _TEXT_DARK,
+                     "align": "end", "wrap": True},
+                    {"type": "text", "text": pct_text,
+                     "size": "xs", "color": pct_color,
+                     "weight": "bold", "align": "end"},
+                ],
+            },
+        ],
+    }
+
+
+def _summary_line(label, s):
+    """總報酬 footer 單行：label | 成本 | 市值 | ±X.X%"""
+    pct = s["pct"]
+    sign = "+" if pct >= 0 else ""
+    color = _GREEN if pct >= 0 else _RED
+    is_us = s.get("is_us", False)
+    prefix = "$" if is_us else ""
+    return {
+        "type": "box", "layout": "horizontal", "spacing": "sm",
+        "contents": [
+            {"type": "text", "text": label,
+             "size": "xs", "color": _TEXT_LIGHT,
+             "flex": 3, "weight": "bold"},
+            {"type": "text",
+             "text": f"市值 {prefix}{s['value']:,.0f}",
+             "size": "xs", "color": _TEXT_DARK,
+             "flex": 4, "align": "end"},
+            {"type": "text", "text": f"{sign}{pct:.1f}%",
+             "size": "xs", "color": color,
+             "weight": "bold", "flex": 2, "align": "end"},
+        ],
+    }
+
+
+def portfolio_flex(data):
+    """data 由 portfolio.build_portfolio_flex 計算後傳入；schema 見該函式 docstring。
+    無持倉回 None。"""
+    rows = data.get("rows") or []
+    if not rows:
+        return None
+
+    body = []
+    for i, r in enumerate(rows):
+        if i > 0:
+            body.append(_separator())
+        body.append(_portfolio_row(r))
+
+    # footer：台美分區總報酬 + 淨值合計
+    footer_contents = []
+    tw = data.get("tw_summary")
+    us = data.get("us_summary")
+    if tw or us:
+        footer_contents.append({
+            "type": "text", "text": "💰 總報酬",
+            "size": "sm", "weight": "bold", "color": _TEXT_DARK,
+        })
+    if tw:
+        footer_contents.append(_summary_line("🇹🇼 台股", tw))
+    if us:
+        footer_contents.append(_summary_line("🇺🇸 美股", us))
+
+    net = data.get("net_value_ntd")
+    rate = data.get("usd_twd_rate")
+    if net is not None:
+        suffix = f"  (USD/TWD={rate:.2f})" if rate and data.get("us_summary") else ""
+        footer_contents.append(_separator())
+        footer_contents.append({
+            "type": "text",
+            "text": f"💎 淨值合計：NTD {net:,.0f}{suffix}",
+            "size": "sm", "weight": "bold",
+            "color": _TEXT_DARK, "wrap": True,
+        })
+    elif data.get("us_value_only_usd") is not None and rate is None:
+        # 匯率抓不到 → 顯示兩個幣別分計
+        tw_v = data.get("tw_value_only_ntd") or 0
+        us_v = data.get("us_value_only_usd")
+        footer_contents.append(_separator())
+        footer_contents.append({
+            "type": "text",
+            "text": f"💎 淨值：NTD {tw_v:,.0f} + USD {us_v:,.0f}（匯率抓取失敗）",
+            "size": "xs", "weight": "bold",
+            "color": _TEXT_DARK, "wrap": True,
+        })
+
+    bubble = {
+        "type": "bubble", "size": "mega",
+        "header": _header("📊 持倉概覽", f"共 {len(rows)} 檔"),
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "sm",
+            "backgroundColor": _LIGHT_BG, "paddingAll": "lg",
+            "contents": body,
+        },
+    }
+    if footer_contents:
+        bubble["footer"] = {
+            "type": "box", "layout": "vertical",
+            "paddingAll": "md", "spacing": "xs",
+            "backgroundColor": _LIGHT_BG,
+            "contents": footer_contents,
+        }
+    return _wrap(bubble, alt=f"📊 持倉概覽（{len(rows)} 檔）")
 
 
 def typhoon_alert_flex(name, time, location, pressure, wind, gust, moving_dir, moving):

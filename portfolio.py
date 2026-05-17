@@ -160,6 +160,100 @@ def _format_pnl_amount(value, is_us):
     return f"{sign}{prefix}{abs(value):,.0f}"
 
 
+def _compute_portfolio_data(portfolio):
+    """共用計算：跑 portfolio dict 算出每檔現價 / 損益 / 台美分區小計 / 淨值。
+    給 build_portfolio_summary（文字版）與 build_portfolio_flex（Flex 版）共用。"""
+    rows = []
+    tw_cost = tw_value = 0.0
+    us_cost = us_value = 0.0
+
+    for ticker, p in portfolio.items():
+        is_us = not _is_tw_ticker(ticker)
+        shares = p["shares"]
+        avg_cost = p["avg_cost"]
+        current = get_live_price(ticker)
+        name = get_stock_name(ticker)
+        display = ticker if is_us else (name or ticker)
+        avg_str = _format_price(avg_cost, is_us)
+
+        if current is None:
+            note = "（黃金存摺 / 興櫃）" if _is_special_security(ticker) else ""
+            rows.append({
+                "ticker": ticker, "display": display, "is_us": is_us,
+                "shares": shares, "avg": avg_cost, "avg_str": avg_str,
+                "current": None, "current_str": f"N/A{note}",
+                "pnl": None, "pnl_pct": None,
+                "sort_key": shares * avg_cost,
+            })
+            continue
+
+        cost_value = shares * avg_cost
+        market_value = shares * current
+        pnl = market_value - cost_value
+        pnl_pct = (current - avg_cost) / avg_cost * 100 if avg_cost > 0 else 0
+
+        if is_us:
+            us_cost += cost_value
+            us_value += market_value
+        else:
+            tw_cost += cost_value
+            tw_value += market_value
+
+        rows.append({
+            "ticker": ticker, "display": display, "is_us": is_us,
+            "shares": shares, "avg": avg_cost, "avg_str": avg_str,
+            "current": current, "current_str": _format_price(current, is_us),
+            "pnl": pnl, "pnl_pct": pnl_pct,
+            "sort_key": market_value,
+        })
+
+    rows.sort(key=lambda r: r["sort_key"], reverse=True)
+
+    tw_summary = None
+    us_summary = None
+    if tw_cost > 0:
+        tw_pnl = tw_value - tw_cost
+        tw_summary = {
+            "cost": tw_cost, "value": tw_value, "pnl": tw_pnl,
+            "pct": tw_pnl / tw_cost * 100, "is_us": False,
+        }
+    if us_cost > 0:
+        us_pnl = us_value - us_cost
+        us_summary = {
+            "cost": us_cost, "value": us_value, "pnl": us_pnl,
+            "pct": us_pnl / us_cost * 100, "is_us": True,
+        }
+
+    rate = None
+    net_ntd = None
+    if tw_value > 0 or us_value > 0:
+        rate = _get_usd_twd()
+        if us_value > 0 and rate:
+            net_ntd = tw_value + us_value * rate
+        elif us_value == 0:
+            net_ntd = tw_value
+        # rate None + us_value > 0 → 留 net_ntd=None，呼叫端顯示分計
+
+    return {
+        "rows": rows,
+        "tw_summary": tw_summary,
+        "us_summary": us_summary,
+        "net_value_ntd": net_ntd,
+        "usd_twd_rate": rate,
+        "tw_value_only_ntd": tw_value if tw_value > 0 else None,
+        "us_value_only_usd": us_value if us_value > 0 else None,
+    }
+
+
+def build_portfolio_flex(portfolio):
+    """Flex 版持倉概覽。無持倉回 None；呼叫端可 fallback 文字版。"""
+    if not portfolio:
+        return None
+    data = _compute_portfolio_data(portfolio)
+    from flex_builder import portfolio_flex
+    return portfolio_flex(data)
+
+
 def build_portfolio_summary(portfolio):
     """
     portfolio: {ticker: {'shares': N, 'avg_cost': X}}

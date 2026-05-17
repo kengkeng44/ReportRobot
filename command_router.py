@@ -435,14 +435,20 @@ def handle(text, ctx=None):
 
         if kind == "portfolio":
             from gmail_reader import get_portfolio_from_gmail
-            from portfolio import build_portfolio_summary
+            from portfolio import build_portfolio_flex, build_portfolio_summary
             portfolio = get_portfolio_from_gmail()
-            summary = build_portfolio_summary(portfolio)
-            return summary or "目前無持倉資料"
+            flex = build_portfolio_flex(portfolio)
+            if flex:
+                return flex
+            # fallback 文字版（理論上空持倉才會走到這）
+            return build_portfolio_summary(portfolio) or "目前無持倉資料"
 
         if kind == "stock":
             from stock_news import get_stock_report
-            return get_stock_report(arg)
+            from flex_builder import stock_report_carousel
+            text = get_stock_report(arg)
+            carousel = stock_report_carousel(text)
+            return carousel or text  # 解析失敗 fallback 純文字
 
         if kind == "compare":
             from compare import compare_returns
