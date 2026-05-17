@@ -8,6 +8,7 @@ feedparser==6.0.12
 requests==2.33.1
 beautifulsoup4==4.14.3
 matplotlib==3.10.8
+Pillow==11.1.0
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
 apscheduler==3.10.4

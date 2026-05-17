@@ -1,45 +1,54 @@
 """
-每日報告（08:00 推送）：天氣 → 大盤指數 → 盤前報告。
-持倉與個股改成 on-demand：使用者用 /仁和持股、/2330、/AAPL 等指令查。
-週末略過盤前段，其他照發。
-任一段失敗仍會推降級文案（讓用戶知道某段掛掉）；錯誤同時通知管理員。
+每日報告（08:00 推送）：天氣 + 盤前 包成 Flex Carousel 1 則 push。
+
+設計：先 gather 兩段純文字（不直接推），再組成 carousel push 1 次。
+任一段失敗就在對應 bubble 顯示降級文案；兩段都失敗才 fallback 純文字。
+比過去切 2-3 chunk 多次 push 節省 30-60 則配額/月。
 """
 
 import traceback
 from datetime import date
-from weather import get_weather_report
-from premarket import build_premarket_report
-from line_sender import push_message
+
 from admin_notify import notify_admin
+from flex_builder import daily_report_carousel
+from line_sender import push_message
+from premarket import build_premarket_report
+from weather import get_weather_report
 
 
-async def _push_safe(label, body_fn):
-    """執行 body_fn() 拿段落字串；失敗時推一段降級文案 + 通知管理員。"""
+def _safe(label, body_fn):
+    """執行 body_fn() 拿字串；失敗時通知 admin 並回 None。"""
     try:
-        body = body_fn()
-        if body:
-            await push_message(body)
+        return body_fn()
     except Exception as e:
         print(f"[{label}] 失敗：{e}")
         traceback.print_exc()
         notify_admin(e, {"module": "daily_report", "section": label})
-        try:
-            await push_message(f"<b>⚠️ {label}段</b>\n資料暫時無法取得，已通知維運。")
-        except Exception as push_err:
-            print(f"[{label}] 降級文案 push 也失敗：{push_err}")
+        return None
 
 
 async def run_daily_report(force_premarket=False):
     print(f"開始執行每日情報... (force_premarket={force_premarket})")
     today = date.today().strftime("%Y-%m-%d")
 
-    # 1. 天氣 + 近期活動（直接從天氣報告開始，不要「每日情報」總標題）
+    # 1. 天氣
     def _weather():
         weather_msg, _ = get_weather_report()  # chart_path 不用，LINE 不傳圖
-        return f"<b>🌤️ 天氣報告</b>  {today}\n\n{weather_msg}"
-    await _push_safe("天氣", _weather)
+        return weather_msg
+    weather_text = _safe("天氣", _weather)
 
-    # 2. 盤前報告（含國際指數/匯率/三大法人/AI 重點；週末略過，force=True bypass）
-    await _push_safe("盤前", lambda: build_premarket_report(force=force_premarket))
+    # 2. 盤前報告（週末回 None，week_text 也是 None）
+    premarket_text = _safe(
+        "盤前",
+        lambda: build_premarket_report(force=force_premarket),
+    )
 
+    # 組 carousel 一次推（1 則 push）
+    carousel = daily_report_carousel(weather_text, premarket_text, today)
+    if carousel is None:
+        # 兩段都炸了 → 推一則純文字告知
+        await push_message(f"<b>⚠️ 每日情報 {today}</b>\n資料暫時無法取得，已通知維運。")
+        return
+
+    await push_message(carousel)
     print("每日情報傳送完成！")

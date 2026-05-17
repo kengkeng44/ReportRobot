@@ -300,6 +300,27 @@ async def trigger_daily(request: Request, force: int = 0):
     return {"ok": True, "force_premarket": bool(force)}
 
 
+@app.post("/admin/setup-richmenu")
+async def setup_richmenu(request: Request):
+    """一次性建立 / 重建 LINE Rich Menu（對話框下方的 6 格固定選單）。
+    Rich Menu 完全不計入 push 配額。
+    PowerShell 範例：
+      Invoke-RestMethod -Method Post -Uri https://<host>/admin/setup-richmenu \\
+        -Headers @{ 'X-Admin-Token' = $env:ADMIN_TOKEN }"""
+    admin_token = os.environ.get("ADMIN_TOKEN", "")
+    if not admin_token:
+        raise HTTPException(status_code=503, detail="Admin disabled")
+    if request.headers.get("X-Admin-Token") != admin_token:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    from setup_richmenu import setup as _setup
+    try:
+        menu_id = _setup()
+        return {"ok": True, "richMenuId": menu_id}
+    except Exception as e:
+        print(f"[richmenu] setup 失敗：{e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/admin/portfolio-debug")
 async def portfolio_debug(request: Request):
     """Dump 所有 trades + 累計後 portfolio，用來對照月對帳單抓 parser bug。

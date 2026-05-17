@@ -180,7 +180,8 @@ LINE Group ←─┐
 | `alerts.py` | 即時警示（CWA 颱風 Flex 卡片 / 重要 Gmail 即時轉發），5 分鐘輪詢，in-memory state 防重推 |
 | `line_quota.py` | LINE Push 月配額計數器（輕用量 200/月），超 80%/90%/100% 自動 warn admin，提供 `/額度` 指令 |
 | `line_sender.py` | LINE Messaging API push / reply 包裝（接受 str / Flex dict / list 混合）|
-| `flex_builder.py` | LINE Flex Message 卡片產生器（待辦清單、提醒清單、颱風警報）|
+| `flex_builder.py` | LINE Flex Message 卡片產生器（待辦 / 提醒 / 颱風 / 每日報 Carousel / 通用 text_bubble）|
+| `setup_richmenu.py` | LINE Rich Menu 一次性設定（PIL 生成 6 格選單圖、上傳、設 default）；對話框下方固定選單，**不計 push 配額** |
 | `personal.py` | 個人待辦 / 提醒邏輯（in-memory + apscheduler 排 one-shot） |
 | `app_state.py` | 跨模組共享 scheduler ref（避免循環 import） |
 | `compare.py` | 兩檔績效比較（IX 指數對照、yfinance 算漲跌） |
@@ -264,6 +265,19 @@ Notion 持久化(待辦 / 提醒 / LINE 配額)
 - `https://<railway-domain>/admin/env-check` 可檢查環境變數是否正確 sync 到 Railway
 - `https://<railway-domain>/admin/portfolio-debug`（要 X-Admin-Token）回 JSON 含所有 trades 與累計 portfolio，方便對照月對帳單 debug parser
 
+## Rich Menu（對話框下方 6 格固定選單）
+
+部署後跑一次 setup（**不計 push 配額**）：
+
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri "https://<railway-host>/admin/setup-richmenu" `
+  -Headers @{ "X-Admin-Token" = "你的 ADMIN_TOKEN" }
+```
+
+預設 6 格：📋 待辦 / ⏰ 提醒 / 📊 持股 / 🔮 預覽 / 💰 用量 / ❓ 說明。
+要改格子內容、色彩、指令文字改 `setup_richmenu.py` 的 `CELLS` 常數重跑即可。
+
 ## 監控 AI 用量與費用
 
 ### 從 LINE 群組查（最方便）
@@ -305,7 +319,7 @@ DAILY_CRON = "0 22 * * *"  # UTC 22:00 = 台北 06:00
 
 ### v1 已完成
 
-- [x] 每日 LINE 群組推播（天氣 + 盤前報告，每天台北 06:00）
+- [x] 每日 LINE 群組推播（天氣 + 盤前報告，每天台北 06:00，Flex Carousel 1 則 push）
 - [x] LINE 互動指令：個股、ETF、持倉、比較、自由問答、用量、help
 - [x] 中文公司名反查、上市/上櫃自動判斷（`.TW` / `.TWO`）
 - [x] ETF 前五大持股（台股 / 美股都顯示中文名）

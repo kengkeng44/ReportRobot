@@ -5,6 +5,8 @@ LINE Flex Message 卡片產生器。
 - todo_list_flex(items)         待辦清單卡片（每筆一行 + 完成 postback 按鈕）
 - reminder_list_flex(items)     提醒清單卡片（每筆 + 取消 / 延後 30 分按鈕）
 - typhoon_alert_flex(...)       颱風警報卡片（informational only）
+- text_bubble(title, body, ...) 通用「標題 + 多段文字」bubble（給每日報用）
+- daily_report_carousel(...)    每日報 carousel（多 bubble 橫滑、1 則 push 搞定）
 
 postback data 採 urlencoded query string，格式：
 - action=todo_complete&id=5
@@ -12,11 +14,13 @@ postback data 採 urlencoded query string，格式：
 - action=reminder_snooze&id=3&min=30
 
 回傳格式：LINE Messaging API 的 message dict
-  {"type": "flex", "altText": "...", "contents": {bubble dict}}
+  {"type": "flex", "altText": "...", "contents": {bubble or carousel dict}}
 
 altText 必填，是通知列 / 不支援 Flex 客戶端的 fallback。
 """
 
+import re
+from html import unescape
 from urllib.parse import urlencode
 
 
@@ -234,6 +238,110 @@ def reminder_list_flex(items):
 # ════════════════════════════════════════
 # 颱風警報
 # ════════════════════════════════════════
+
+# ════════════════════════════════════════
+# 通用：標題 + 多段文字 bubble（給每日報、自由問答長文用）
+# ════════════════════════════════════════
+
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_html(text):
+    """LINE Flex text 元件不支援 HTML，全部 strip 掉只留純文字。"""
+    if not text:
+        return ""
+    return unescape(_HTML_TAG_RE.sub("", text)).strip()
+
+
+def text_bubble(title, body, subtitle="", header_color=_BROWN, alt_emoji=""):
+    """通用 bubble：header（標題 + 副標）+ body（按 \\n\\n 拆成多段 text 元件）。
+
+    title:        header 主標（含 emoji 即可）
+    body:         多段純文字字串；會 strip HTML、按 \\n\\n 拆段；段內 \\n 保留（wrap）
+    subtitle:     header 副標（小字）
+    header_color: header 背景色
+    alt_emoji:    altText 前綴用的 emoji
+    """
+    body = _strip_html(body)
+    paragraphs = [p.strip() for p in body.split("\n\n") if p.strip()]
+    contents = []
+    for i, para in enumerate(paragraphs):
+        if i > 0:
+            contents.append(_separator())
+        # 多行段落：第一行通常是 emoji 標題 → bold；其餘 regular
+        lines = para.split("\n")
+        if len(lines) > 1 and len(lines[0]) <= 30:
+            contents.append({
+                "type": "text", "text": lines[0],
+                "size": "sm", "weight": "bold",
+                "color": _TEXT_DARK, "wrap": True,
+            })
+            contents.append({
+                "type": "text", "text": "\n".join(lines[1:]),
+                "size": "xs", "color": _TEXT_DARK,
+                "wrap": True, "margin": "xs",
+            })
+        else:
+            contents.append({
+                "type": "text", "text": para,
+                "size": "sm", "color": _TEXT_DARK, "wrap": True,
+            })
+
+    if not contents:
+        contents = [{
+            "type": "text", "text": "（無內容）",
+            "size": "sm", "color": _TEXT_LIGHT, "align": "center",
+        }]
+
+    return {
+        "type": "bubble", "size": "mega",
+        "header": _header(title, subtitle, bg=header_color),
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "sm",
+            "backgroundColor": _LIGHT_BG, "paddingAll": "lg",
+            "contents": contents,
+        },
+    }
+
+
+def daily_report_carousel(weather_text, premarket_text, today_str):
+    """把每日報組成 carousel（橫滑），1 則 push 搞定。
+    任一段缺：對應 bubble 顯示「⚠️ 暫時無法取得」；兩段都缺回 None。"""
+    bubbles = []
+    if weather_text:
+        bubbles.append(text_bubble(
+            title="🌤️ 天氣報告",
+            subtitle=today_str,
+            body=weather_text,
+            header_color=_BROWN,
+        ))
+    else:
+        bubbles.append(text_bubble(
+            title="🌤️ 天氣報告",
+            subtitle=today_str,
+            body="⚠️ 天氣資料暫時無法取得",
+            header_color=_BROWN,
+        ))
+
+    if premarket_text:
+        bubbles.append(text_bubble(
+            title="📊 盤前報告",
+            subtitle=today_str,
+            body=premarket_text,
+            header_color="#5B8DA6",
+        ))
+    # premarket_text 為 None 時通常是週末，這時就只有天氣 bubble
+
+    if not bubbles:
+        return None
+
+    if len(bubbles) == 1:
+        return _wrap(bubbles[0], alt="📅 每日情報")
+    return _wrap(
+        {"type": "carousel", "contents": bubbles},
+        alt=f"📅 每日情報（{today_str}）",
+    )
+
 
 def typhoon_alert_flex(name, time, location, pressure, wind, gust, moving_dir, moving):
     rows = [
