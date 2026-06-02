@@ -371,12 +371,12 @@ def _handle_preview(user_id):
     """/預覽：背景跑天氣 + 盤前 (force) 並 push 給該 user，立即 reply 確認訊息。
     避免在 reply 路徑內阻塞 30 秒以上把 replyToken 用爆。"""
     import threading
-    from datetime import date
+    from tz_utils import today_tpe
 
     def _bg():
         from line_sender import push_to_user_sync
         try:
-            today = date.today().strftime("%Y-%m-%d")
+            today = today_tpe().strftime("%Y-%m-%d")
             try:
                 from weather import get_weather_report
                 weather_msg, _ = get_weather_report()

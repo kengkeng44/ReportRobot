@@ -8,13 +8,13 @@
 """
 
 import os
-from datetime import date
 
 import anthropic
 import usage_tracker
 
 from chips import get_institutional_trades
 from markets import _format_price, get_index_quote
+from tz_utils import today_tpe
 
 
 def _env(name):
@@ -49,7 +49,7 @@ COMMODITIES = [
 
 
 def is_weekend():
-    return date.today().weekday() >= 5  # Sat=5, Sun=6
+    return today_tpe().weekday() >= 5  # Sat=5, Sun=6
 
 
 def _format_pct(pct):
@@ -117,7 +117,7 @@ def _build_ai_summary(chip_data=None):
     """用 Claude web_search 整理盤前重點。失敗回空字串。
     chip_data：來自 chips.get_institutional_trades()，把真實數字注入 prompt
     讓 AI 用準確基準寫昨日資金流向。"""
-    today = date.today().strftime("%Y-%m-%d")
+    today = today_tpe().strftime("%Y-%m-%d")
     chip_block = ""
     if chip_data:
         parts = [f"日期 {chip_data['date']}"]

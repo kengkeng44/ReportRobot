@@ -2,9 +2,10 @@
 台股盤後籌碼資料：三大法人買賣超。資料源 = 證交所 OpenAPI。
 """
 
-from datetime import date, timedelta
+from datetime import timedelta
 
 import http_utils
+from tz_utils import today_tpe
 
 
 HEADERS = {"User-Agent": "Mozilla/5.0"}
@@ -14,7 +15,7 @@ TWSE_OPENAPI_BFI82U = "https://openapi.twse.com.tw/v1/fund/BFI82U"
 
 def _last_trading_day(today=None):
     """取最近一個交易日（週末推到週五，不考慮國定假日）。"""
-    today = today or date.today()
+    today = today or today_tpe()
     wd = today.weekday()  # Mon=0, Sun=6
     if wd == 0:           # Monday → 上週五
         return today - timedelta(days=3)
@@ -102,7 +103,7 @@ def get_institutional_trades(target_date=None):
 
             if "foreign" in result or "investment_trust" in result or "dealer" in result:
                 # 警示：抓到的日期落後 today >= 2 個交易日，AI 可能引用過期資料
-                today = date.today()
+                today = today_tpe()
                 gap = (today - d).days
                 if gap >= 2 and today.weekday() < 5:
                     print(f"  ⚠️ [chips] 抓到的是 {d}（落後 {gap} 天），"
@@ -132,7 +133,7 @@ def _fetch_openapi():
     print(f"  [chips/openapi] 拿到 {len(rows)} rows，"
           f"keys={list(rows[0].keys()) if rows else []}")
 
-    result = {"date": rows[0].get("日期") or date.today().strftime("%Y-%m-%d")}
+    result = {"date": rows[0].get("日期") or today_tpe().strftime("%Y-%m-%d")}
     foreign_main = foreign_sub = dealer_self = dealer_hedge = dealer_total = None
 
     for row in rows:

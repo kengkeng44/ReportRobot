@@ -7,12 +7,12 @@
 """
 
 import traceback
-from datetime import date
 
 from admin_notify import notify_admin
 from flex_builder import daily_report_carousel
 from line_sender import push_message
 from premarket import build_premarket_report
+from tz_utils import today_tpe
 from weather import get_weather_report
 
 
@@ -29,7 +29,7 @@ def _safe(label, body_fn):
 
 async def run_daily_report(force_premarket=False):
     print(f"開始執行每日情報... (force_premarket={force_premarket})")
-    today = date.today().strftime("%Y-%m-%d")
+    today = today_tpe().strftime("%Y-%m-%d")
 
     # 1. 天氣
     def _weather():

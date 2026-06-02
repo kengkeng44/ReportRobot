@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 from datetime import datetime, timedelta
 from prompts import WEATHER_PROMPT
+from tz_utils import now_tpe
 
 
 def _env(name):
@@ -360,7 +361,7 @@ def get_local_events(locations):
     """用 Anthropic web_search 查未來 7 天當地活動，最多 3 個或回 '無'。"""
     if not locations:
         return ""
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = now_tpe().strftime("%Y-%m-%d")
     locs = "、".join(locations)
     prompt = (
         f"今天是 {today}（台北時間）。\n"
@@ -422,7 +423,7 @@ def get_weather_report():
         print("備用預報沒有逐小時溫度，本次不產圖")
 
     # AI 整理
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = now_tpe().strftime("%Y-%m-%d")
     prompt = WEATHER_PROMPT.format(
         date=today,
         cwa_data=str(cwa_data)[:3000],
