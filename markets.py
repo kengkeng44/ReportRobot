@@ -30,7 +30,20 @@ def get_index_quote(symbol):
             return None
         meta = result[0].get("meta", {}) or {}
         price = meta.get("regularMarketPrice")
-        prev = meta.get("previousClose") or meta.get("chartPreviousClose")
+        # niche index (^SOX/^VIX/原物料) 的 meta.previousClose 常回 None;
+        # 舊 fallback meta.chartPreviousClose 是「range 起始日前一日」,在
+        # range=5d 下 ≈ 5 個交易日前, 算出來的 % 變週對週而非日對日
+        # (見 2026-06-17 ^SOX 真實 -5.71% 被報成 +5.03% 的反向 bug)。
+        # 改抓 close 序列倒數第二筆 = 真正的上一個交易日收盤。
+        prev = meta.get("previousClose")
+        if prev is None:
+            closes = (
+                result[0].get("indicators", {}).get("quote", [{}])[0].get("close")
+                or []
+            )
+            valid = [c for c in closes if c is not None]
+            if len(valid) >= 2:
+                prev = valid[-2]
         if price is None or prev is None:
             return None
         change = price - prev
