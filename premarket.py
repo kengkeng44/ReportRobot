@@ -116,7 +116,9 @@ def _strip_to_bullets(text):
 def _build_ai_summary(chip_data=None):
     """用 Claude web_search 整理盤前重點。失敗回空字串。
     chip_data：來自 chips.get_institutional_trades()，把真實數字注入 prompt
-    讓 AI 用準確基準寫昨日資金流向。"""
+    讓 AI 用準確基準寫昨日資金流向。
+    另注入 markets.get_index_quote 抓的指數/ADR/原物料真實收盤,
+    防 LLM web_search 拿錯方向 (見 2026-06-17 ^SOX 反向 bug 起因之一)。"""
     today = today_tpe().strftime("%Y-%m-%d")
     chip_block = ""
     if chip_data:
@@ -134,12 +136,33 @@ def _build_ai_summary(chip_data=None):
             + " / ".join(parts)
         )
 
+    # Ground truth 報價注入: 拿 markets.get_index_quote 已驗證的指數/ADR/原物料,
+    # 讓 LLM 不必 web_search 重抓 (LLM 對方向/日期判斷不穩, 已知 +5% vs -5% 反向案例)。
+    quote_lines = []
+    for symbol, label in INTL_INDICES + ADR_STOCKS + COMMODITIES:
+        q = get_index_quote(symbol)
+        if not q:
+            continue
+        price, change, pct = q
+        direction = "漲" if change >= 0 else "跌"
+        quote_lines.append(
+            f"{label} ({symbol}): 收盤 {price:,.2f}, {direction} {abs(pct):.2f}%"
+        )
+    quote_block = ""
+    if quote_lines:
+        quote_block = (
+            "\n\n[實際昨夜美股/原物料收盤 — 請務必引用以下真實數字, "
+            "禁止 web_search 拿錯方向或不同日期的舊資料]\n"
+            + "\n".join(quote_lines)
+        )
+
     prompt = (
         f"今天是 {today}（台北時間，嚴格依此判斷「最新」/「昨日」）。\n"
         f"請用網路搜尋整理今日台股開盤前重點。\n"
         f"輸出 6-8 條 bullet，每點 `• ` 開頭，純文字繁體中文，不要 Markdown。\n"
         f"**所有日期一律 YYYY-MM-DD 格式（例 2026-05-07）**，禁用 5/7、05/07、5月7日。"
-        f"{chip_block}\n\n"
+        f"{chip_block}"
+        f"{quote_block}\n\n"
         f"請涵蓋以下面向（找不到就跳過，不要編造；數據都要附日期）：\n"
         f"1. **昨日台股資金流向**（必寫，使用上方真實數字）：外資 / 投信 / 自營買賣超、"
         f"強勢類股 Top 3 與弱勢類股 Top 3，每個類股要附漲跌幅、帶動的權值股名稱與該股漲跌\n"
@@ -148,11 +171,14 @@ def _build_ai_summary(chip_data=None):
         f"4. 地緣政治與重大事件：貿易戰、關稅、戰爭、央行政策對股市的影響\n"
         f"5. 重要個股動態：權值股法說、財報、併購、減資（要有具體數字、日期）\n"
         f"6. 今日台股召開法說會的重要公司（如有）\n"
-        f"7. 美股盤後/盤前重要科技股漲跌（NVDA/TSM/AAPL/MSFT/AMD 任一有 ±3% 以上才寫，"
-        f"並使用最新隔夜收盤數據；務必先 web_search 確認當天實際數字）\n\n"
+        f"7. 美股盤後/盤前重要科技股漲跌：**Nasdaq/費半/TSMC/黃金等已在上方[實際昨夜美股/"
+        f"原物料收盤]列出, 一律引用該真實數字, 禁止 web_search 重抓**。"
+        f"僅當提及上方未列出個股 (NVDA/AAPL/MSFT/AMD 等) 且有 ±3% 以上時才 web_search, "
+        f"並必須確認當天日期與方向。\n\n"
         f"規則：\n"
         f"- 每點 1-2 句話，要有具體數字 / 公司名 / 日期\n"
         f"- 「昨日資金流向」放第一條，用上方提供的真實數字（重要！）\n"
+        f"- **若 web_search 結果與上方任何真實數字方向或數值衝突, 一律以真實數字為準**\n"
         f"- 直接列出 bullet，禁止開場白與結語"
     )
     try:
