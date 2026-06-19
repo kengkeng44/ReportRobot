@@ -43,8 +43,11 @@ ADR_STOCKS = [
 ]
 
 # 原物料（拿掉原油，只留黃金）
+# 黃金用 GLD ETF 而非 GC=F 期貨: 期貨 24h 交易 Yahoo 日線常回 close=None,
+# 觸發 fallback 抓到「兩天前」造成方向反向 (見 2026-06-19 bug)。GLD 是美股,
+# close 永遠完整, *10 倍率 (見 markets.PRICE_MULTIPLIERS) 換算成黃金/oz 量級顯示。
 COMMODITIES = [
-    ("GC=F", "黃金"),
+    ("GLD", "黃金"),
 ]
 
 

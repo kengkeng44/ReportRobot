@@ -14,8 +14,19 @@ INDEX_LABELS = [
 ]
 
 
+# 某些 ticker 用 ETF / proxy 抓回來, 顯示時需乘倍率對齊 underlying 量級。
+# GLD 1 share ≈ 1/10 oz gold (creation date ratio), 用 *10 把 share price
+# 約略換算回「黃金 / oz」量級。實際 ratio 因 GLD expense ratio 0.4%/yr 累積
+# 略偏 (~10.8), 但 daily report 用途上「方向 100% 正確 + 量級接近 spot」已足夠。
+# (替代 GC=F 因 Yahoo 對期貨日線常回 close=None, 見 2026-06-19 黃金反向 bug)
+PRICE_MULTIPLIERS = {
+    "GLD": 10.0,  # gold ETF -> ~oz equivalent (label 顯示「黃金」)
+}
+
+
 def get_index_quote(symbol):
-    """回 (price, change, change_pct) 或 None。"""
+    """回 (price, change, change_pct) 或 None。
+    若 symbol 在 PRICE_MULTIPLIERS, price 與 change 會乘倍率 (pct 不變)。"""
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
         r = http_utils.get(
@@ -48,7 +59,8 @@ def get_index_quote(symbol):
             return None
         change = price - prev
         pct = (change / prev * 100) if prev else 0
-        return price, change, pct
+        multiplier = PRICE_MULTIPLIERS.get(symbol, 1.0)
+        return price * multiplier, change * multiplier, pct
     except Exception as e:
         print(f"指數抓取失敗 {symbol}: {e}")
         return None
