@@ -15,7 +15,9 @@ Notion 失敗 fallback in-memory（不阻塞主流程）。
 
 import os
 import threading
-from datetime import date, timedelta
+from datetime import timedelta
+
+from tz_utils import today_tpe
 
 
 _LOCK = threading.Lock()
@@ -63,7 +65,7 @@ def _persist_to_notion():
         import notion_db
         if not notion_db.is_configured():
             return
-        today = date.today()
+        today = today_tpe()
         month_str = today.strftime("%Y-%m")
         total = get_month_count()
         notion_db.quota_set_month(month_str, total)
@@ -73,8 +75,8 @@ def _persist_to_notion():
 
 def bump():
     """每次 LINE push 成功呼叫。reply 不要呼叫（LINE reply 不計配額）。"""
-    today_iso = date.today().isoformat()
-    month_str = date.today().strftime("%Y-%m")
+    today_iso = today_tpe().isoformat()
+    month_str = today_tpe().strftime("%Y-%m")
     _ensure_loaded(month_str)
     with _LOCK:
         _DAILY_COUNT[today_iso] = _DAILY_COUNT.get(today_iso, 0) + 1
@@ -83,7 +85,7 @@ def bump():
 
 def get_month_count():
     """真實當月用量 = Notion 載入的 base + 本期 deploy 後的 in-memory 累積。"""
-    today = date.today()
+    today = today_tpe()
     month_str = today.strftime("%Y-%m")
     _ensure_loaded(month_str)
     prefix = month_str
@@ -94,7 +96,7 @@ def get_month_count():
 
 
 def get_stats():
-    today = date.today()
+    today = today_tpe()
     used = get_month_count()
     quota = _quota()
     pct = (used / quota * 100) if quota > 0 else 0

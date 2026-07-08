@@ -13,6 +13,7 @@ import threading
 from datetime import datetime, timedelta
 
 from security_utils import mask
+from tz_utils import now_tpe
 
 
 _LOCK = threading.Lock()
@@ -195,7 +196,11 @@ def parse_reminder_input(text):
     if not text:
         return None
     s = text.strip()
-    now = datetime.now()
+    # 用台北時區的 aware datetime：容器預設 UTC，用 naive datetime.now() 會讓
+    # 「今天 18:00」被 APScheduler 當成 18:00 UTC(=台北凌晨2點)、且存進 Notion
+    # 被硬補 +08:00 後差 8 小時。fire_at 帶 +08:00 後 UTC/台北容器都正確
+    # (notion_db 也約定 fire_at 一律 tz-aware TPE)。
+    now = now_tpe()
 
     m = _RE_RELATIVE_MIN.match(s)
     if m:
@@ -223,6 +228,7 @@ def parse_reminder_input(text):
         target_dt = datetime.combine(
             target_date,
             datetime.min.time(),
+            tzinfo=now.tzinfo,  # 保持 +08:00，與 now 同為 aware 才能比較/正確排程
         ).replace(hour=int(m.group(2)), minute=int(m.group(3) or 0))
         if target_dt <= now:
             return None  # 過去的時間
