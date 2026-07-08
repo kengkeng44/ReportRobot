@@ -15,12 +15,15 @@ INDEX_LABELS = [
 
 
 # 某些 ticker 用 ETF / proxy 抓回來, 顯示時需乘倍率對齊 underlying 量級。
-# GLD 1 share ≈ 1/10 oz gold (creation date ratio), 用 *10 把 share price
-# 約略換算回「黃金 / oz」量級。實際 ratio 因 GLD expense ratio 0.4%/yr 累積
-# 略偏 (~10.8), 但 daily report 用途上「方向 100% 正確 + 量級接近 spot」已足夠。
+# GLD 上市時 1 share = 1/10 oz gold, 但 0.40%/yr expense ratio 累積 22 年後
+# 每股已縮到 ~0.0923 oz, 所以「回推 oz 量級」的正確倍率是 ~10.84, 不是 10.0。
+# 實測 2026-07-06: GLD 收 $382.13, 黃金現貨 ~$4,143/oz → 4143/382.13 ≈ 10.84。
+# 舊值 10.0 會讓黃金每天少報 ~8% (顯示 ~$3,821 vs 實際 ~$4,143), 方向對但數值偏低。
+# 注意: 此倍率仍是靜態近似, expense ratio 會讓每股 oz 每年再縮 ~0.4%,
+# 故每隔幾年需依當時 spot/GLD 比值重新校準 (或改成依上市日+費率動態衰減)。
 # (替代 GC=F 因 Yahoo 對期貨日線常回 close=None, 見 2026-06-19 黃金反向 bug)
 PRICE_MULTIPLIERS = {
-    "GLD": 10.0,  # gold ETF -> ~oz equivalent (label 顯示「黃金」)
+    "GLD": 10.84,  # gold ETF -> ~oz equivalent (label 顯示「黃金」)
 }
 
 
