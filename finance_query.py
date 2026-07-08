@@ -20,6 +20,7 @@
 import os
 
 from gmail_reader import _get_email_body, get_gmail_service
+from tz_utils import today_tpe
 
 
 # ─────────────────────────────────────────────────────────
@@ -341,8 +342,9 @@ def format_overview(detailed=False):
         for i, it in enumerate(items)
     )
 
-    from datetime import date
-    today = date.today()
+    # 用台北時區判「今天／本月」：容器預設 UTC，date.today() 在台北凌晨 0-8 點
+    # 及月初會回前一天/上個月，害 AI 把「本月」消費歸錯月份（見 tz_utils）。
+    today = today_tpe()
     month_str = today.strftime("%Y/%m")
 
     prompt = _build_prompt(today, month_str, raw, len(items), detailed)
