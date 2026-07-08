@@ -14,17 +14,37 @@ INDEX_LABELS = [
 ]
 
 
-# 某些 ticker 用 ETF / proxy 抓回來, 顯示時需乘倍率對齊 underlying 量級。
-# GLD 上市時 1 share = 1/10 oz gold, 但 0.40%/yr expense ratio 累積 22 年後
-# 每股已縮到 ~0.0923 oz, 所以「回推 oz 量級」的正確倍率是 ~10.84, 不是 10.0。
-# 實測 2026-07-06: GLD 收 $382.13, 黃金現貨 ~$4,143/oz → 4143/382.13 ≈ 10.84。
-# 舊值 10.0 會讓黃金每天少報 ~8% (顯示 ~$3,821 vs 實際 ~$4,143), 方向對但數值偏低。
-# 注意: 此倍率仍是靜態近似, expense ratio 會讓每股 oz 每年再縮 ~0.4%,
-# 故每隔幾年需依當時 spot/GLD 比值重新校準 (或改成依上市日+費率動態衰減)。
+# 黃金量級：優先打真實現貨 API (見 _get_gold_spot)，抓失敗才 fallback 用
+# GLD ETF 股價 × 倍率近似。GLD 上市時 1 share = 1/10 oz gold, 但 0.40%/yr
+# expense ratio 累積 22 年後每股已縮到 ~0.0923 oz, 所以「回推 oz 量級」的
+# 正確倍率是 ~10.84 (實測 2026-07-06: GLD 收 $382.13, 現貨 ~$4,143 → ≈10.84),
+# 不是 10.0 (10.0 會每天少報 ~8%)。此倍率仍是靜態近似, 每股 oz 每年再縮 ~0.4%,
+# 故僅當現貨 API 掛掉時暫用; 方向/pct 一律用 GLD 日線 (GLD 追蹤金價, 日 % 幾乎相同)。
 # (替代 GC=F 因 Yahoo 對期貨日線常回 close=None, 見 2026-06-19 黃金反向 bug)
 PRICE_MULTIPLIERS = {
-    "GLD": 10.84,  # gold ETF -> ~oz equivalent (label 顯示「黃金」)
+    "GLD": 10.84,  # gold ETF -> ~oz equivalent (現貨 API fallback 用)
 }
+
+# 黃金現貨 API：Gold-API.com 免金鑰, 直接回真實 XAU/USD (USD/oz)。
+# 取代 GLD×倍率的量級近似 (免倍率漂移); 方向仍用 GLD 日線。
+GOLD_SPOT_URL = "https://api.gold-api.com/price/XAU"
+
+
+def _get_gold_spot():
+    """打 Gold-API.com 拿真實黃金現貨 USD/oz。免金鑰。失敗回 None。"""
+    try:
+        r = http_utils.get(
+            GOLD_SPOT_URL,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10,
+        )
+        data = r.json()
+        # 回傳形如 {"name":"Gold","price":4148.5,"symbol":"XAU",...}
+        price = data.get("price") if isinstance(data, dict) else None
+        return float(price) if price else None
+    except Exception as e:
+        print(f"黃金現貨抓取失敗: {e}")
+        return None
 
 
 def get_index_quote(symbol):
@@ -62,6 +82,13 @@ def get_index_quote(symbol):
             return None
         change = price - prev
         pct = (change / prev * 100) if prev else 0
+        # 黃金: 用真實現貨價當量級 (免倍率漂移), 方向/pct 仍用 GLD 日線。
+        # 現貨抓失敗才 fallback 回 GLD×倍率近似, 不開天窗。
+        if symbol == "GLD":
+            spot = _get_gold_spot()
+            if spot:
+                prev_spot = spot / (1 + pct / 100) if pct != -100 else spot
+                return spot, spot - prev_spot, pct
         multiplier = PRICE_MULTIPLIERS.get(symbol, 1.0)
         return price * multiplier, change * multiplier, pct
     except Exception as e:
