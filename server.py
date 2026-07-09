@@ -352,3 +352,66 @@ async def portfolio_debug(request: Request):
         if t.get("date"):
             t["date"] = str(t["date"])
     return {"trade_count": len(all_trades), "portfolio": portfolio, "trades": all_trades}
+
+
+@app.get("/admin/probe-indicators")
+async def probe_indicators(request: Request):
+    """Dump 新盤前指標的『原始 payload』+『解析結果』，用來校準欄位。
+    要 X-Admin-Token header。TAIFEX 欄位需靠此端點回傳的真實資料校對。"""
+    admin_token = os.environ.get("ADMIN_TOKEN", "")
+    if not admin_token:
+        raise HTTPException(status_code=503, detail="Admin disabled")
+    if request.headers.get("X-Admin-Token") != admin_token:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    import http_utils
+    import market_stats
+    import taifex
+
+    d = market_stats._last_trading_day().strftime("%Y%m%d")
+    headers = {"User-Agent": "Mozilla/5.0"}
+    probes = [
+        ("FMTQIK", market_stats.FMTQIK_URL, {"date": d, "response": "json"}),
+        ("MI_INDEX", market_stats.MI_INDEX_URL, {"date": d, "type": "MS", "response": "json"}),
+        ("MI_MARGN", market_stats.MI_MARGN_URL, {"date": d, "selectType": "MS", "response": "json"}),
+    ]
+    raw = {}
+    for tag, url, params in probes:
+        try:
+            r = http_utils.get(url, params=params, headers=headers, timeout=10)
+            j = r.json()
+            # 只回結構線索（fields + 前 2 列 / tables 標題），避免 payload 過大
+            if isinstance(j, dict):
+                info = {"keys": list(j.keys()), "fields": j.get("fields"),
+                        "data_head": (j.get("data") or [])[:2]}
+                if j.get("tables"):
+                    info["tables"] = [
+                        {"title": t.get("title"), "fields": t.get("fields"),
+                         "data_head": (t.get("data") or [])[:2]}
+                        for t in j["tables"]
+                    ]
+                raw[tag] = info
+            else:
+                raw[tag] = {"type": str(type(j)), "head": j[:2] if isinstance(j, list) else str(j)[:500]}
+        except Exception as e:
+            raw[tag] = {"error": str(e)}
+
+    for tag, urls in [("TAIFEX_FUT", taifex.FUT_DAILY_CANDIDATES),
+                      ("TAIFEX_OI", taifex.INST_OI_CANDIDATES)]:
+        for url in urls:
+            try:
+                r = http_utils.get(url, headers=headers, timeout=10)
+                j = r.json()
+                sample = j[:2] if isinstance(j, list) else str(j)[:500]
+                raw[f"{tag}:{url.rsplit('/', 1)[-1]}"] = {"ok": True, "sample": sample}
+            except Exception as e:
+                raw[f"{tag}:{url.rsplit('/', 1)[-1]}"] = {"error": str(e)}
+
+    parsed = {
+        "turnover": market_stats.get_market_turnover(),
+        "updown": market_stats.get_updown_counts(),
+        "margin": market_stats.get_margin_balance(),
+        "txf_night": taifex.get_txf_night(),
+        "foreign_oi": taifex.get_foreign_txf_oi(),
+    }
+    return {"date": d, "raw_structure": raw, "parsed_result": parsed}

@@ -16,6 +16,14 @@ from chips import get_institutional_trades
 from markets import _format_price, get_index_quote
 from tz_utils import today_tpe
 
+# 台股量能/籌碼指標（防禦式：抓不到回 None → 顯示 N/A，不會顯錯數字）
+from market_stats import (
+    get_market_turnover,
+    get_updown_counts,
+    get_margin_balance,
+)
+from taifex import get_txf_night, get_foreign_txf_oi
+
 
 def _env(name):
     val = os.environ.get(name)
@@ -208,6 +216,65 @@ def _build_ai_summary(chip_data=None):
         return ""
 
 
+def _fmt_signed(v, unit="", decimals=0):
+    """帶正負號格式化；None 回 'N/A'。"""
+    if v is None:
+        return "N/A"
+    sign = "+" if v >= 0 else "-"
+    return f"{sign}{abs(v):,.{decimals}f}{unit}"
+
+
+def _build_tw_stats_block():
+    """台股量能/籌碼區塊。每項抓不到就顯示 N/A（不顯錯數字）。
+    全部都 None 時回 None（呼叫端整段 skip）。"""
+    lines = []
+    got_any = False
+
+    turnover = get_market_turnover()
+    if turnover:
+        got_any = True
+        idx = turnover.get("index")
+        chg = turnover.get("change_pt")
+        idx_str = f"｜加權 {idx:,.0f}（{_fmt_signed(chg)}）" if idx is not None else ""
+        lines.append(f"💰 成交 {turnover['turnover_yi']:,.0f} 億{idx_str}")
+    else:
+        lines.append("💰 成交金額｜N/A")
+
+    updown = get_updown_counts()
+    if updown:
+        got_any = True
+        flat = updown.get("flat")
+        flat_str = f"／平 {flat}" if flat is not None else ""
+        lines.append(f"📊 紅 {updown['up']}／綠 {updown['down']}{flat_str} 家")
+    else:
+        lines.append("📊 漲跌家數｜N/A")
+
+    margin = get_margin_balance()
+    if margin:
+        got_any = True
+        chg = margin.get("margin_chg_yi")
+        chg_str = f"（{_fmt_signed(chg, ' 億')}）" if chg is not None else ""
+        lines.append(f"💳 融資餘額 {margin['margin_bal_yi']:,.0f} 億{chg_str}")
+    else:
+        lines.append("💳 融資餘額｜N/A")
+
+    night = get_txf_night()
+    if night:
+        got_any = True
+        lines.append(f"🌙 台指夜盤 {night['price']:,.0f}（{_fmt_signed(night.get('change'))}）")
+    else:
+        lines.append("🌙 台指夜盤｜N/A")
+
+    oi = get_foreign_txf_oi()
+    if oi:
+        got_any = True
+        lines.append(f"🏦 外資台指期未平倉 {_fmt_signed(oi['net_oi'], ' 口')}")
+    else:
+        lines.append("🏦 外資台指期未平倉｜N/A")
+
+    return "\n".join(lines) if got_any else None
+
+
 def build_premarket_report(force=False):
     """組成盤前報告 HTML 字串；週末回 None（呼叫端會 skip）。force=True 強跑。"""
     if is_weekend() and not force:
@@ -217,6 +284,7 @@ def build_premarket_report(force=False):
     intl_lines = [_quote_line(s, l) for s, l in INTL_INDICES + ADR_STOCKS + COMMODITIES]
     chip_data = get_institutional_trades()
     chip_block = _build_chip_block_from(chip_data)
+    tw_stats_block = _build_tw_stats_block()
     ai_block = _build_ai_summary(chip_data=chip_data)
 
     sections = [
@@ -224,6 +292,8 @@ def build_premarket_report(force=False):
         "<b>🌍 國際市場（隔夜）</b>\n" + "\n".join(intl_lines),
         "<b>🏛️ 三大法人買賣超</b>\n" + chip_block,
     ]
+    if tw_stats_block:
+        sections.append(f"<b>🇹🇼 台股量能／籌碼</b>\n{tw_stats_block}")
     if ai_block:
         sections.append(f"<b>🧠 盤前重點</b>\n{ai_block}")
     return "\n\n".join(sections)
