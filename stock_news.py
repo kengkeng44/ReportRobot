@@ -181,14 +181,9 @@ def get_cnyes_news(stock_id, limit=10):
         return []
 
 
-def get_google_news(stock_id, stock_name, limit=10):
-    """Google News RSS 搜中文公司名（覆蓋廣、更新快、抓得到 yahoo/cnyes 漏的新聞）。"""
+def _google_news_rss(query, limit=10):
+    """給定查詢字串搜 Google News RSS（zh-TW），回 [{title, link, published, source}]。"""
     try:
-        # 用中文名 + 「股票」當 query；name 跟 id 一樣（沒中文名）就用 id
-        if stock_name and stock_name != stock_id:
-            query = f'"{stock_name}" 股'
-        else:
-            query = f'"{stock_id}" 股'
         from urllib.parse import quote_plus
         url = (f"https://news.google.com/rss/search?q={quote_plus(query)}"
                f"&hl=zh-TW&gl=TW&ceid=TW:zh-Hant")
@@ -210,6 +205,15 @@ def get_google_news(stock_id, stock_name, limit=10):
     except Exception as e:
         print(f"Google News 失敗：{e}")
         return []
+
+
+def get_google_news(stock_id, stock_name, limit=10):
+    """Google News RSS 搜中文公司名（覆蓋廣、更新快、抓得到 yahoo/cnyes 漏的新聞）。"""
+    if stock_name and stock_name != stock_id:
+        query = f'"{stock_name}" 股'
+    else:
+        query = f'"{stock_id}" 股'
+    return _google_news_rss(query, limit)
 
 
 def get_ptt_articles(stock_id, pages=3):
