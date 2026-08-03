@@ -309,10 +309,19 @@ def text_bubble(title, body, subtitle="", header_color=_BROWN, bold_subheaders=T
     }
 
 
-def daily_report_carousel(weather_text, premarket_text, today_str):
+def daily_report_carousel(extra_text, weather_text, premarket_text, today_str):
     """把每日報組成 carousel（橫滑），1 則 push 搞定。
-    任一段缺：對應 bubble 顯示「⚠️ 暫時無法取得」；兩段都缺回 None。"""
+    順序：今日一則 → 天氣 → 盤前。全部缺回 None。"""
     bubbles = []
+
+    if extra_text:
+        bubbles.append(text_bubble(
+            title="💫 今日一則",
+            subtitle=today_str,
+            body=extra_text,
+            header_color=_GREEN,
+        ))
+
     if weather_text:
         bubbles.append(text_bubble(
             title="🌤️ 天氣報告",
@@ -335,7 +344,7 @@ def daily_report_carousel(weather_text, premarket_text, today_str):
             body=premarket_text,
             header_color="#5B8DA6",
         ))
-    # premarket_text 為 None 時通常是週末，這時就只有天氣 bubble
+    # premarket_text 為 None 時通常是週末，這時就只有今日一則 + 天氣 bubble
 
     if not bubbles:
         return None
