@@ -16,3 +16,4 @@ yfinance==1.3.0
 twstock==1.5.1
 tenacity==9.0.0
 notion-client==2.4.0
+holidays==0.60
