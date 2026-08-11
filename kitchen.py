@@ -154,6 +154,156 @@ def estimate_expiry(bought_date, category, storage=None):
 
 
 # ─────────────────────────────────────────────────────────
+# 克數換算與營養粗估
+#
+# 刻意不接任何外部營養 API：查得到的值本來就因品種、部位、產地而異，
+# 線上查詢換來的精度對「今天該煮什麼」沒有幫助，卻多一個會壞的相依。
+# 這裡只求數量級正確；要精準值時使用者自己查了手動改 Notion。
+# ─────────────────────────────────────────────────────────
+
+_WEIGHT_UNITS = {
+    "克": 1, "公克": 1, "g": 1,
+    "公斤": 1000, "kg": 1000,
+    "斤": 600, "台斤": 600,
+}
+
+# 個別品項的典型單重（克）。只列常買的，其餘走分類預設。
+_TYPICAL_GRAMS = {
+    "高麗菜": {"顆": 1000},
+    "白菜": {"顆": 800},
+    "番茄": {"顆": 120},
+    "洋蔥": {"顆": 200},
+    "馬鈴薯": {"顆": 150},
+    "紅蘿蔔": {"條": 150},
+    "小黃瓜": {"條": 100},
+    "雞蛋": {"顆": 50, "盒": 500},
+    "雞胸肉": {"片": 150},
+    "雞腿": {"隻": 200, "片": 200},
+    "豬排": {"片": 120},
+    "鮭魚": {"片": 150},
+    "板豆腐": {"盒": 300, "塊": 300},
+    "吐司": {"片": 30, "包": 400},
+}
+
+# 分類層級的兜底單重（克）
+_CATEGORY_TYPICAL_GRAMS = {
+    "蔬菜": {"顆": 200, "把": 150, "包": 250, "條": 120, "盒": 200},
+    "肉類": {"片": 150, "盒": 300, "包": 300, "隻": 200},
+    "海鮮": {"片": 150, "尾": 200, "盒": 300, "包": 300},
+    "蛋奶": {"顆": 50, "盒": 300, "瓶": 900, "包": 250},
+    "主食": {"包": 500, "盒": 300, "片": 30},
+    "調味料": {"瓶": 500, "包": 200, "罐": 400},
+    "罐頭乾貨": {"罐": 150, "包": 200, "盒": 200},
+}
+
+# 每 100g 的粗估值（kcal / 蛋白質 / 碳水 / 脂肪，單位克）
+_NUTRITION_PER_100G = {
+    "高麗菜": (25, 1.3, 5.8, 0.1),
+    "白菜": (13, 1.2, 2.2, 0.1),
+    "菠菜": (23, 2.9, 3.6, 0.4),
+    "青江菜": (13, 1.5, 2.2, 0.2),
+    "空心菜": (20, 2.0, 3.1, 0.3),
+    "番茄": (18, 0.9, 3.9, 0.2),
+    "洋蔥": (40, 1.1, 9.3, 0.1),
+    "馬鈴薯": (77, 2.0, 17.5, 0.1),
+    "紅蘿蔔": (41, 0.9, 9.6, 0.2),
+    "小黃瓜": (15, 0.7, 3.6, 0.1),
+    "香菇": (34, 3.0, 6.5, 0.2),
+    "雞胸肉": (165, 31.0, 0.0, 3.6),
+    "雞腿": (204, 18.0, 0.0, 14.0),
+    "豬絞肉": (263, 17.0, 0.0, 21.0),
+    "豬排": (242, 21.0, 0.0, 17.0),
+    "牛小排": (290, 18.0, 0.0, 24.0),
+    "鮭魚": (208, 20.0, 0.0, 13.0),
+    "蝦仁": (99, 24.0, 0.2, 0.3),
+    "雞蛋": (155, 13.0, 1.1, 11.0),
+    "鮮奶": (64, 3.2, 4.8, 3.6),
+    "板豆腐": (88, 8.5, 2.5, 5.0),
+    "白米": (356, 7.0, 78.0, 0.6),
+    "義大利麵": (359, 13.0, 71.0, 1.5),
+    "吐司": (299, 9.0, 55.0, 4.5),
+    "醬油": (63, 8.0, 6.0, 0.1),
+    "鮪魚罐頭": (116, 26.0, 0.0, 1.0),
+}
+
+
+def _match_key(name, table):
+    """先試完全相同，再試包含關係（「有機高麗菜」→「高麗菜」）。"""
+    if not name:
+        return None
+    if name in table:
+        return name
+    for key in table:
+        if key in name:
+            return key
+    return None
+
+
+def estimate_grams(name, qty, unit):
+    """把「2 片雞胸肉」換算成克。估不出來回 None。
+
+    估不出來時寧可留空 —— 編一個克數出來會讓整筆營養都是錯的。
+    """
+    if qty is None:
+        return None
+    unit = (unit or "").strip()
+
+    if unit in _WEIGHT_UNITS:
+        return qty * _WEIGHT_UNITS[unit]
+    if not unit:
+        return None
+
+    key = _match_key(name, _TYPICAL_GRAMS)
+    if key and unit in _TYPICAL_GRAMS[key]:
+        return qty * _TYPICAL_GRAMS[key][unit]
+
+    category = guess_category(name)
+    per_unit = _CATEGORY_TYPICAL_GRAMS.get(category, {}).get(unit)
+    if per_unit:
+        return qty * per_unit
+    return None
+
+
+def lookup_nutrition(name):
+    """回每 100g 的粗估營養。查不到回 None（留空好過填錯）。"""
+    key = _match_key(name, _NUTRITION_PER_100G)
+    if not key:
+        return None
+    kcal, protein, carb, fat = _NUTRITION_PER_100G[key]
+    return {"kcal": kcal, "protein": protein, "carb": carb, "fat": fat}
+
+
+def scale_nutrition(per_100g, grams):
+    """把每 100g 的值換算成實際克數的總量。"""
+    if not per_100g or not grams:
+        return None
+    ratio = grams / 100.0
+    return {k: round(v * ratio, 1) for k, v in per_100g.items()}
+
+
+def describe_item(name, qty, unit):
+    """一個品項從輸入到可寫入 Notion 的完整欄位。
+
+    每一格都可能是 None —— 呼叫端要能接受部分留空，
+    使用者在 Notion 補上比我們猜錯好。
+    """
+    category = guess_category(name)
+    grams = estimate_grams(name, qty, unit)
+    per_100g = lookup_nutrition(name)
+    return {
+        "name": name,
+        "qty": qty,
+        "unit": unit,
+        "category": category,
+        "storage": default_storage(category) if category else None,
+        "grams": grams,
+        "per_100g": per_100g,
+        "nutrition": scale_nutrition(per_100g, grams),
+        "approximate": True,      # 內建對照表推的，不是實測值
+    }
+
+
+# ─────────────────────────────────────────────────────────
 # 到期提醒與「今天煮什麼」
 # ─────────────────────────────────────────────────────────
 

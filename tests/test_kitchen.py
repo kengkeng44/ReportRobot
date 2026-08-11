@@ -153,6 +153,84 @@ def test_recommend_returns_empty_when_nothing_expiring():
     assert kitchen.recommend(pantry, recipes, threshold_days=3) == []
 
 
+# ── 克數換算 ──────────────────────────────────────────────
+
+@pytest.mark.parametrize("name,qty,unit,expected", [
+    ("豬絞肉", 300, "克", 300),
+    ("豬絞肉", 300, "g", 300),
+    ("米", 2.5, "公斤", 2500),
+    ("米", 1, "kg", 1000),
+    ("雞蛋", 10, "顆", 500),          # 一顆約 50g
+    ("高麗菜", 1, "顆", 1000),
+    ("雞胸肉", 2, "片", 300),
+])
+def test_estimate_grams(name, qty, unit, expected):
+    assert kitchen.estimate_grams(name, qty, unit) == expected
+
+
+def test_estimate_grams_falls_back_to_category_typical():
+    """沒個別登記的蔬菜，用該分類的典型重量估。"""
+    grams = kitchen.estimate_grams("青江菜", 2, "把")
+    assert grams is not None and grams > 0
+
+
+def test_estimate_grams_unknown_returns_none():
+    """猜不出重量就回 None —— 編一個克數出來會讓營養全錯。"""
+    assert kitchen.estimate_grams("嘎嘎嘎", 1, "顆") is None
+
+
+def test_estimate_grams_without_unit_returns_none():
+    assert kitchen.estimate_grams("嘎嘎嘎", 1, "") is None
+
+
+# ── 營養粗估 ──────────────────────────────────────────────
+
+def test_lookup_nutrition_returns_per_100g():
+    n = kitchen.lookup_nutrition("雞胸肉")
+
+    assert n is not None
+    assert 100 < n["kcal"] < 250
+    assert n["protein"] > 15          # 雞胸主要是蛋白質
+
+
+def test_lookup_nutrition_unknown_returns_none():
+    """查不到就留空，不要猜數值。"""
+    assert kitchen.lookup_nutrition("嘎嘎嘎") is None
+
+
+def test_nutrition_is_scaled_by_grams():
+    per100 = {"kcal": 165, "protein": 31, "carb": 0, "fat": 3.6}
+
+    got = kitchen.scale_nutrition(per100, 300)
+
+    assert got["kcal"] == pytest.approx(495)
+    assert got["protein"] == pytest.approx(93)
+
+
+def test_scale_nutrition_handles_missing_inputs():
+    assert kitchen.scale_nutrition(None, 300) is None
+    assert kitchen.scale_nutrition({"kcal": 100}, None) is None
+
+
+def test_describe_item_combines_everything():
+    """一個品項從輸入到可寫入 Notion 的完整欄位。"""
+    got = kitchen.describe_item("雞胸肉", 2, "片")
+
+    assert got["category"] == "肉類"
+    assert got["storage"] == "冷藏"
+    assert got["grams"] == 300
+    assert got["nutrition"]["kcal"] > 0
+    assert got["approximate"] is True, "營養是粗估，要標記出來"
+
+
+def test_describe_item_unknown_keeps_name_only():
+    got = kitchen.describe_item("嘎嘎嘎", 1, "顆")
+
+    assert got["category"] is None
+    assert got["grams"] is None
+    assert got["nutrition"] is None
+
+
 def test_expiring_soon_filters_and_sorts():
     pantry = _pantry(("A", 5), ("B", 1), ("C", 2), ("D", -1))
 

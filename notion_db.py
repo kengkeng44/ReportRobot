@@ -191,10 +191,17 @@ _SCHEMAS = {
         "存放位置": _select(("冷藏", "blue"), ("冷凍", "purple"), ("常溫", "brown"), ("調味櫃", "gray")),
         "分類": _select(("蔬菜", "green"), ("肉類", "red"), ("海鮮", "blue"), ("蛋奶", "yellow"),
                         ("主食", "orange"), ("調味料", "brown"), ("罐頭乾貨", "gray")),
+        # 營養一律以「每 100g」存，總量交給 Notion formula 算 ——
+        # 這樣使用者改了重量克，總熱量會自己跟著更新。
+        "重量克": {"number": {"format": "number"}},
         "熱量": {"number": {"format": "number"}},               # 每 100g
-        "蛋白質": {"number": {"format": "number"}},
-        "碳水": {"number": {"format": "number"}},
-        "脂肪": {"number": {"format": "number"}},
+        "蛋白質": {"number": {"format": "number"}},             # 每 100g
+        "碳水": {"number": {"format": "number"}},               # 每 100g
+        "脂肪": {"number": {"format": "number"}},               # 每 100g
+        "總熱量": {"formula": {"expression":
+                   'round(prop("熱量") * prop("重量克") / 100)'}},
+        # 內建對照表推估的值，不是實測。使用者手動查證後可取消勾選。
+        "營養為粗估": {"checkbox": {}},
         "狀態": _select(("在庫", "green"), ("用完", "gray"), ("丟棄", "red")),
     },
     "食譜": {
