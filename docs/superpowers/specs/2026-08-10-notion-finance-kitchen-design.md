@@ -72,7 +72,22 @@ _RELATIONS = {
 
 `get_or_create_db()` 先建立所有無 relation 的 DB,再走第二輪 `databases.update()` 把 `@DB名` 解析成實際 db_id 後補上 relation。維持既有的 fallback 語意(失敗回 None,不 raise)。
 
-### 3.2 雙 Gmail 帳號
+### 3.2 區塊子頁
+
+現有 `notion_db.py` 只有一個 `NOTION_PARENT_PAGE_ID`,三個核心 DB 平放其下。若新的 9 個 DB 也照做,會變成 12 個資料庫散在同一頁,與「開一個區塊」的需求不符。
+
+**做法:** `_SECTIONS` 定義區塊 → DB 的歸屬,`get_or_create_section_page()` 在根頁底下找 / 建子頁:
+
+| 區塊 | 圖示 | 收納的 DB |
+|---|---|---|
+| 財務中心 | 💰 | 帳戶、交易明細、信用卡帳單、持倉、淨值快照 |
+| 煮飯模板 | 🍳 | 食材庫存、食譜、本週菜單、採購清單 |
+
+**核心 DB(Todos / Reminders / LineQuota)不列入區塊** —— 它們已經在線上運作,搬家會導致找不到既有資料。待辦改用 linked view 出現在兩個區塊頁裡,實體仍留在根頁。
+
+子頁建立失敗時**退回根頁**而非整個失敗 —— 有地方放總比功能失效好。
+
+### 3.3 雙 Gmail 帳號
 
 現況 `GMAIL_USER` 為單數、憑證存 `token.pickle`。
 
@@ -85,7 +100,7 @@ _RELATIONS = {
 
 **不使用現有的 `轉寄-jenho` 轉寄規則** — 只有 78 封、不進收件匣、且規則生效前的信全部缺漏。
 
-### 3.3 去重
+### 3.4 去重
 
 每筆交易算指紋:
 
@@ -95,7 +110,7 @@ fingerprint = sha256(f"{帳戶}|{日期}|{金額}|{商店}|{來源類型}").hexd
 
 寫入前先用 `Fingerprint` 屬性 query Notion,存在就跳過。重跑排程不會產生重複資料。
 
-### 3.4 排程
+### 3.5 排程
 
 | 工作 | 時間(台灣) | crontab (UTC) |
 |---|---|---|
@@ -107,7 +122,7 @@ fingerprint = sha256(f"{帳戶}|{日期}|{金額}|{商店}|{來源類型}").hexd
 
 **一天一次即足夠** — 這些信一天只來一封,每小時跑有 23 次是空轉。
 
-### 3.5 成本
+### 3.6 成本
 
 Gmail API、Notion API、yfinance/twstock 皆免費。這兩條管線**不呼叫 LLM**(信件格式固定,用 BeautifulSoup + regex 解析即可),因此不增加既有的 Anthropic 費用。Railway 增量約每月 15 分鐘 CPU。
 

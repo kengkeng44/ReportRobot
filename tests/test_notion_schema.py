@@ -42,32 +42,66 @@ class FakeDatabases:
         return self._store[database_id]
 
 
+def _page_title(page):
+    blocks = ((page.get("properties", {}) or {}).get("title", {}) or {}).get("title", []) or []
+    return "".join(b.get("plain_text", "") for b in blocks)
+
+
 class FakePages:
-    def __init__(self):
+    def __init__(self, page_store):
+        self._store = page_store
         self.created = []
+        self.fail_create_for = set()
 
     def create(self, **kwargs):
         self.created.append(kwargs)
-        return {"id": f"page_{len(self.created)}"}
+        props = kwargs.get("properties", {}) or {}
+        blocks = (props.get("title", {}) or {}).get("title", []) or []
+        title = "".join(t.get("text", {}).get("content", "") for t in blocks)
+
+        if title and title in self.fail_create_for:
+            raise RuntimeError(f"boom: {title}")
+
+        page_id = f"page_{title}" if title else f"page_{len(self.created)}"
+        if title:
+            self._store[page_id] = {
+                "id": page_id,
+                "object": "page",
+                "parent": kwargs.get("parent", {}),
+                "properties": {
+                    "title": {"title": [{"plain_text": title, "text": {"content": title}}]}
+                },
+            }
+        return {"id": page_id}
 
     def update(self, page_id, **kwargs):
         return {"id": page_id}
 
 
 class FakeClient:
-    def __init__(self, parent_page, preexisting=None):
+    def __init__(self, parent_page, preexisting=None, preexisting_pages=None):
         self._store = dict(preexisting or {})
+        self._pages = dict(preexisting_pages or {})
         self.databases = FakeDatabases(self._store)
-        self.pages = FakePages()
+        self.pages = FakePages(self._pages)
         self._parent_page = parent_page
 
     def search(self, query, filter=None):
+        kind = (filter or {}).get("value", "database")
         out = []
-        for db in self._store.values():
-            title = "".join(b.get("plain_text", "") for b in db.get("title", []))
-            if title == query:
-                out.append(db)
+        if kind == "page":
+            for page in self._pages.values():
+                if _page_title(page) == query:
+                    out.append(page)
+        else:
+            for db in self._store.values():
+                title = "".join(b.get("plain_text", "") for b in db.get("title", []))
+                if title == query:
+                    out.append(db)
         return {"results": out}
+
+    def db_parent_of(self, db_id):
+        return (self._store[db_id].get("parent") or {}).get("page_id")
 
 
 @pytest.fixture
@@ -80,6 +114,7 @@ def notion(monkeypatch):
     monkeypatch.setattr(notion_db, "_TOKEN", "secret_fake")
     monkeypatch.setattr(notion_db, "_client", client)
     monkeypatch.setattr(notion_db, "_db_id_cache", {})
+    monkeypatch.setattr(notion_db, "_section_page_cache", {})
     return client
 
 
@@ -245,6 +280,72 @@ def test_todos_create_without_category_still_writes_one(notion):
 
     props = notion.pages.created[0]["properties"]
     assert props["分類"]["select"]["name"] == "生活"
+
+
+# ── 區塊子頁 ──────────────────────────────────────────────
+
+def test_finance_dbs_live_under_finance_section(notion):
+    """財務類 DB 要放進「財務中心」子頁，不能跟核心 DB 混在根頁。"""
+    db_id = notion_db.get_or_create_db("交易明細")
+
+    assert notion.db_parent_of(db_id) == "page_財務中心"
+
+
+def test_kitchen_dbs_live_under_kitchen_section(notion):
+    db_id = notion_db.get_or_create_db("食材庫存")
+
+    assert notion.db_parent_of(db_id) == "page_煮飯模板"
+
+
+def test_core_dbs_stay_on_root_page(notion):
+    """Todos / Reminders / LineQuota 已經在線上跑，不能被搬家。"""
+    db_id = notion_db.get_or_create_db("Todos")
+
+    assert notion.db_parent_of(db_id) == notion._parent_page
+
+
+def test_section_page_created_once_for_sibling_dbs(notion):
+    notion_db.get_or_create_db("交易明細")
+    notion_db.get_or_create_db("持倉")
+
+    made = [p for p in notion.pages.created
+            if "財務中心" in str(p.get("properties", {}))]
+    assert len(made) == 1, "同一區塊的多個 DB 只該建立一次子頁"
+
+
+def test_existing_section_page_is_reused(monkeypatch):
+    parent = "parentpage32charhexxxxxxxxxxxxxx"
+    pages = {
+        "page_existing_fin": {
+            "id": "page_existing_fin",
+            "object": "page",
+            "parent": {"type": "page_id", "page_id": parent},
+            "properties": {
+                "title": {"title": [{"plain_text": "財務中心", "text": {"content": "財務中心"}}]}
+            },
+        }
+    }
+    client = FakeClient(parent, preexisting_pages=pages)
+    monkeypatch.setattr(notion_db, "_PARENT_PAGE", parent)
+    monkeypatch.setattr(notion_db, "_TOKEN", "secret_fake")
+    monkeypatch.setattr(notion_db, "_client", client)
+    monkeypatch.setattr(notion_db, "_db_id_cache", {})
+    monkeypatch.setattr(notion_db, "_section_page_cache", {})
+
+    db_id = notion_db.get_or_create_db("帳戶")
+
+    assert client.db_parent_of(db_id) == "page_existing_fin"
+    assert client.pages.created == [], "已存在的區塊頁不該重建"
+
+
+def test_section_page_failure_falls_back_to_root(notion):
+    """建子頁失敗時，DB 還是要能建出來，只是退回根頁。"""
+    notion.pages.fail_create_for.add("財務中心")
+
+    db_id = notion_db.get_or_create_db("帳戶")
+
+    assert db_id is not None
+    assert notion.db_parent_of(db_id) == notion._parent_page
 
 
 def test_read_select_tolerates_missing_property():

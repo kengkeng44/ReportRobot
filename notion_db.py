@@ -26,7 +26,24 @@ _PARENT_PAGE = os.environ.get("NOTION_PARENT_PAGE_ID", "")
 
 _client = None
 _db_id_cache = {}  # name → db_id
+_section_page_cache = {}  # 區塊名 → page_id
 _lock = threading.Lock()
+
+
+# 新模板的 DB 各自收進一個區塊子頁，不跟核心 DB 混在根頁。
+# Todos / Reminders / LineQuota 不列在這裡 —— 它們已經在線上跑，搬家會找不到既有資料。
+_SECTIONS = {
+    "財務中心": {
+        "icon": "💰",
+        "dbs": ("帳戶", "交易明細", "信用卡帳單", "持倉", "淨值快照"),
+    },
+    "煮飯模板": {
+        "icon": "🍳",
+        "dbs": ("食材庫存", "食譜", "本週菜單", "採購清單"),
+    },
+}
+
+_DB_SECTION = {db: sec for sec, cfg in _SECTIONS.items() for db in cfg["dbs"]}
 
 
 def is_configured():
@@ -217,9 +234,73 @@ _RELATIONS = {
 }
 
 
+def get_or_create_section_page(title):
+    """在根頁底下找 / 建一個區塊子頁（財務中心、煮飯模板）。回 page_id 或 None。"""
+    if title in _section_page_cache:
+        return _section_page_cache[title]
+
+    client = _get_client()
+    if not client:
+        return None
+
+    parent_norm = _normalize_id(_PARENT_PAGE)
+
+    # 先找既有同名子頁，避免每次部署都長出一個新的
+    try:
+        res = client.search(
+            query=title,
+            filter={"value": "page", "property": "object"},
+        )
+        for r in res.get("results", []):
+            parent = r.get("parent", {}) or {}
+            if parent.get("type") != "page_id":
+                continue
+            if _normalize_id(parent.get("page_id", "")) != parent_norm:
+                continue
+            blocks = ((r.get("properties", {}) or {}).get("title", {}) or {}).get("title", []) or []
+            if "".join(b.get("plain_text", "") for b in blocks) == title:
+                _section_page_cache[title] = r["id"]
+                print(f"[notion] 重用既有區塊頁：{title} → {r['id']}")
+                return r["id"]
+    except Exception as e:
+        print(f"[notion] search 區塊頁失敗 {title}：{e}")
+
+    with _lock:
+        if title in _section_page_cache:
+            return _section_page_cache[title]
+        try:
+            page = client.pages.create(
+                parent={"type": "page_id", "page_id": _PARENT_PAGE},
+                icon={"type": "emoji", "emoji": _SECTIONS.get(title, {}).get("icon", "📁")},
+                properties={"title": {"title": [{"text": {"content": title}}]}},
+            )
+            _section_page_cache[title] = page["id"]
+            print(f"[notion] 建立區塊頁：{title} → {page['id']}")
+            return page["id"]
+        except Exception as e:
+            print(f"[notion] 建立區塊頁失敗 {title}：{e}")
+            return None
+
+
+def _parent_for(name):
+    """這個 DB 該掛在哪一頁底下。
+
+    區塊 DB 收進自己的子頁；子頁建不出來時退回根頁 ——
+    有地方放總比整個功能失效好。
+    """
+    section = _DB_SECTION.get(name)
+    if not section:
+        return _PARENT_PAGE
+    return get_or_create_section_page(section) or _PARENT_PAGE
+
+
 def get_or_create_db(name):
-    """在 NOTION_PARENT_PAGE_ID 底下找 / 建一個 DB。回傳 db_id 或 None。
-    結果 cache 到 _db_id_cache，避免每次重新 search。"""
+    """找 / 建一個 DB。回傳 db_id 或 None。
+
+    核心 DB（Todos / Reminders / LineQuota）放根頁，
+    財務與煮飯的 DB 各自收進區塊子頁（見 _SECTIONS）。
+    結果 cache 到 _db_id_cache，避免每次重新 search。
+    """
     if name in _db_id_cache:
         return _db_id_cache[name]
 
@@ -230,7 +311,8 @@ def get_or_create_db(name):
         print(f"[notion] 未定義的 DB schema：{name}")
         return None
 
-    parent_norm = _normalize_id(_PARENT_PAGE)
+    parent_page = _parent_for(name)
+    parent_norm = _normalize_id(parent_page)
     db_id = None
 
     # 1. 先 search 同名 DB（已建過就重用）
@@ -261,7 +343,7 @@ def get_or_create_db(name):
                 return _db_id_cache[name]
             try:
                 db = client.databases.create(
-                    parent={"type": "page_id", "page_id": _PARENT_PAGE},
+                    parent={"type": "page_id", "page_id": parent_page},
                     title=[{"type": "text", "text": {"content": name}}],
                     properties=_SCHEMAS[name],
                 )
