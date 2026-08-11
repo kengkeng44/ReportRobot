@@ -307,6 +307,80 @@ def describe_item(name, qty, unit):
 # 到期提醒與「今天煮什麼」
 # ─────────────────────────────────────────────────────────
 
+def _qty_text(row):
+    qty = row.get("qty")
+    unit = row.get("unit") or ""
+    if qty is None:
+        return ""
+    qty_s = int(qty) if float(qty) == int(qty) else qty
+    return f"{qty_s}{unit}"
+
+
+def _days_text(days):
+    if days is None:
+        return "未設到期日"
+    if days < 0:
+        return f"已過期 {abs(int(days))} 天"
+    if days == 0:
+        return "今天到期"
+    return f"剩 {int(days)} 天"
+
+
+def format_pantry(rows):
+    """庫存清單，最快過期的排前面。"""
+    if not rows:
+        return "冰箱是空的。用「買了 高麗菜1顆」加進來。"
+
+    # 沒有到期日的排最後，不要混在急件裡
+    ordered = sorted(rows, key=lambda r: (r.get("days_left") is None,
+                                          r.get("days_left") or 0))
+    lines = ["🥬 目前庫存"]
+    for r in ordered:
+        qty = _qty_text(r)
+        qty_part = f"　{qty}" if qty else ""
+        lines.append(f"・{r['name']}{qty_part}　{_days_text(r.get('days_left'))}")
+    return "\n".join(lines)
+
+
+def format_expiring(rows, threshold_days=3):
+    hits = expiring_soon(rows, threshold_days)
+    if not hits:
+        return f"{threshold_days} 天內沒有要過期的食材。"
+    lines = [f"⚠️ {threshold_days} 天內要處理"]
+    for r in hits:
+        lines.append(f"・{r['name']}　{_days_text(r.get('days_left'))}")
+    return "\n".join(lines)
+
+
+def format_recommendations(recs):
+    if not recs:
+        return "沒有快過期的食材，或現有食譜都缺料。"
+    lines = ["💡 建議今天煮"]
+    for r in recs[:3]:
+        mins = r.get("minutes")
+        time_part = f"（約 {mins} 分鐘）" if mins else ""
+        lines.append(f"・{r['name']}{time_part}　用掉 {r['uses_expiring']} 樣快過期食材")
+    return "\n".join(lines)
+
+
+def format_added(added, unknown):
+    """回報寫入結果。看不懂的要明講，不能默默吞掉。"""
+    lines = []
+    if added:
+        lines.append(f"✅ 已加入 {len(added)} 樣")
+        for it in added:
+            qty = _qty_text(it)
+            grams = f"　約 {int(it['grams'])}g" if it.get("grams") else ""
+            exp = it.get("expiry")
+            exp_part = f"　到期 {exp.isoformat()}" if exp else "　到期日未設"
+            lines.append(f"・{it['name']}　{qty}{grams}{exp_part}")
+    if unknown:
+        lines.append(f"\n❓ 這幾樣看不懂，請補數量或改個講法:{'、'.join(unknown)}")
+    if not lines:
+        return "沒有解析到任何品項。試試「買了 高麗菜1顆 番茄5顆」。"
+    return "\n".join(lines)
+
+
 def expiring_soon(pantry, threshold_days=3):
     """挑出 days_left <= threshold 的食材，最急的排前面（含已過期的負值）。"""
     hits = [p for p in pantry if p.get("days_left") is not None

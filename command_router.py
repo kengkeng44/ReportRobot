@@ -4,6 +4,7 @@
 """
 
 import re
+from datetime import date as _date
 
 
 _PORTFOLIO_KEYWORDS = {
@@ -28,6 +29,16 @@ _REMINDER_LIST_KEYWORDS = {"提醒", "remind", "提醒清單", "我的提醒"}
 _REMINDER_CANCEL_RE = re.compile(r"^(?:取消提醒|cancel)\s+(\d+)$")
 _TODO_RE = re.compile(r"^(?:待辦|todo)\s*(.*)$", re.IGNORECASE)
 _TODO_LIST_KEYWORDS = {"待辦", "todo", "待辦清單"}
+
+# 煮飯模板。Rich Menu 的煮飯分頁會送出這些字串，一定要解析得到。
+# 「買了 / 用掉」用行首錨定的 regex，不需要前綴 —— 家人講「我今天買了菜」
+# 不是以「買了」開頭，所以不會誤觸發。
+_PANTRY_LIST_KEYWORDS = {"庫存", "食材", "冰箱", "pantry"}
+_PANTRY_EXPIRING_KEYWORDS = {"快過期", "過期", "即期", "expiring"}
+_COOK_KEYWORDS = {"煮什麼", "吃什麼", "今天煮什麼", "cook"}
+_SHOPPING_KEYWORDS = {"採購", "採購清單", "購物清單", "shopping"}
+_PANTRY_ADD_RE = re.compile(r"^(?:買了|買|採買)\s*(.*)$")
+_PANTRY_CONSUME_RE = re.compile(r"^(?:用掉|吃掉|用完)\s*(.*)$")
 _PREVIEW_KEYWORDS = {"預覽", "preview", "Preview", "PREVIEW", "test", "預覽報告"}
 _WHOAMI_KEYWORDS = {"我的id", "我的ID", "我的Id", "myid", "MyID", "MYID", "whoami", "我是誰"}
 
@@ -70,6 +81,12 @@ HELP_TEXT = (
     "\n"
     "💼 查仁和持倉\n"
     "  • 仁和持股 / 我的持股 / 持股\n"
+    "\n"
+    "🍳 煮飯（1 對 1 才能用）\n"
+    "  • 買了 高麗菜1顆 番茄5顆   ← 沒寫數量當 1\n"
+    "  • 庫存 / 快過期 / 煮什麼\n"
+    "  • 用掉 高麗菜\n"
+    "  分類、到期日、營養都會自動帶入（營養是粗估）\n"
     "\n"
     "🤖 自由問答（要加 /）\n"
     "  • /Fed 最新利率動向       ← 預設精簡版（200-350 字）\n"
@@ -271,6 +288,23 @@ def parse(text):
     if m and m.group(1).strip():
         return ("todo", m.group(1).strip())
 
+    # 個人指令：煮飯模板
+    if cleaned in _PANTRY_LIST_KEYWORDS:
+        return ("pantry_list", None)
+    if cleaned in _PANTRY_EXPIRING_KEYWORDS:
+        return ("pantry_expiring", None)
+    if cleaned in _COOK_KEYWORDS:
+        return ("cook_what", None)
+    if cleaned in _SHOPPING_KEYWORDS:
+        return ("shopping_list", None)
+    m = _PANTRY_ADD_RE.match(cleaned)
+    if m:
+        # Rich Menu 的「買了」格子送出的是不帶品項的 /買了 → arg=None，回提示
+        return ("pantry_add", m.group(1).strip() or None)
+    m = _PANTRY_CONSUME_RE.match(cleaned)
+    if m:
+        return ("pantry_consume", m.group(1).strip() or None)
+
     # 比較指令（必須要前綴，避免「台積跟鴻海比較」之類聊天誤觸發）
     if has_prefix:
         compare = _try_parse_compare(cleaned)
@@ -303,7 +337,10 @@ def parse(text):
 
 
 _PERSONAL_KINDS = {"reminder_add", "reminder_list", "reminder_cancel",
-                   "todo", "todo_list", "preview", "whoami"}
+                   "todo", "todo_list", "preview", "whoami",
+                   # 庫存是個人資料，不該在家人群組裡被查
+                   "pantry_list", "pantry_expiring", "cook_what",
+                   "pantry_add", "pantry_consume", "shopping_list"}
 
 # Admin-only kinds（要 1 對 1 + LINE userId == ADMIN_LINE_USER_ID）
 _ADMIN_KINDS = {"finance_overview", "finance_overview_detail"}
@@ -405,6 +442,70 @@ def _handle_preview(user_id):
             "ℹ️ 即使週末也會強跑盤前段。")
 
 
+_BUY_USAGE = (
+    "要加什麼食材?這樣打:\n"
+    "買了 高麗菜1顆 番茄5顆 雞胸肉2片\n\n"
+    "沒寫數量就當 1。分類、到期日、營養會自動帶入。"
+)
+
+_CONSUME_USAGE = "要用掉哪一樣?這樣打:\n用掉 高麗菜"
+
+
+def _handle_kitchen(kind, arg):
+    """煮飯模板的六個指令。Notion 掛掉時回可讀的訊息，不丟例外。"""
+    import kitchen
+    import notion_db
+
+    if kind == "pantry_add":
+        if not arg:
+            return _BUY_USAGE
+        items, unknown = kitchen.parse_purchase(arg)
+        today = _date.today()
+        added = []
+        for it in items:
+            desc = kitchen.describe_item(it["name"], it["qty"], it["unit"])
+            desc["bought"] = today
+            desc["expiry"] = kitchen.estimate_expiry(
+                today, desc["category"], desc["storage"])
+            if notion_db.pantry_add(desc):
+                added.append(desc)
+        if items and not added:
+            return "寫入 Notion 失敗,請稍後再試。"
+        return kitchen.format_added(added, unknown)
+
+    if kind == "pantry_consume":
+        if not arg:
+            return _CONSUME_USAGE
+        rows = notion_db.pantry_load()
+        hits = [r for r in rows if arg in r["name"]]
+        if not hits:
+            return f"庫存裡找不到「{arg}」。"
+        if len(hits) > 1:
+            names = "、".join(r["name"] for r in hits)
+            return f"有多樣符合:{names}\n請打完整一點。"
+        notion_db.pantry_set_status(hits[0]["page_id"], "用完")
+        return f"✅ 已把「{hits[0]['name']}」標成用完。"
+
+    if kind == "pantry_list":
+        return kitchen.format_pantry(notion_db.pantry_load())
+
+    if kind == "pantry_expiring":
+        return kitchen.format_expiring(notion_db.pantry_load())
+
+    if kind == "cook_what":
+        pantry = notion_db.pantry_load()
+        recipes = notion_db.recipes_load(pantry)
+        if not recipes:
+            return ("食譜庫是空的,還沒辦法推薦。\n"
+                    "先到 Notion 的「煮飯模板 → 食譜」加幾道常煮的菜。")
+        return kitchen.format_recommendations(kitchen.recommend(pantry, recipes))
+
+    if kind == "shopping_list":
+        return "採購清單還在開發中,下一版接上。"
+
+    return None
+
+
 def handle(text, ctx=None):
     """parse + dispatch；回字串（給 reply_message 直接送）或 None。
     ctx={'source_type': 'user'/'group'/'room', 'user_id': ..., 'group_id': ...}
@@ -432,6 +533,10 @@ def handle(text, ctx=None):
         if kind == "line_quota":
             import line_quota
             return line_quota.format_stats()
+
+        if kind in ("pantry_list", "pantry_expiring", "cook_what",
+                    "pantry_add", "pantry_consume", "shopping_list"):
+            return _handle_kitchen(kind, arg)
 
         if kind == "portfolio":
             from gmail_reader import get_portfolio_from_gmail

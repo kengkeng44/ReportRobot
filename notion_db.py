@@ -710,6 +710,156 @@ def reminders_create(user_id, text, fire_at, local_id):
         return None
 
 
+# ─────────────────────────────────────────────────────────
+# 食材庫存：一筆食材 = 一個 page
+# ─────────────────────────────────────────────────────────
+
+def _prop_number(v):
+    return {"number": v} if v is not None else None
+
+
+def _prop_select(v):
+    return {"select": {"name": v}} if v else None
+
+
+def _prop_date(v):
+    return {"date": {"start": v.isoformat()}} if v else None
+
+
+def _read_number(props, name):
+    return (props.get(name, {}) or {}).get("number")
+
+
+def _read_formula_number(props, name):
+    return ((props.get(name, {}) or {}).get("formula") or {}).get("number")
+
+
+def _read_title(props, name):
+    blocks = (props.get(name, {}) or {}).get("title", []) or []
+    return "".join(b.get("plain_text", "") for b in blocks)
+
+
+def pantry_add(item):
+    """寫入一筆食材。item 來自 kitchen.describe_item()，另可帶 expiry(date)。
+
+    每個欄位都可能是 None（估不出克數、猜不出分類）—— None 的欄位直接不送，
+    Notion 的 select 不接受 name=None，硬送會整筆失敗。
+    """
+    db_id = get_or_create_db("食材庫存")
+    client = _get_client()
+    if not db_id or not client:
+        return None
+
+    per_100g = item.get("per_100g") or {}
+    candidates = {
+        "名稱": {"title": [{"text": {"content": item["name"]}}]},
+        "數量": _prop_number(item.get("qty")),
+        "單位": _prop_select(item.get("unit")),
+        "購買日": _prop_date(item.get("bought")),
+        "到期日": _prop_date(item.get("expiry")),
+        "存放位置": _prop_select(item.get("storage")),
+        "分類": _prop_select(item.get("category")),
+        "重量克": _prop_number(item.get("grams")),
+        "熱量": _prop_number(per_100g.get("kcal")),
+        "蛋白質": _prop_number(per_100g.get("protein")),
+        "碳水": _prop_number(per_100g.get("carb")),
+        "脂肪": _prop_number(per_100g.get("fat")),
+        "營養為粗估": {"checkbox": bool(item.get("approximate", True))},
+        "狀態": _prop_select("在庫"),
+    }
+    props = {k: v for k, v in candidates.items() if v is not None}
+
+    try:
+        page = client.pages.create(parent={"database_id": db_id}, properties=props)
+        return page["id"]
+    except Exception as e:
+        print(f"[notion] pantry_add 失敗 {item.get('name')}：{e}")
+        return None
+
+
+def pantry_load(status="在庫"):
+    """載入庫存。回 list of dict {page_id, name, qty, unit, days_left, category}。"""
+    db_id = get_or_create_db("食材庫存")
+    client = _get_client()
+    if not db_id or not client:
+        return []
+    try:
+        res = client.databases.query(
+            database_id=db_id,
+            filter={"property": "狀態", "select": {"equals": status}},
+            page_size=100,
+        )
+        out = []
+        for r in res.get("results", []):
+            props = r.get("properties", {}) or {}
+            out.append({
+                "page_id": r["id"],
+                "name": _read_title(props, "名稱"),
+                "qty": _read_number(props, "數量"),
+                "unit": _read_select(props, "單位"),
+                "category": _read_select(props, "分類"),
+                "grams": _read_number(props, "重量克"),
+                "days_left": _read_formula_number(props, "剩餘天數"),
+            })
+        return out
+    except Exception as e:
+        print(f"[notion] pantry_load 失敗：{e}")
+        return []
+
+
+def _read_relation_ids(props, name):
+    return [r.get("id") for r in (props.get(name, {}) or {}).get("relation", []) or []]
+
+
+def recipes_load(pantry_rows=None):
+    """載入食譜。回 list of dict {name, ingredients(名稱), minutes}。
+
+    食材是 relation，只拿得到 page_id。用已載入的庫存在本地對照成名稱，
+    避免對每道食譜的每樣食材各打一次 API（N+1）。
+    對照不到的 id 直接略過 —— 那代表食材已被刪除。
+    """
+    db_id = get_or_create_db("食譜")
+    client = _get_client()
+    if not db_id or not client:
+        return []
+
+    id_to_name = {r["page_id"]: r["name"] for r in (pantry_rows or [])}
+
+    try:
+        res = client.databases.query(database_id=db_id, page_size=100)
+        out = []
+        for r in res.get("results", []):
+            props = r.get("properties", {}) or {}
+            ingredients = [id_to_name[i] for i in _read_relation_ids(props, "所需食材")
+                           if i in id_to_name]
+            out.append({
+                "page_id": r["id"],
+                "name": _read_title(props, "名稱"),
+                "ingredients": ingredients,
+                "minutes": _read_number(props, "烹調時間"),
+            })
+        return out
+    except Exception as e:
+        print(f"[notion] recipes_load 失敗：{e}")
+        return []
+
+
+def pantry_set_status(page_id, status):
+    """狀態 in {在庫, 用完, 丟棄}。"""
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        client.pages.update(
+            page_id=page_id,
+            properties={"狀態": {"select": {"name": status}}},
+        )
+        return True
+    except Exception as e:
+        print(f"[notion] pantry_set_status 失敗：{e}")
+        return False
+
+
 def reminders_set_status(page_id, status):
     """status in {pending, fired, cancelled}。"""
     client = _get_client()
