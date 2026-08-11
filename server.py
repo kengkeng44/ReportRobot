@@ -302,8 +302,8 @@ async def trigger_daily(request: Request, force: int = 0):
 
 @app.post("/admin/setup-richmenu")
 async def setup_richmenu(request: Request):
-    """一次性建立 / 重建 LINE Rich Menu（對話框下方的 6 格固定選單）。
-    Rich Menu 完全不計入 push 配額。
+    """一次性建立 / 重建 LINE Rich Menu（分頁式：主選單 + 財務/煮飯/投資/更多）。
+    Rich Menu 與分頁切換都完全不計入 push 配額。
     PowerShell 範例：
       Invoke-RestMethod -Method Post -Uri https://<host>/admin/setup-richmenu \\
         -Headers @{ 'X-Admin-Token' = $env:ADMIN_TOKEN }"""
@@ -314,8 +314,8 @@ async def setup_richmenu(request: Request):
         raise HTTPException(status_code=403, detail="Forbidden")
     from setup_richmenu import setup as _setup
     try:
-        menu_id = _setup()
-        return {"ok": True, "richMenuId": menu_id}
+        menu_ids = _setup()
+        return {"ok": True, "menus": menu_ids}
     except Exception as e:
         print(f"[richmenu] setup 失敗：{e}")
         raise HTTPException(status_code=500, detail=str(e))
