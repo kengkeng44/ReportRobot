@@ -1,0 +1,36 @@
+<!--
+國泰世華「消費彙整通知」的結構複刻（非真實信件）。
+
+刻意手寫而非存真實信件：真信是 89KB 且含卡號、姓名等個資，
+不該進 repo。這裡保留會影響解析的所有結構特徵：
+- 卡號後4碼在獨立的 table，與交易表分開
+- 每筆交易 = 4 個 tr（兩組 header/data 配對）
+- 商店名稱可能為空（非特約商店）
+- 行動卡號後4碼可能為空
+- 金額帶 NT$ 前綴與千分位逗號
+- 同一封信可有多筆交易
+-->
+<html><body>
+<table><tr><td>
+  <table><tr><td>卡號後4碼： 1234</td></tr></table>
+
+  <table>
+    <tr><td>卡別</td><td>行動卡號後4碼</td><td>授權日期</td><td>授權時間</td><td>消費地區</td></tr>
+    <tr><td>正卡</td><td>5678</td><td>2026/08/09</td><td>19:42</td><td>TW</td></tr>
+    <tr><td>消費金額</td><td>商店名稱</td><td>消費類別</td><td>備註</td></tr>
+    <tr><td>NT$20</td><td>統一超商－貿捷</td><td>超市∕量販</td><td>註一</td></tr>
+
+    <tr><td>卡別</td><td>行動卡號後4碼</td><td>授權日期</td><td>授權時間</td><td>消費地區</td></tr>
+    <tr><td>正卡</td><td></td><td>2026/08/09</td><td>09:18</td><td>TW</td></tr>
+    <tr><td>消費金額</td><td>商店名稱</td><td>消費類別</td><td>備註</td></tr>
+    <tr><td>NT$1,271</td><td></td><td>旅遊</td><td>註一</td></tr>
+
+    <tr><td>卡別</td><td>行動卡號後4碼</td><td>授權日期</td><td>授權時間</td><td>消費地區</td></tr>
+    <tr><td>正卡</td><td>5678</td><td>2026/08/08</td><td>05:56</td><td>US</td></tr>
+    <tr><td>消費金額</td><td>商店名稱</td><td>消費類別</td><td>備註</td></tr>
+    <tr><td>NT$14</td><td>Amazon web services</td><td>電信服務</td><td></td></tr>
+  </table>
+
+  <table><tr><td>1.本通知是您以本行信用卡／簽帳金融卡簽帳消費取得交易授權後，最遲於次兩個工作日前彙整寄送給您。</td></tr></table>
+</td></tr></table>
+</body></html>
