@@ -37,6 +37,28 @@ def _env(name):
 
 LINE_CHANNEL_SECRET = _env("LINE_CHANNEL_SECRET")
 
+
+def _cron_or_default(env_name, default):
+    """crontab 必須是 5 欄位；env 打錯不該讓 startup crash。"""
+    raw = os.environ.get(env_name, default) or default
+    if len(raw.split()) == 5:
+        return raw
+    print(f"⚠️ {env_name} 格式錯誤 ({raw!r}，需要 5 欄)，fallback 用 {default!r}")
+    return default
+
+
+# UTC 07:30 = 台北 15:30
+FINANCE_CRON = _cron_or_default("FINANCE_CRON", "30 7 * * *")
+
+
+def _run_finance_sync():
+    """排程進入點。同步失敗不能拖垮同 process 的每日推播。"""
+    try:
+        import finance_sync
+        finance_sync.sync()
+    except Exception as e:
+        print(f"[finance] 排程執行失敗：{e}")
+
 # DAILY_CRON 必須是 5 欄位的 crontab（minute hour day month dow）
 # 用 env override 但若格式錯亂（空字串 / 欄位數不對）→ fallback 預設值，不讓 startup crash
 DAILY_CRON_DEFAULT = "0 22 * * *"  # UTC 22:00 = 台北 06:00
@@ -105,6 +127,20 @@ async def lifespan(app: FastAPI):
         max_instances=1,
         coalesce=True,                # 多個錯過的觸發合併成 1 次
         misfire_grace_time=300,       # 錯過 5 分鐘內仍補跑，超過就放棄
+        replace_existing=True,
+    )
+    # 財務同步：台灣 15:30。實測國泰「消費彙整通知」每天 14:2x–14:5x 送達、
+    # 富邦證券成交回報盤後約 14:25，那時信都到齊、台股也收盤了。
+    # 一天一次即足夠 —— 這些信一天只來一封，每小時跑有 23 次是空轉。
+    f_minute, f_hour, f_day, f_month, f_dow = FINANCE_CRON.split()
+    scheduler.add_job(
+        _run_finance_sync,
+        CronTrigger(minute=f_minute, hour=f_hour, day=f_day,
+                    month=f_month, day_of_week=f_dow),
+        id="finance_sync",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=1800,      # 漏跑半小時內補跑；重跑有指紋擋著不會重複
         replace_existing=True,
     )
     # 即時警示（颱風 / 重要 Gmail）：每 5 分鐘檢查一輪

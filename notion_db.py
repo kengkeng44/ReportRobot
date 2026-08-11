@@ -807,6 +807,77 @@ def pantry_load(status="在庫"):
         return []
 
 
+# ─────────────────────────────────────────────────────────
+# 交易明細：一筆交易 = 一個 page，靠 Fingerprint 去重
+# ─────────────────────────────────────────────────────────
+
+def transactions_existing_fingerprints(limit=400):
+    """撈近期已存在的指紋集合。
+
+    一次撈起來在記憶體比對，而不是每筆交易各查一次 Notion ——
+    一天幾十筆的話那是幾十次 API 往返，而且 Notion 有 3 req/s 限流。
+    """
+    db_id = get_or_create_db("交易明細")
+    client = _get_client()
+    if not db_id or not client:
+        return set()
+
+    out = set()
+    cursor = None
+    try:
+        while len(out) < limit:
+            kwargs = {"database_id": db_id, "page_size": 100,
+                      "sorts": [{"property": "日期", "direction": "descending"}]}
+            if cursor:
+                kwargs["start_cursor"] = cursor
+            res = client.databases.query(**kwargs)
+            for r in res.get("results", []):
+                props = r.get("properties", {}) or {}
+                blocks = (props.get("Fingerprint", {}) or {}).get("rich_text", []) or []
+                fp = "".join(b.get("plain_text", "") for b in blocks)
+                if fp:
+                    out.add(fp)
+            if not res.get("has_more"):
+                break
+            cursor = res.get("next_cursor")
+    except Exception as e:
+        print(f"[notion] 讀取既有指紋失敗：{e}")
+        # 回空集合會導致重複寫入，所以這裡回 None 讓呼叫端決定放棄
+        return None
+    return out
+
+
+def transaction_add(txn):
+    """寫入一筆交易。txn 是 parser 產出的 dict。"""
+    db_id = get_or_create_db("交易明細")
+    client = _get_client()
+    if not db_id or not client:
+        return None
+
+    title = txn.get("shop") or txn.get("category") or "消費"
+    candidates = {
+        "摘要": {"title": [{"text": {"content": title}}]},
+        "日期": {"date": {"start": txn["date"]}},
+        "金額": _prop_number(txn.get("amount")),
+        "方向": _prop_select(txn.get("direction")),
+        "類別": _prop_select(txn.get("category")),
+        "商店": {"rich_text": [{"text": {"content": txn.get("shop") or ""}}]},
+        "狀態": _prop_select(txn.get("status")),
+        "來源": _prop_select(txn.get("source")),
+        "Fingerprint": {"rich_text": [{"text": {"content": txn["fingerprint"]}}]},
+    }
+    if txn.get("mail_url"):
+        candidates["原信連結"] = {"url": txn["mail_url"]}
+    props = {k: v for k, v in candidates.items() if v is not None}
+
+    try:
+        page = client.pages.create(parent={"database_id": db_id}, properties=props)
+        return page["id"]
+    except Exception as e:
+        print(f"[notion] transaction_add 失敗 {txn.get('fingerprint')}：{e}")
+        return None
+
+
 def _read_relation_ids(props, name):
     return [r.get("id") for r in (props.get(name, {}) or {}).get("relation", []) or []]
 
