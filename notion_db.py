@@ -52,9 +52,30 @@ def _normalize_id(page_id):
     return (page_id or "").replace("-", "")
 
 
+def _read_select(props, name, default=""):
+    """讀 select 屬性的名稱。欄位不存在或沒選值都回 default。
+
+    遷移前建立的資料列不會有新欄位，所以這裡必須容忍缺欄位。
+    """
+    sel = (props.get(name, {}) or {}).get("select")
+    return (sel or {}).get("name") or default
+
+
 # ─────────────────────────────────────────────────────────
 # DB Schema 定義（每個 DB 對應一個用途）
 # ─────────────────────────────────────────────────────────
+
+def _select(*names_colors):
+    """(名稱, 顏色) tuple 串 → Notion select options。"""
+    return {"select": {"options": [{"name": n, "color": c} for n, c in names_colors]}}
+
+
+# 消費類別沿用國泰帳單自帶分類，不自創（見 spec 4.1）
+_SPEND_CATEGORIES = (
+    ("餐飲", "orange"), ("超市∕量販", "green"), ("百貨公司", "pink"),
+    ("服飾∕鞋∕精品", "purple"), ("家電∕３Ｃ通訊", "blue"), ("旅遊", "yellow"),
+    ("電信服務", "gray"), ("醫療", "red"), ("訂閱服務", "brown"), ("其他", "default"),
+)
 
 _SCHEMAS = {
     "Todos": {
@@ -62,6 +83,8 @@ _SCHEMAS = {
         "UserId": {"rich_text": {}},                            # LINE userId
         "Done": {"checkbox": {}},                               # 完成狀態
         "LocalId": {"number": {"format": "number"}},            # 對應 in-memory 編號（給 user 看）
+        # 三大分類。既有 DB 會由 _ensure_properties 自動補上這欄。
+        "分類": _select(("工作", "blue"), ("生活", "green"), ("我的專案", "purple")),
     },
     "Reminders": {
         "Name": {"title": {}},                                  # 提醒內容
@@ -82,6 +105,115 @@ _SCHEMAS = {
         "Month": {"title": {}},                                 # YYYY-MM
         "Count": {"number": {"format": "number"}},
     },
+
+    # ── 財務中心 ────────────────────────────────────────
+    "帳戶": {
+        "名稱": {"title": {}},
+        "類型": _select(("信用卡", "orange"), ("存款", "blue"), ("證券", "green")),
+        "銀行": {"rich_text": {}},
+        "幣別": _select(("TWD", "default"), ("USD", "green")),
+        "末四碼": {"rich_text": {}},
+        "目前餘額": {"number": {"format": "number"}},
+        "歸屬Gmail": _select(("renhezheng44", "blue"), ("jenho.cheng", "purple")),
+        "餘額更新時間": {"date": {}},
+    },
+    "交易明細": {
+        "摘要": {"title": {}},
+        "日期": {"date": {}},
+        "金額": {"number": {"format": "number"}},
+        "方向": _select(("支出", "red"), ("收入", "green"), ("轉帳", "gray"), ("還款", "blue")),
+        "類別": _select(*_SPEND_CATEGORIES),
+        "商店": {"rich_text": {}},
+        # 授權 = 當下刷卡紀錄；已結帳 = 月帳單確認後的最終金額（見 spec 4.3）
+        "狀態": _select(("授權中", "yellow"), ("已結帳", "green"), ("待確認", "red")),
+        "來源": _select(
+            ("國泰消費彙整", "blue"), ("國泰電子帳單", "purple"), ("國泰繳款入帳", "brown"),
+            ("富邦轉帳", "orange"), ("PDF對帳單", "gray"), ("手動", "default"),
+        ),
+        "原信連結": {"url": {}},
+        "Fingerprint": {"rich_text": {}},                       # 去重鍵，見 spec 3.3
+    },
+    "信用卡帳單": {
+        "期別": {"title": {}},                                   # YYYY-MM
+        "結帳日": {"date": {}},
+        "繳款截止日": {"date": {}},
+        "應繳總額": {"number": {"format": "number"}},
+        "最低應繳": {"number": {"format": "number"}},
+        "實際繳款": {"number": {"format": "number"}},
+        "狀態": _select(("未繳", "red"), ("已繳", "green"), ("自動扣繳", "blue")),
+    },
+    "持倉": {
+        "代號": {"title": {}},
+        "名稱": {"rich_text": {}},
+        "市場": _select(("TW", "blue"), ("US", "purple")),
+        "股數": {"number": {"format": "number"}},
+        "平均成本": {"number": {"format": "number"}},
+        "現價": {"number": {"format": "number"}},
+        "市值": {"number": {"format": "number"}},
+        "未實現損益": {"number": {"format": "number"}},
+        "報酬率": {"number": {"format": "percent"}},
+        "更新時間": {"date": {}},
+    },
+    "淨值快照": {
+        "日期": {"title": {}},                                   # YYYY-MM-DD
+        "現金": {"number": {"format": "number"}},
+        "股票市值": {"number": {"format": "number"}},
+        "信用卡未繳": {"number": {"format": "number"}},
+        "淨值": {"number": {"format": "number"}},
+    },
+
+    # ── 煮飯模板 ────────────────────────────────────────
+    "食材庫存": {
+        "名稱": {"title": {}},
+        "數量": {"number": {"format": "number"}},
+        "單位": _select(("顆", "default"), ("片", "default"), ("克", "default"),
+                        ("包", "default"), ("盒", "default"), ("瓶", "default")),
+        "購買日": {"date": {}},
+        "到期日": {"date": {}},
+        "剩餘天數": {"formula": {"expression": 'dateBetween(prop("到期日"), now(), "days")'}},
+        "存放位置": _select(("冷藏", "blue"), ("冷凍", "purple"), ("常溫", "brown"), ("調味櫃", "gray")),
+        "分類": _select(("蔬菜", "green"), ("肉類", "red"), ("海鮮", "blue"), ("蛋奶", "yellow"),
+                        ("主食", "orange"), ("調味料", "brown"), ("罐頭乾貨", "gray")),
+        "熱量": {"number": {"format": "number"}},               # 每 100g
+        "蛋白質": {"number": {"format": "number"}},
+        "碳水": {"number": {"format": "number"}},
+        "脂肪": {"number": {"format": "number"}},
+        "狀態": _select(("在庫", "green"), ("用完", "gray"), ("丟棄", "red")),
+    },
+    "食譜": {
+        "名稱": {"title": {}},
+        "步驟": {"rich_text": {}},
+        "烹調時間": {"number": {"format": "number"}},            # 分鐘
+        "難度": _select(("簡單", "green"), ("普通", "yellow"), ("困難", "red")),
+        "份數": {"number": {"format": "number"}},
+        "每份熱量": {"number": {"format": "number"}},
+        "圖片": {"files": {}},
+        "來源": {"url": {}},
+        "標籤": {"multi_select": {"options": []}},
+    },
+    "本週菜單": {
+        "日期": {"title": {}},
+        "餐別": _select(("早餐", "yellow"), ("午餐", "orange"), ("晚餐", "blue")),
+        "已完成": {"checkbox": {}},
+    },
+    "採購清單": {
+        "品名": {"title": {}},
+        "數量": {"number": {"format": "number"}},
+        "分類": _select(("蔬菜", "green"), ("肉類", "red"), ("海鮮", "blue"), ("蛋奶", "yellow"),
+                        ("主食", "orange"), ("調味料", "brown"), ("罐頭乾貨", "gray")),
+        "已購買": {"checkbox": {}},
+        "來源": _select(("手動", "default"), ("低庫存自動", "blue"), ("食譜缺料", "purple")),
+    },
+}
+
+
+# relation 必須等目標 DB 存在才能建，所以獨立成第二階段（見 spec 3.1）。
+# 值是「目標 DB 名稱」，會在 _ensure_relations 解析成真實 database_id。
+_RELATIONS = {
+    "交易明細": {"帳戶": "帳戶"},
+    "信用卡帳單": {"卡片": "帳戶"},
+    "食譜": {"所需食材": "食材庫存"},
+    "本週菜單": {"食譜": "食譜"},
 }
 
 
@@ -99,6 +231,7 @@ def get_or_create_db(name):
         return None
 
     parent_norm = _normalize_id(_PARENT_PAGE)
+    db_id = None
 
     # 1. 先 search 同名 DB（已建過就重用）
     try:
@@ -115,28 +248,101 @@ def get_or_create_db(name):
             title_blocks = r.get("title", []) or []
             db_title = "".join(b.get("plain_text", "") for b in title_blocks)
             if db_title == name:
-                _db_id_cache[name] = r["id"]
-                print(f"[notion] 重用既有 DB：{name} → {r['id']}")
-                return r["id"]
+                db_id = r["id"]
+                print(f"[notion] 重用既有 DB：{name} → {db_id}")
+                break
     except Exception as e:
         print(f"[notion] search DB 失敗：{e}")
 
-    # 2. 建立新 DB
-    with _lock:
-        if name in _db_id_cache:
-            return _db_id_cache[name]
-        try:
-            db = client.databases.create(
-                parent={"type": "page_id", "page_id": _PARENT_PAGE},
-                title=[{"type": "text", "text": {"content": name}}],
-                properties=_SCHEMAS[name],
-            )
-            _db_id_cache[name] = db["id"]
-            print(f"[notion] 建立 DB：{name} → {db['id']}")
-            return db["id"]
-        except Exception as e:
-            print(f"[notion] 建立 DB 失敗 {name}：{e}")
-            return None
+    # 2. 建立新 DB（第一階段：只帶非 relation 欄位）
+    if db_id is None:
+        with _lock:
+            if name in _db_id_cache:
+                return _db_id_cache[name]
+            try:
+                db = client.databases.create(
+                    parent={"type": "page_id", "page_id": _PARENT_PAGE},
+                    title=[{"type": "text", "text": {"content": name}}],
+                    properties=_SCHEMAS[name],
+                )
+                db_id = db["id"]
+                print(f"[notion] 建立 DB：{name} → {db_id}")
+            except Exception as e:
+                print(f"[notion] 建立 DB 失敗 {name}：{e}")
+                return None
+
+    # 先進 cache 再補 schema —— 若兩個 DB 互相 relation，遞迴會在這裡收斂
+    _db_id_cache[name] = db_id
+
+    _ensure_properties(db_id, name)
+    _ensure_relations(db_id, name)
+    return db_id
+
+
+def _retrieve_props(db_id, name):
+    """讀取 DB 目前的 properties。失敗回 None（呼叫端據此放棄，不硬改）。"""
+    client = _get_client()
+    if not client:
+        return None
+    try:
+        return client.databases.retrieve(database_id=db_id).get("properties", {}) or {}
+    except Exception as e:
+        print(f"[notion] retrieve DB 失敗 {name}：{e}")
+        return None
+
+
+def _ensure_properties(db_id, name):
+    """既有 DB 缺少 schema 欄位時補上。
+
+    只新增缺少的欄位，不動既有欄位定義 —— 使用者可能已經在 Notion 手動
+    調整過選項，覆寫會把他的設定洗掉。
+    """
+    existing = _retrieve_props(db_id, name)
+    if existing is None:
+        return
+
+    missing = {k: v for k, v in _SCHEMAS.get(name, {}).items() if k not in existing}
+    if not missing:
+        return
+    try:
+        _get_client().databases.update(database_id=db_id, properties=missing)
+        print(f"[notion] {name} 補上欄位：{list(missing)}")
+    except Exception as e:
+        print(f"[notion] 補欄位失敗 {name}：{e}")
+
+
+def _ensure_relations(db_id, name):
+    """第二階段：把 _RELATIONS 的目標 DB 名稱解析成真實 id 後補上 relation。"""
+    wanted = _RELATIONS.get(name)
+    if not wanted:
+        return
+    existing = _retrieve_props(db_id, name)
+    if existing is None:
+        return
+
+    props = {}
+    for prop_name, target_name in wanted.items():
+        if prop_name in existing:
+            continue
+        target_id = get_or_create_db(target_name)
+        if not target_id:
+            print(f"[notion] {name}.{prop_name} 的目標 DB「{target_name}」不可用，跳過 relation")
+            continue
+        props[prop_name] = {
+            "relation": {
+                "database_id": target_id,
+                "type": "single_property",
+                "single_property": {},
+            }
+        }
+
+    if not props:
+        return
+    try:
+        _get_client().databases.update(database_id=db_id, properties=props)
+        print(f"[notion] {name} 補上 relation：{list(props)}")
+    except Exception as e:
+        print(f"[notion] 補 relation 失敗 {name}：{e}")
 
 
 # ─────────────────────────────────────────────────────────
@@ -236,6 +442,7 @@ def todos_load_for_user(user_id):
                 "local_id": int(local_id),
                 "text": text,
                 "done": bool(done),
+                "category": _read_select(props, "分類"),
             })
         return out
     except Exception as e:
@@ -271,6 +478,7 @@ def todos_load_all_users():
                 "local_id": int(local_id),
                 "text": text,
                 "done": False,
+                "category": _read_select(props, "分類"),
             })
         return out
     except Exception as e:
@@ -278,8 +486,33 @@ def todos_load_all_users():
         return {}
 
 
-def todos_create(user_id, text, local_id):
-    """建立一筆待辦。回 page_id 或 None。"""
+TODO_CATEGORIES = ("工作", "生活", "我的專案")
+TODO_CATEGORY_DEFAULT = "生活"
+
+
+def normalize_todo_category(raw):
+    """把使用者輸入的分類正規化成三大類之一。認不出來就回預設值。
+
+    接受簡寫（工作/生活/專案）與英文，避免使用者每次都要打全名。
+    """
+    if not raw:
+        return TODO_CATEGORY_DEFAULT
+    text = str(raw).strip().lower()
+    aliases = {
+        "工作": "工作", "work": "工作", "job": "工作", "公事": "工作",
+        "生活": "生活", "life": "生活", "私事": "生活", "家裡": "生活",
+        "我的專案": "我的專案", "專案": "我的專案", "project": "我的專案",
+        "proj": "我的專案", "side": "我的專案",
+    }
+    return aliases.get(text, TODO_CATEGORY_DEFAULT)
+
+
+def todos_create(user_id, text, local_id, category=None):
+    """建立一筆待辦。回 page_id 或 None。
+
+    category 未指定時歸到「生活」—— 寧可分錯也不要留空，
+    留空的話 Notion 上的分類檢視會漏掉這筆。
+    """
     db_id = get_or_create_db("Todos")
     client = _get_client()
     if not db_id or not client:
@@ -292,6 +525,7 @@ def todos_create(user_id, text, local_id):
                 "UserId": {"rich_text": [{"text": {"content": user_id}}]},
                 "Done": {"checkbox": False},
                 "LocalId": {"number": int(local_id)},
+                "分類": {"select": {"name": normalize_todo_category(category)}},
             },
         )
         return page["id"]
