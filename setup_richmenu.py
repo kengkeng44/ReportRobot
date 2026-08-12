@@ -43,6 +43,7 @@ CELL_H = H // ROWS  # 843
 # 每格格式：(主標, 副標 EN, 背景色, (動作類型, 參數))
 #   ("message", "/待辦")   → 送出文字訊息，走一般 webhook → command_router
 #   ("switch",  "kitchen") → 切換到別的分頁（參數是 MENUS 的 key，同時也是 alias id）
+#   ("prompt",  "買了 ")   → 打開鍵盤並預填文字，使用者接著補後半段就送出
 #
 # ⚠️ 標籤只能放中文與英文：PNG 是用 CJK 字型畫的，沒有彩色 emoji 字型，
 #    放 emoji 或箭頭會變成豆腐字（test_labels_have_no_emoji 會擋）。
@@ -70,7 +71,7 @@ MENUS = {
             ("最近交易", "RECENT",   "#B08D6D", ("message", "/最近交易")),
             ("卡費",     "CARD",     "#C09A7A", ("message", "/卡費")),
             ("淨值",     "NETWORTH", "#8A6F5A", ("message", "/淨值")),
-            ("記一筆",   "ADD",      "#9A7B63", ("message", "/記一筆")),
+            ("記一筆",   "ADD",      "#9A7B63", ("prompt",  "記一筆 ")),
             _BACK,
         ],
     },
@@ -81,7 +82,7 @@ MENUS = {
             ("庫存",   "PANTRY",   "#88B07A", ("message", "/庫存")),
             ("快過期", "EXPIRING", "#6F9A62", ("message", "/快過期")),
             ("煮什麼", "COOK",     "#7FA870", ("message", "/煮什麼")),
-            ("買了",   "BUY",      "#96BC88", ("message", "/買了")),
+            ("買了",   "BUY",      "#96BC88", ("prompt",  "買了 ")),
             ("採購",   "SHOPPING", "#5F8A54", ("message", "/採購")),
             _BACK,
         ],
@@ -91,7 +92,7 @@ MENUS = {
         "chat_bar": "投資",
         "cells": [
             ("持股",   "HOLDINGS",  "#D9534F", ("message", "仁和持股")),
-            ("查個股", "QUOTE",     "#C64540", ("message", "/查個股")),
+            ("查個股", "QUOTE",     "#C64540", ("prompt",  "/")),
             ("比較",   "COMPARE",   "#E0645F", ("message", "/比較")),
             ("盤前",   "PREMARKET", "#B33F3B", ("message", "/盤前")),
             ("大盤",   "MARKET",    "#EC7370", ("message", "/大盤")),
@@ -130,8 +131,18 @@ _CHINESE_FONT_CANDIDATES = [
 ]
 
 
-def _find_font(size):
-    """嘗試找系統中文字型；都找不到回 default（會缺中文，但流程不炸）。"""
+class NoChineseFontError(RuntimeError):
+    """找不到 CJK 字型。
+
+    刻意丟例外而不是 fallback 到 ImageFont.load_default()：
+    default 是固定尺寸的點陣字型，會忽略指定的字級，在 2500px 的圖上
+    畫出來只有約 10px，等於看不見。以前的 fallback 會**默默上傳一張
+    只有色塊沒有字的選單**，而且沒有任何錯誤 —— 那比直接失敗糟得多。
+    """
+
+
+def find_font(size):
+    """找系統 CJK 字型。找不到就丟 NoChineseFontError。"""
     from PIL import ImageFont
     for p in _CHINESE_FONT_CANDIDATES:
         if os.path.exists(p):
@@ -140,8 +151,15 @@ def _find_font(size):
             except Exception as e:
                 print(f"[richmenu] 字型 {p} 載入失敗：{e}")
                 continue
-    print("[richmenu] ⚠️ 找不到中文字型，用 default font（中文會缺字）")
-    return ImageFont.load_default()
+    raise NoChineseFontError(
+        "找不到任何 CJK 字型，畫出來的選單會只有色塊沒有字。\n"
+        "Railway/Nixpacks 請確認 nixpacks.toml 有裝 fonts-wqy-zenhei；\n"
+        f"已嘗試的路徑：{_CHINESE_FONT_CANDIDATES}"
+    )
+
+
+# 舊名保留，避免其他地方引用到
+_find_font = find_font
 
 
 def generate_image(cells, out_path):
@@ -227,6 +245,16 @@ def build_areas(cells):
                 "type": "richmenuswitch",
                 "richMenuAliasId": param,
                 "data": f"switch={param}",
+            }
+        elif kind == "prompt":
+            # 需要接著打字的功能（買了什麼、記多少錢、查哪支股票）。
+            # 按下去會打開鍵盤並預先填好開頭，使用者只要補後半段。
+            # 不帶 displayText，避免聊天室多出一則沒意義的回音。
+            line_action = {
+                "type": "postback",
+                "data": f"prompt={param.strip()}",
+                "inputOption": "openKeyboard",
+                "fillInText": param,
             }
         else:
             raise ValueError(f"未知的 action 類型：{kind}")

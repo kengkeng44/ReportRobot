@@ -1,0 +1,9 @@
+# Rich Menu 的 PNG 是用 PIL 畫的，需要系統有 CJK 字型才畫得出中文。
+# Nixpacks 的預設映像不含任何中文字型，少了這個會產出「只有色塊沒有字」的選單。
+#
+# 選 wqy-zenhei（約 13MB）而非 fonts-noto-cjk（200MB+）：
+# 兩者都能畫繁體中文，但 noto-cjk 會讓每次建置多花好幾分鐘。
+# 安裝路徑 /usr/share/fonts/truetype/wqy/wqy-zenhei.ttc
+# 已列在 setup_richmenu._CHINESE_FONT_CANDIDATES 裡。
+[phases.setup]
+aptPkgs = ["...", "fonts-wqy-zenhei"]

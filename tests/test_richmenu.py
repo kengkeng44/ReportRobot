@@ -83,6 +83,61 @@ def test_build_areas_maps_switch_action():
     assert action["richMenuAliasId"] == "finance"
 
 
+def test_build_areas_maps_prompt_to_keyboard_with_prefill():
+    """按下去要打開鍵盤並預填開頭，使用者只補後半段。"""
+    cells = [("買了", "BUY", "#000000", ("prompt", "買了 "))] * 6
+    areas = rm.build_areas(cells)
+
+    action = areas[0]["action"]
+    assert action["type"] == "postback"
+    assert action["inputOption"] == "openKeyboard"
+    assert action["fillInText"] == "買了 "
+
+
+def test_prompt_has_no_display_text():
+    """帶 displayText 會在聊天室多出一則沒意義的回音。"""
+    cells = [("買了", "BUY", "#000000", ("prompt", "買了 "))] * 6
+    assert "displayText" not in rm.build_areas(cells)[0]["action"]
+
+
+def test_prompt_prefill_within_line_limit():
+    """LINE 對 fillInText 的上限是 300 字。"""
+    for key, menu in rm.MENUS.items():
+        for label, _s, _c, (kind, param) in menu["cells"]:
+            if kind == "prompt":
+                assert len(param) <= 300, f"{key} 的「{label}」預填字串過長"
+
+
+def test_input_needing_cells_use_prompt_not_message():
+    """需要接著打字的格子，送死指令沒有意義 —— 要用 prompt。"""
+    needs_input = {"買了", "記一筆", "查個股"}
+    for menu in rm.MENUS.values():
+        for label, _s, _c, (kind, _p) in menu["cells"]:
+            if label in needs_input:
+                assert kind == "prompt", f"「{label}」應該用 prompt"
+
+
+# ── 字型 ──────────────────────────────────────────────────
+
+def test_missing_font_raises_instead_of_silent_blank_menu(monkeypatch):
+    """找不到 CJK 字型時要大聲失敗。
+
+    舊版會 fallback 到 ImageFont.load_default()（固定小點陣字型），
+    結果默默上傳一張只有色塊、沒有字的選單 —— 這是實際發生過的事故。
+    """
+    monkeypatch.setattr(rm, "_CHINESE_FONT_CANDIDATES", ["/nope/none.ttc"])
+
+    with pytest.raises(rm.NoChineseFontError):
+        rm.find_font(280)
+
+
+def test_generate_image_propagates_font_error(monkeypatch, tmp_path):
+    monkeypatch.setattr(rm, "_CHINESE_FONT_CANDIDATES", ["/nope/none.ttc"])
+
+    with pytest.raises(rm.NoChineseFontError):
+        rm.generate_image(rm.MENUS["main"]["cells"], str(tmp_path / "x.png"))
+
+
 def test_build_areas_rejects_unknown_action_kind():
     cells = [("壞掉", "BAD", "#000000", ("teleport", "x"))] * 6
 

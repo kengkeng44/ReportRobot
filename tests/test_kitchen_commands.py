@@ -169,6 +169,13 @@ def test_consume_missing_item(fake_notion):
     assert "找不到" in reply
 
 
+def test_prompt_postback_is_silent():
+    """Rich Menu 的「買了」是 postback(prompt=買了)，只為了打開鍵盤預填文字。
+    機器人不該回任何訊息，不然聊天室會多一則廢話。"""
+    assert cr.handle_postback("prompt=買了", "U1") is None
+    assert cr.handle_postback("prompt=記一筆", "U1") is None
+
+
 def test_kitchen_blocked_in_group(fake_notion):
     """群組裡查庫存要被擋掉。"""
     reply = cr.handle("/庫存", {"source_type": "group", "user_id": "U1"})
