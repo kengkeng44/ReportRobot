@@ -394,7 +394,7 @@ def _parse_tw_monthly_record(line, fallback_date=None, name_to_code=None):
 
     print(f"  [parse {mode}] line={line!r} → shares={shares} price={price} amount={amount}")
 
-    code = (name_to_code or {}).get(name, name)
+    code = _resolve_tw_code(name, name_to_code)
     return {
         'ticker': code,
         'name': name,
@@ -403,6 +403,52 @@ def _parse_tw_monthly_record(line, fallback_date=None, name_to_code=None):
         'price': price,
         'date': line_date or fallback_date,
     }
+
+
+_TW_CODE_CACHE = {}
+
+
+def lookup_tw_code_by_name(name):
+    """用 twstock 反查台股代號。找不到回 None。
+
+    抽成獨立函式方便測試替換（測試不該依賴 twstock 的離線對照表內容）。
+    """
+    if name in _TW_CODE_CACHE:
+        return _TW_CODE_CACHE[name]
+    code = None
+    try:
+        import twstock
+        candidates = [c for c, info in twstock.codes.items()
+                      if info.name and name in info.name]
+        # 6 位以上通常是權證等衍生商品，優先取一般股票；同分取最短
+        normal = [c for c in candidates if len(c) <= 6]
+        pool = normal or candidates
+        if pool:
+            code = min(pool, key=len)
+    except Exception as e:
+        print(f"  [代號回填] twstock 查詢失敗 {name}：{e}")
+    _TW_CODE_CACHE[name] = code
+    return code
+
+
+def _resolve_tw_code(name, name_to_code):
+    """名稱 → 代號。對照表優先，查不到再用 twstock 反查。
+
+    以前查不到就直接把中文名當成 ticker 回傳，下游 _is_tw_ticker() 會因為
+    它不是 4-6 位數字而**誤判成美股**，於是抓不到現價、市值與損益全部是空的。
+    實際發生過：台積電因為近期沒有成交回報，對照表裡沒有它。
+    """
+    if not name:
+        return name
+    hit = (name_to_code or {}).get(name)
+    if hit:
+        return hit
+    code = lookup_tw_code_by_name(name)
+    if code:
+        print(f"  [代號回填] {name} → {code}（對照表沒有，改用 twstock 反查）")
+        return code
+    print(f"  [代號回填失敗] {name} 查不到代號，下游會誤判成美股")
+    return name
 
 
 def _parse_record(line, fallback_date=None, name_to_code=None):
