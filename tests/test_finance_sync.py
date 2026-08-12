@@ -201,6 +201,83 @@ def test_summary_mentions_counts():
     assert "2" in text and "5" in text
 
 
+# ── 持倉與淨值快照 ────────────────────────────────────────
+
+class FakePortfolioNotion(FakeNotion):
+    def __init__(self):
+        super().__init__()
+        self.holdings = None
+        self.snapshots = []
+
+    def holdings_sync(self, rows):
+        self.holdings = rows
+        return len(rows), 0
+
+    def networth_upsert(self, day, cash=None, stock=None, card_due=None, net=None):
+        self.snapshots.append({"day": day, "cash": cash, "stock": stock, "net": net})
+        return "page_1"
+
+
+def _fake_compute(monkeypatch, net_ntd, rows=None):
+    import portfolio
+    monkeypatch.setattr(portfolio, "_compute_portfolio_data", lambda p: {
+        "rows": rows if rows is not None else [
+            {"ticker": "2330", "display": "台積電", "is_us": False,
+             "shares": 100, "avg": 900.0, "current": 1000.0,
+             "pnl": 10000.0, "pnl_pct": 11.1},
+        ],
+        "net_value_ntd": net_ntd,
+    })
+
+
+def test_portfolio_written_to_notion(monkeypatch):
+    _fake_compute(monkeypatch, 100000.0)
+    notion = FakePortfolioNotion()
+
+    stats = finance_sync.sync_portfolio(portfolio={"2330": {}}, notion=notion)
+
+    assert stats["holdings"] == 1
+    assert notion.holdings[0]["ticker"] == "2330"
+
+
+def test_snapshot_recorded_with_stock_value(monkeypatch):
+    _fake_compute(monkeypatch, 100000.0)
+    notion = FakePortfolioNotion()
+
+    from datetime import date
+    finance_sync.sync_portfolio(portfolio={"2330": {}}, notion=notion,
+                                today=date(2026, 8, 12))
+
+    assert notion.snapshots[0]["day"] == "2026-08-12"
+    assert notion.snapshots[0]["net"] == 100000.0
+
+
+def test_snapshot_skipped_when_net_unknown(monkeypatch):
+    """美股有部位但抓不到匯率時 net 會是 None。
+    寧可不寫，也不要記一個少算美股的淨值。"""
+    _fake_compute(monkeypatch, None)
+    notion = FakePortfolioNotion()
+
+    stats = finance_sync.sync_portfolio(portfolio={"AAPL": {}}, notion=notion)
+
+    assert stats["snapshot"] is False
+    assert notion.snapshots == []
+
+
+def test_empty_portfolio_is_graceful():
+    notion = FakePortfolioNotion()
+    stats = finance_sync.sync_portfolio(portfolio={}, notion=notion)
+    assert stats["holdings"] == 0
+    assert notion.snapshots == []
+
+
+def test_portfolio_skipped_when_notion_unconfigured():
+    notion = FakePortfolioNotion()
+    notion.is_configured = lambda: False
+    stats = finance_sync.sync_portfolio(portfolio={"2330": {}}, notion=notion)
+    assert stats["holdings"] == 0
+
+
 def test_summary_when_nothing_new():
     assert "沒有新交易" in finance_sync.format_summary(
         {"parsed": 0, "written": 0, "skipped": 0, "sources": 1})

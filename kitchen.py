@@ -363,6 +363,16 @@ def format_recommendations(recs):
     return "\n".join(lines)
 
 
+def format_shopping(rows):
+    if not rows:
+        return "採購清單是空的。\n用掉食材時會自動加進來，也可以打「要買 醬油」。"
+    lines = [f"🛒 待買 {len(rows)} 樣"]
+    for r in rows:
+        auto = "　(自動)" if r.get("source") == "低庫存自動" else ""
+        lines.append(f"・{r['name']}{auto}")
+    return "\n".join(lines)
+
+
 def format_added(added, unknown):
     """回報寫入結果。看不懂的要明講，不能默默吞掉。"""
     lines = []

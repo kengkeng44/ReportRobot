@@ -53,12 +53,19 @@ FINANCE_CRON = _cron_or_default("FINANCE_CRON", "30 7 * * *")
 
 
 def _run_finance_sync():
-    """排程進入點。同步失敗不能拖垮同 process 的每日推播。"""
+    """排程進入點。同步失敗不能拖垮同 process 的每日推播。
+
+    交易與持倉分開 try：其中一個掛掉不該讓另一個也不跑。
+    """
+    import finance_sync
     try:
-        import finance_sync
         finance_sync.sync()
     except Exception as e:
-        print(f"[finance] 排程執行失敗：{e}")
+        print(f"[finance] 交易同步失敗：{e}")
+    try:
+        finance_sync.sync_portfolio()
+    except Exception as e:
+        print(f"[finance] 持倉同步失敗：{e}")
 
 # DAILY_CRON 必須是 5 欄位的 crontab（minute hour day month dow）
 # 用 env override 但若格式錯亂（空字串 / 欄位數不對）→ fallback 預設值，不讓 startup crash
@@ -361,7 +368,9 @@ async def trigger_finance_sync(request: Request, days: int = 7):
         # sync() 是阻塞的（Gmail / Notion 都是同步 HTTP）。直接 await 會卡住
         # event loop，LINE webhook 會跟著停擺，所以丟到 thread 跑。
         stats = await asyncio.to_thread(finance_sync.sync, lookback_days=days)
+        portfolio_stats = await asyncio.to_thread(finance_sync.sync_portfolio)
         return {"ok": True, "days": days, "stats": stats,
+                "portfolio": portfolio_stats,
                 "summary": finance_sync.format_summary(stats)}
     except Exception as e:
         print(f"[finance] 手動觸發失敗：{e}")

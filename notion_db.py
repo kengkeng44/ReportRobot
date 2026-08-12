@@ -955,9 +955,171 @@ def networth_load(limit=30):
         return []
 
 
+def holdings_sync(rows):
+    """把持倉寫進 Notion。以「代號」為鍵 upsert。
+
+    用 update 而非砍掉重建：重建會讓 page id 每天變，
+    使用者在 Notion 對某檔加的註解與連結就全沒了。
+    回 (更新數, 新增數)。
+    """
+    db_id = get_or_create_db("持倉")
+    client = _get_client()
+    if not db_id or not client:
+        return 0, 0
+
+    existing = {}
+    try:
+        res = client.databases.query(database_id=db_id, page_size=100)
+        for r in res.get("results", []):
+            code = _read_title(r.get("properties", {}) or {}, "代號")
+            if code:
+                existing[code] = r["id"]
+    except Exception as e:
+        print(f"[notion] 讀取既有持倉失敗：{e}")
+        return 0, 0
+
+    now = datetime.now().astimezone().isoformat()
+    updated = created = 0
+
+    for row in rows:
+        code = row.get("ticker")
+        if not code:
+            continue
+        market_value = None
+        if row.get("current") is not None and row.get("shares") is not None:
+            market_value = row["shares"] * row["current"]
+
+        candidates = {
+            "名稱": {"rich_text": [{"text": {"content": row.get("display") or ""}}]},
+            "市場": _prop_select("US" if row.get("is_us") else "TW"),
+            "股數": _prop_number(row.get("shares")),
+            "平均成本": _prop_number(row.get("avg")),
+            "現價": _prop_number(row.get("current")),
+            "市值": _prop_number(market_value),
+            "未實現損益": _prop_number(row.get("pnl")),
+            # Notion 的 percent 格式是「1 = 100%」，所以要除以 100
+            "報酬率": _prop_number(row["pnl_pct"] / 100 if row.get("pnl_pct") is not None else None),
+            "更新時間": {"date": {"start": now}},
+        }
+        props = {k: v for k, v in candidates.items() if v is not None}
+
+        try:
+            if code in existing:
+                client.pages.update(page_id=existing[code], properties=props)
+                updated += 1
+            else:
+                props["代號"] = {"title": [{"text": {"content": code}}]}
+                client.pages.create(parent={"database_id": db_id}, properties=props)
+                created += 1
+        except Exception as e:
+            print(f"[notion] 持倉寫入失敗 {code}：{e}")
+
+    return updated, created
+
+
+def networth_upsert(day, cash=None, stock=None, card_due=None, net=None):
+    """一天一筆淨值快照，同一天重跑會覆寫而非新增。"""
+    db_id = get_or_create_db("淨值快照")
+    client = _get_client()
+    if not db_id or not client:
+        return None
+
+    candidates = {
+        "現金": _prop_number(cash),
+        "股票市值": _prop_number(stock),
+        "信用卡未繳": _prop_number(card_due),
+        "淨值": _prop_number(net),
+    }
+    props = {k: v for k, v in candidates.items() if v is not None}
+
+    try:
+        res = client.databases.query(
+            database_id=db_id,
+            filter={"property": "日期", "title": {"equals": day}},
+            page_size=1,
+        )
+        hit = (res.get("results") or [None])[0]
+        if hit:
+            client.pages.update(page_id=hit["id"], properties=props)
+            return hit["id"]
+        props["日期"] = {"title": [{"text": {"content": day}}]}
+        page = client.pages.create(parent={"database_id": db_id}, properties=props)
+        return page["id"]
+    except Exception as e:
+        print(f"[notion] networth_upsert 失敗：{e}")
+        return None
+
+
 def _read_rich_text(props, name):
     blocks = (props.get(name, {}) or {}).get("rich_text", []) or []
     return "".join(b.get("plain_text", "") for b in blocks)
+
+
+def shopping_load(only_pending=True):
+    """採購清單。預設只回還沒買的。"""
+    db_id = get_or_create_db("採購清單")
+    client = _get_client()
+    if not db_id or not client:
+        return []
+    try:
+        kwargs = {"database_id": db_id, "page_size": 100}
+        if only_pending:
+            kwargs["filter"] = {"property": "已購買", "checkbox": {"equals": False}}
+        res = client.databases.query(**kwargs)
+        out = []
+        for r in res.get("results", []):
+            props = r.get("properties", {}) or {}
+            out.append({
+                "page_id": r["id"],
+                "name": _read_title(props, "品名"),
+                "qty": _read_number(props, "數量"),
+                "category": _read_select(props, "分類"),
+                "source": _read_select(props, "來源"),
+            })
+        return out
+    except Exception as e:
+        print(f"[notion] shopping_load 失敗：{e}")
+        return []
+
+
+def shopping_add(name, category=None, source="手動", qty=1):
+    """加一筆採購項目。已存在同名未購買的就不重複加。"""
+    db_id = get_or_create_db("採購清單")
+    client = _get_client()
+    if not db_id or not client:
+        return None
+
+    for row in shopping_load(only_pending=True):
+        if row["name"] == name:
+            return row["page_id"]      # 已經在清單上，不要長出第二筆
+
+    candidates = {
+        "品名": {"title": [{"text": {"content": name}}]},
+        "數量": _prop_number(qty),
+        "分類": _prop_select(category),
+        "已購買": {"checkbox": False},
+        "來源": _prop_select(source),
+    }
+    props = {k: v for k, v in candidates.items() if v is not None}
+    try:
+        page = client.pages.create(parent={"database_id": db_id}, properties=props)
+        return page["id"]
+    except Exception as e:
+        print(f"[notion] shopping_add 失敗 {name}：{e}")
+        return None
+
+
+def shopping_mark_bought(page_id):
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        client.pages.update(page_id=page_id,
+                            properties={"已購買": {"checkbox": True}})
+        return True
+    except Exception as e:
+        print(f"[notion] shopping_mark_bought 失敗：{e}")
+        return False
 
 
 def _read_relation_ids(props, name):

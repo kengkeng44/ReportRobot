@@ -13,6 +13,7 @@
 
 import base64
 import os
+from datetime import date as _date
 
 from parsers import cathay_daily
 
@@ -123,6 +124,54 @@ def sync(service=None, lookback_days=DEFAULT_LOOKBACK_DAYS, notion=None):
                     stats["written"] += 1
 
     print(f"[finance] 同步完成：{stats}")
+    return stats
+
+
+def sync_portfolio(portfolio=None, notion=None, today=None):
+    """把持倉與淨值快照寫進 Notion。回統計 dict。
+
+    現金與信用卡未繳的資料源還沒接上（帳戶餘額要靠 PDF 對帳單、
+    卡費要靠月帳單解析），所以目前的淨值等於股票市值。
+    刻意不把它們當 0 硬算進去 —— 那會產生一個看起來精確但其實錯的數字。
+    """
+    if notion is None:
+        import notion_db as notion
+
+    stats = {"holdings": 0, "created": 0, "snapshot": False}
+
+    if not notion.is_configured():
+        return stats
+
+    if portfolio is None:
+        try:
+            from gmail_reader import get_portfolio_from_gmail
+            portfolio = get_portfolio_from_gmail()
+        except Exception as e:
+            print(f"[finance] 取得持倉失敗：{e}")
+            return stats
+
+    if not portfolio:
+        print("[finance] 無持倉資料，跳過")
+        return stats
+
+    from portfolio import _compute_portfolio_data
+    data = _compute_portfolio_data(portfolio)
+
+    updated, created = notion.holdings_sync(data["rows"])
+    stats["holdings"] = updated + created
+    stats["created"] = created
+
+    stock_value = data.get("net_value_ntd")
+    if stock_value is None:
+        # 美股有部位但匯率抓不到時會是 None。寧可不寫，也不要寫一個少算美股的淨值。
+        print("[finance] 淨值無法換算（缺匯率），略過快照")
+        return stats
+
+    day = (today or _date.today()).isoformat()
+    if notion.networth_upsert(day, stock=stock_value, net=stock_value):
+        stats["snapshot"] = True
+
+    print(f"[finance] 持倉同步完成：{stats}")
     return stats
 
 

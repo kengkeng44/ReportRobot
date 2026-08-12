@@ -46,6 +46,8 @@ _RECENT_KEYWORDS = {"最近交易", "最近消費", "近期交易", "recent"}
 _CARD_KEYWORDS = {"卡費", "信用卡帳單", "帳單", "card"}
 _NETWORTH_KEYWORDS = {"淨值", "資產", "networth"}
 _MANUAL_RE = re.compile(r"^(?:記一筆|記帳)\s*(.*)$")
+_SHOPPING_ADD_RE = re.compile(r"^(?:要買|待買)\s*(.*)$")
+_SHOPPING_BOUGHT_RE = re.compile(r"^(?:買好了|買到了)\s*(.*)$")
 _PREVIEW_KEYWORDS = {"預覽", "preview", "Preview", "PREVIEW", "test", "預覽報告"}
 _WHOAMI_KEYWORDS = {"我的id", "我的ID", "我的Id", "myid", "MyID", "MYID", "whoami", "我是誰"}
 
@@ -309,6 +311,12 @@ def parse(text):
         return ("cook_what", None)
     if cleaned in _SHOPPING_KEYWORDS:
         return ("shopping_list", None)
+    m = _SHOPPING_ADD_RE.match(cleaned)
+    if m:
+        return ("shopping_add", m.group(1).strip() or None)
+    m = _SHOPPING_BOUGHT_RE.match(cleaned)
+    if m:
+        return ("shopping_bought", m.group(1).strip() or None)
     m = _PANTRY_ADD_RE.match(cleaned)
     if m:
         # Rich Menu 的「買了」格子送出的是不帶品項的 /買了 → arg=None，回提示
@@ -366,6 +374,7 @@ _PERSONAL_KINDS = {"reminder_add", "reminder_list", "reminder_cancel",
                    # 庫存與財務都是個人資料，不該在家人群組裡被查
                    "pantry_list", "pantry_expiring", "cook_what",
                    "pantry_add", "pantry_consume", "shopping_list",
+                   "shopping_add", "shopping_bought",
                    "fin_spending", "fin_recent", "fin_card",
                    "fin_networth", "fin_manual"}
 
@@ -510,8 +519,12 @@ def _handle_kitchen(kind, arg):
         if len(hits) > 1:
             names = "、".join(r["name"] for r in hits)
             return f"有多樣符合:{names}\n請打完整一點。"
-        notion_db.pantry_set_status(hits[0]["page_id"], "用完")
-        return f"✅ 已把「{hits[0]['name']}」標成用完。"
+        item = hits[0]
+        notion_db.pantry_set_status(item["page_id"], "用完")
+        # 用完就自動排進採購清單 —— 不然「用掉」跟「要再買」之間會斷掉
+        notion_db.shopping_add(item["name"], category=item.get("category"),
+                               source="低庫存自動")
+        return f"✅ 已把「{item['name']}」標成用完,並加進採購清單。"
 
     if kind == "pantry_list":
         return kitchen.format_pantry(notion_db.pantry_load())
@@ -527,8 +540,29 @@ def _handle_kitchen(kind, arg):
                     "先到 Notion 的「煮飯模板 → 食譜」加幾道常煮的菜。")
         return kitchen.format_recommendations(kitchen.recommend(pantry, recipes))
 
+    if kind == "shopping_add":
+        if not arg:
+            return "要買什麼?這樣打:\n要買 醬油"
+        added = []
+        for it, _unknown in [kitchen.parse_purchase(arg)]:
+            for x in it:
+                if notion_db.shopping_add(x["name"],
+                                          category=kitchen.guess_category(x["name"])):
+                    added.append(x["name"])
+        if not added:
+            return "沒有解析到品項。試試「要買 醬油」。"
+        return "🛒 已加進採購清單:" + "、".join(added)
+
+    if kind == "shopping_bought":
+        rows = notion_db.shopping_load()
+        hits = [r for r in rows if arg and arg in r["name"]]
+        if not hits:
+            return f"採購清單裡找不到「{arg}」。"
+        notion_db.shopping_mark_bought(hits[0]["page_id"])
+        return f"✅ 已把「{hits[0]['name']}」標成買好了。"
+
     if kind == "shopping_list":
-        return "採購清單還在開發中,下一版接上。"
+        return kitchen.format_shopping(notion_db.shopping_load())
 
     return None
 
@@ -604,7 +638,8 @@ def handle(text, ctx=None):
             return line_quota.format_stats()
 
         if kind in ("pantry_list", "pantry_expiring", "cook_what",
-                    "pantry_add", "pantry_consume", "shopping_list"):
+                    "pantry_add", "pantry_consume", "shopping_list",
+                    "shopping_add", "shopping_bought"):
             return _handle_kitchen(kind, arg)
 
         if kind in ("fin_spending", "fin_recent", "fin_card",
