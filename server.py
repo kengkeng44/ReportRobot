@@ -5,6 +5,7 @@
 - GET /：健康檢查
 """
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -334,6 +335,37 @@ async def trigger_daily(request: Request, force: int = 0):
     # admin 手動觸發：直接呼叫 run_daily_report，跳過 flag 冪等（測試用）
     await run_daily_report(force_premarket=bool(force))
     return {"ok": True, "force_premarket": bool(force)}
+
+
+@app.post("/admin/finance-sync")
+async def trigger_finance_sync(request: Request, days: int = 7):
+    """手動觸發財務同步（排程是每天台灣 15:30，這個給即時驗證用）。
+
+    ?days=N 調整往回撈幾天，預設 7。重跑安全 —— 指紋去重會擋掉已寫入的。
+
+    PowerShell 範例：
+      Invoke-RestMethod -Method Post `
+        -Uri "https://<host>/admin/finance-sync?days=7" `
+        -Headers @{ 'X-Admin-Token' = $env:ADMIN_TOKEN }
+    """
+    admin_token = os.environ.get("ADMIN_TOKEN", "")
+    if not admin_token:
+        raise HTTPException(status_code=503, detail="Admin disabled")
+    if request.headers.get("X-Admin-Token") != admin_token:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    days = max(1, min(days, 90))     # 夾住範圍，避免手滑打 3650 去撈整個信箱
+
+    import finance_sync
+    try:
+        # sync() 是阻塞的（Gmail / Notion 都是同步 HTTP）。直接 await 會卡住
+        # event loop，LINE webhook 會跟著停擺，所以丟到 thread 跑。
+        stats = await asyncio.to_thread(finance_sync.sync, lookback_days=days)
+        return {"ok": True, "days": days, "stats": stats,
+                "summary": finance_sync.format_summary(stats)}
+    except Exception as e:
+        print(f"[finance] 手動觸發失敗：{e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/admin/setup-richmenu")
