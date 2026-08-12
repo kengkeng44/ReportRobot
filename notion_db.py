@@ -878,6 +878,88 @@ def transaction_add(txn):
         return None
 
 
+def transactions_load(limit=200):
+    """撈交易明細（新到舊）。回 list of dict，欄位名對齊 finance_report。"""
+    db_id = get_or_create_db("交易明細")
+    client = _get_client()
+    if not db_id or not client:
+        return []
+    try:
+        res = client.databases.query(
+            database_id=db_id,
+            sorts=[{"property": "日期", "direction": "descending"}],
+            page_size=min(limit, 100),
+        )
+        out = []
+        for r in res.get("results", []):
+            props = r.get("properties", {}) or {}
+            date_obj = (props.get("日期", {}) or {}).get("date") or {}
+            out.append({
+                "date": (date_obj.get("start") or "")[:10],
+                "amount": _read_number(props, "金額"),
+                "category": _read_select(props, "類別"),
+                "shop": _read_rich_text(props, "商店"),
+                "direction": _read_select(props, "方向") or "支出",
+                "status": _read_select(props, "狀態"),
+            })
+        return out
+    except Exception as e:
+        print(f"[notion] transactions_load 失敗：{e}")
+        return []
+
+
+def card_statements_load():
+    db_id = get_or_create_db("信用卡帳單")
+    client = _get_client()
+    if not db_id or not client:
+        return []
+    try:
+        res = client.databases.query(database_id=db_id, page_size=20)
+        out = []
+        for r in res.get("results", []):
+            props = r.get("properties", {}) or {}
+            due = (props.get("繳款截止日", {}) or {}).get("date") or {}
+            out.append({
+                "period": _read_title(props, "期別"),
+                "due": (due.get("start") or "")[:10],
+                "amount": _read_number(props, "應繳總額"),
+                "minimum": _read_number(props, "最低應繳"),
+                "status": _read_select(props, "狀態"),
+            })
+        return out
+    except Exception as e:
+        print(f"[notion] card_statements_load 失敗：{e}")
+        return []
+
+
+def networth_load(limit=30):
+    db_id = get_or_create_db("淨值快照")
+    client = _get_client()
+    if not db_id or not client:
+        return []
+    try:
+        res = client.databases.query(database_id=db_id, page_size=limit)
+        out = []
+        for r in res.get("results", []):
+            props = r.get("properties", {}) or {}
+            out.append({
+                "date": _read_title(props, "日期"),
+                "cash": _read_number(props, "現金"),
+                "stock": _read_number(props, "股票市值"),
+                "card_due": _read_number(props, "信用卡未繳"),
+                "net": _read_number(props, "淨值"),
+            })
+        return out
+    except Exception as e:
+        print(f"[notion] networth_load 失敗：{e}")
+        return []
+
+
+def _read_rich_text(props, name):
+    blocks = (props.get(name, {}) or {}).get("rich_text", []) or []
+    return "".join(b.get("plain_text", "") for b in blocks)
+
+
 def _read_relation_ids(props, name):
     return [r.get("id") for r in (props.get(name, {}) or {}).get("relation", []) or []]
 

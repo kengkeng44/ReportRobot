@@ -39,6 +39,13 @@ _COOK_KEYWORDS = {"煮什麼", "吃什麼", "今天煮什麼", "cook"}
 _SHOPPING_KEYWORDS = {"採購", "採購清單", "購物清單", "shopping"}
 _PANTRY_ADD_RE = re.compile(r"^(?:買了|買|採買)\s*(.*)$")
 _PANTRY_CONSUME_RE = re.compile(r"^(?:用掉|吃掉|用完)\s*(.*)$")
+
+# 財務分頁。同樣用行首錨定，不要求前綴。
+_SPENDING_KEYWORDS = {"本月支出", "這個月花多少", "月支出", "spending"}
+_RECENT_KEYWORDS = {"最近交易", "最近消費", "近期交易", "recent"}
+_CARD_KEYWORDS = {"卡費", "信用卡帳單", "帳單", "card"}
+_NETWORTH_KEYWORDS = {"淨值", "資產", "networth"}
+_MANUAL_RE = re.compile(r"^(?:記一筆|記帳)\s*(.*)$")
 _PREVIEW_KEYWORDS = {"預覽", "preview", "Preview", "PREVIEW", "test", "預覽報告"}
 _WHOAMI_KEYWORDS = {"我的id", "我的ID", "我的Id", "myid", "MyID", "MYID", "whoami", "我是誰"}
 
@@ -81,6 +88,11 @@ HELP_TEXT = (
     "\n"
     "💼 查仁和持倉\n"
     "  • 仁和持股 / 我的持股 / 持股\n"
+    "\n"
+    "💳 財務（1 對 1 才能用）\n"
+    "  • 本月支出 / 最近交易 / 卡費 / 淨值\n"
+    "  • 記一筆 午餐 120     ← 手動記帳\n"
+    "  信用卡消費每天 15:30 自動同步進 Notion\n"
     "\n"
     "🍳 煮飯（1 對 1 才能用）\n"
     "  • 買了 高麗菜1顆 番茄5顆   ← 沒寫數量當 1\n"
@@ -305,6 +317,19 @@ def parse(text):
     if m:
         return ("pantry_consume", m.group(1).strip() or None)
 
+    # 個人指令：財務
+    if cleaned in _SPENDING_KEYWORDS:
+        return ("fin_spending", None)
+    if cleaned in _RECENT_KEYWORDS:
+        return ("fin_recent", None)
+    if cleaned in _CARD_KEYWORDS:
+        return ("fin_card", None)
+    if cleaned in _NETWORTH_KEYWORDS:
+        return ("fin_networth", None)
+    m = _MANUAL_RE.match(cleaned)
+    if m:
+        return ("fin_manual", m.group(1).strip() or None)
+
     # 比較指令（必須要前綴，避免「台積跟鴻海比較」之類聊天誤觸發）
     if has_prefix:
         compare = _try_parse_compare(cleaned)
@@ -338,9 +363,11 @@ def parse(text):
 
 _PERSONAL_KINDS = {"reminder_add", "reminder_list", "reminder_cancel",
                    "todo", "todo_list", "preview", "whoami",
-                   # 庫存是個人資料，不該在家人群組裡被查
+                   # 庫存與財務都是個人資料，不該在家人群組裡被查
                    "pantry_list", "pantry_expiring", "cook_what",
-                   "pantry_add", "pantry_consume", "shopping_list"}
+                   "pantry_add", "pantry_consume", "shopping_list",
+                   "fin_spending", "fin_recent", "fin_card",
+                   "fin_networth", "fin_manual"}
 
 # Admin-only kinds（要 1 對 1 + LINE userId == ADMIN_LINE_USER_ID）
 _ADMIN_KINDS = {"finance_overview", "finance_overview_detail"}
@@ -506,6 +533,48 @@ def _handle_kitchen(kind, arg):
     return None
 
 
+_MANUAL_USAGE = (
+    "要記什麼?這樣打:\n"
+    "記一筆 午餐 120\n"
+    "記一筆 薪水 50000\n\n"
+    "金額一定要有。含「薪水、獎金、退款」等字會自動記成收入。"
+)
+
+
+def _handle_finance(kind, arg):
+    """財務分頁的五個功能。Notion 掛掉時回可讀訊息，不丟例外。"""
+    import finance_report
+    import notion_db
+
+    if kind == "fin_manual":
+        if not arg:
+            return _MANUAL_USAGE
+        txn = finance_report.parse_manual(arg)
+        if not txn:
+            return "看不出金額。" + _MANUAL_USAGE
+        if not notion_db.transaction_add(txn):
+            return "寫入 Notion 失敗,請稍後再試。"
+        sign = "+" if txn["direction"] == "收入" else "-"
+        return f"✅ 已記錄:{txn['shop']}　{sign}NT${txn['amount']:,}"
+
+    if kind == "fin_spending":
+        from tz_utils import today_tpe
+        month = today_tpe().strftime("%Y-%m")
+        return finance_report.format_monthly_spending(
+            notion_db.transactions_load(), month)
+
+    if kind == "fin_recent":
+        return finance_report.format_recent(notion_db.transactions_load())
+
+    if kind == "fin_card":
+        return finance_report.format_card_bills(notion_db.card_statements_load())
+
+    if kind == "fin_networth":
+        return finance_report.format_net_worth(notion_db.networth_load())
+
+    return None
+
+
 def handle(text, ctx=None):
     """parse + dispatch；回字串（給 reply_message 直接送）或 None。
     ctx={'source_type': 'user'/'group'/'room', 'user_id': ..., 'group_id': ...}
@@ -537,6 +606,10 @@ def handle(text, ctx=None):
         if kind in ("pantry_list", "pantry_expiring", "cook_what",
                     "pantry_add", "pantry_consume", "shopping_list"):
             return _handle_kitchen(kind, arg)
+
+        if kind in ("fin_spending", "fin_recent", "fin_card",
+                    "fin_networth", "fin_manual"):
+            return _handle_finance(kind, arg)
 
         if kind == "portfolio":
             from gmail_reader import get_portfolio_from_gmail

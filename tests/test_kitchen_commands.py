@@ -169,6 +169,31 @@ def test_consume_missing_item(fake_notion):
     assert "找不到" in reply
 
 
+@pytest.mark.parametrize("text,expected", [
+    ("/本月支出", ("fin_spending", None)),
+    ("/最近交易", ("fin_recent", None)),
+    ("/卡費", ("fin_card", None)),
+    ("/淨值", ("fin_networth", None)),
+])
+def test_finance_menu_buttons_all_parse(text, expected):
+    """財務分頁每一格送出的字串都必須解析得到，否則按了沒反應。"""
+    assert cr.parse(text) == expected
+
+
+def test_manual_entry_parses_with_args():
+    assert cr.parse("記一筆 午餐 120") == ("fin_manual", "午餐 120")
+
+
+def test_manual_entry_without_args_is_prompt():
+    assert cr.parse("記一筆") == ("fin_manual", None)
+
+
+def test_finance_kinds_are_personal_only():
+    for kind in ("fin_spending", "fin_recent", "fin_card",
+                 "fin_networth", "fin_manual"):
+        assert kind in cr._PERSONAL_KINDS
+
+
 def test_prompt_postback_is_silent():
     """Rich Menu 的「買了」是 postback(prompt=買了)，只為了打開鍵盤預填文字。
     機器人不該回任何訊息，不然聊天室會多一則廢話。"""
