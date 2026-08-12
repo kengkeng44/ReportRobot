@@ -36,6 +36,31 @@ def _fetch_market_news(limit=3):
     return "\n".join(lines) if lines else None
 
 
+def _kitchen_reminder(threshold_days=3):
+    """快過期食材 + 建議今天煮什麼。沒有快過期的就回 None。
+
+    刻意在沒事時回 None 而不是「沒有要過期的食材」：每天都跳一則
+    無事發生的提醒，人很快就會開始略過整則推播。
+    """
+    import kitchen
+    import notion_db
+
+    if not notion_db.is_configured():
+        return None
+
+    pantry = notion_db.pantry_load()
+    if not kitchen.expiring_soon(pantry, threshold_days):
+        return None
+
+    parts = [kitchen.format_expiring(pantry, threshold_days)]
+    recipes = notion_db.recipes_load(pantry)
+    if recipes:
+        recs = kitchen.recommend(pantry, recipes, threshold_days)
+        if recs:
+            parts.append(kitchen.format_recommendations(recs))
+    return "\n\n".join(parts)
+
+
 async def run_daily_report(force_premarket=False):
     print(f"開始執行每日情報... (force_premarket={force_premarket})")
     today = today_tpe().strftime("%Y-%m-%d")
@@ -61,8 +86,12 @@ async def run_daily_report(force_premarket=False):
     # 3. 今日一則（小知識/笑話 + 節日 + 天氣新聞）
     extra_text = _safe("今日一則", humor.get_daily_extra)
 
+    # 4. 食材提醒（沒有快過期的就回 None，不佔 bubble）
+    kitchen_text = _safe("食材提醒", _kitchen_reminder)
+
     # 組 carousel 一次推（1 則 push）
-    carousel = daily_report_carousel(extra_text, weather_text, premarket_text, today)
+    carousel = daily_report_carousel(extra_text, weather_text, premarket_text, today,
+                                     kitchen_text=kitchen_text)
     if carousel is None:
         # 兩段都炸了 → 推一則純文字告知
         await push_message(f"<b>⚠️ 每日情報 {today}</b>\n資料暫時無法取得，已通知維運。")

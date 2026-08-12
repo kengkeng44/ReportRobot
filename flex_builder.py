@@ -309,9 +309,14 @@ def text_bubble(title, body, subtitle="", header_color=_BROWN, bold_subheaders=T
     }
 
 
-def daily_report_carousel(extra_text, weather_text, premarket_text, today_str):
+def daily_report_carousel(extra_text, weather_text, premarket_text, today_str,
+                          kitchen_text=None):
     """把每日報組成 carousel（橫滑），1 則 push 搞定。
-    順序：今日一則 → 天氣 → 盤前。全部缺回 None。"""
+    順序：今日一則 → 食材提醒 → 天氣 → 盤前。全部缺回 None。
+
+    kitchen_text 只在真的有食材快過期時才給 —— 沒事就不要佔一個 bubble，
+    每天都跳「沒有要過期的」會讓人開始略過整則推播。
+    """
     bubbles = []
 
     if extra_text:
@@ -320,6 +325,15 @@ def daily_report_carousel(extra_text, weather_text, premarket_text, today_str):
             subtitle=today_str,
             body=extra_text,
             header_color=_GREEN,
+        ))
+
+    # 排在天氣前面：這是有時效、要今天動手的事，看得越早越好
+    if kitchen_text:
+        bubbles.append(text_bubble(
+            title="🥬 食材提醒",
+            subtitle=today_str,
+            body=kitchen_text,
+            header_color="#6F9A62",
         ))
 
     if weather_text:
