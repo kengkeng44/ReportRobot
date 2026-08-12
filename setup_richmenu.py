@@ -1,8 +1,9 @@
 """
-LINE Rich Menu 一次性設定腳本。
+LINE Rich Menu 一次性設定腳本（分頁式）。
 
-對話框下方的固定 6 格選單，按一下送對應指令訊息（觸發 webhook → reply）。
-**完全不計入 push 配額**（Rich Menu 是 channel 層的設定，不是訊息）。
+主選單 + 財務 / 煮飯 / 投資 / 更多 四個子選單，用 richmenuswitch 互相切換，
+共 24 個入口，大部分需求按一按就完成，不用打字。
+**Rich Menu 與分頁切換都完全不計入 push 配額**（channel 層設定，不是訊息）。
 
 執行方式擇一：
 1. 本機 CLI：`LINE_CHANNEL_TOKEN=... python setup_richmenu.py`
@@ -10,12 +11,13 @@ LINE Rich Menu 一次性設定腳本。
    POST /admin/setup-richmenu  with X-Admin-Token header
 
 行為（idempotent）：
-- 刪除既有所有 rich menus
-- 生成 2500×1686 PNG（PIL，6 格純色塊 + 中文標籤）
-- 上傳給 LINE 拿 richMenuId
-- 設為所有 user 的 default
+- 刪除既有所有 alias 與 rich menus
+- 每個分頁生成 2500×1686 PNG（PIL，6 格純色塊 + 中文標籤）
+- 上傳給 LINE 拿 richMenuId，並建立與 MENUS key 同名的 alias
+- 主選單設為所有 user 的 default
 
-要改格子內容（指令文字 / 色彩 / 標籤）改 CELLS 常數即可。
+要改格子內容（標籤 / 色彩 / 動作）改 MENUS 常數即可；
+新增分頁只要在 MENUS 加一個 key，並在 main 裡放一格 switch 指過去。
 """
 
 import os
@@ -35,16 +37,80 @@ CELL_W = W // COLS  # 833
 CELL_H = H // ROWS  # 843
 
 
-# 6 格按鈕：(主標, 副標 EN, 背景色, 按下送出的訊息)
-# 訊息送出後走一般 webhook → command_router 解析
-CELLS = [
-    ("待辦",  "TODO",    "#A0826D", "/待辦"),
-    ("提醒",  "REMIND",  "#88B07A", "/提醒"),
-    ("持股",  "STOCK",   "#D9534F", "仁和持股"),
-    ("預覽",  "PREVIEW", "#5B8DA6", "/預覽"),
-    ("用量",  "QUOTA",   "#F0AD4E", "/額度"),
-    ("說明",  "HELP",    "#8A7A6E", "/help"),
-]
+# 分頁式選單：主選單 + 4 個子選單，用 richmenuswitch 互相切換。
+# 切換是 channel 層行為，**完全不計入 push 配額**，所以層數多也不花錢。
+#
+# 每格格式：(主標, 副標 EN, 背景色, (動作類型, 參數))
+#   ("message", "/待辦")   → 送出文字訊息，走一般 webhook → command_router
+#   ("switch",  "kitchen") → 切換到別的分頁（參數是 MENUS 的 key，同時也是 alias id）
+#
+# ⚠️ 標籤只能放中文與英文：PNG 是用 CJK 字型畫的，沒有彩色 emoji 字型，
+#    放 emoji 或箭頭會變成豆腐字（test_labels_have_no_emoji 會擋）。
+
+_BACK = ("返回", "BACK", "#8A7A6E", ("switch", "main"))
+
+MENUS = {
+    "main": {
+        "name": "全能大管家 主選單",
+        "chat_bar": "全能大管家",
+        "cells": [
+            ("財務", "FINANCE", "#A0826D", ("switch", "finance")),
+            ("煮飯", "KITCHEN", "#88B07A", ("switch", "kitchen")),
+            ("投資", "INVEST",  "#D9534F", ("switch", "invest")),
+            ("待辦", "TODO",    "#5B8DA6", ("message", "/待辦")),
+            ("今日", "TODAY",   "#F0AD4E", ("message", "/預覽")),
+            ("更多", "MORE",    "#8A7A6E", ("switch", "more")),
+        ],
+    },
+    "finance": {
+        "name": "全能大管家 財務",
+        "chat_bar": "財務",
+        "cells": [
+            ("本月支出", "SPENDING", "#A0826D", ("message", "/本月支出")),
+            ("最近交易", "RECENT",   "#B08D6D", ("message", "/最近交易")),
+            ("卡費",     "CARD",     "#C09A7A", ("message", "/卡費")),
+            ("淨值",     "NETWORTH", "#8A6F5A", ("message", "/淨值")),
+            ("記一筆",   "ADD",      "#9A7B63", ("message", "/記一筆")),
+            _BACK,
+        ],
+    },
+    "kitchen": {
+        "name": "全能大管家 煮飯",
+        "chat_bar": "煮飯",
+        "cells": [
+            ("庫存",   "PANTRY",   "#88B07A", ("message", "/庫存")),
+            ("快過期", "EXPIRING", "#6F9A62", ("message", "/快過期")),
+            ("煮什麼", "COOK",     "#7FA870", ("message", "/煮什麼")),
+            ("買了",   "BUY",      "#96BC88", ("message", "/買了")),
+            ("採購",   "SHOPPING", "#5F8A54", ("message", "/採購")),
+            _BACK,
+        ],
+    },
+    "invest": {
+        "name": "全能大管家 投資",
+        "chat_bar": "投資",
+        "cells": [
+            ("持股",   "HOLDINGS",  "#D9534F", ("message", "仁和持股")),
+            ("查個股", "QUOTE",     "#C64540", ("message", "/查個股")),
+            ("比較",   "COMPARE",   "#E0645F", ("message", "/比較")),
+            ("盤前",   "PREMARKET", "#B33F3B", ("message", "/盤前")),
+            ("大盤",   "MARKET",    "#EC7370", ("message", "/大盤")),
+            _BACK,
+        ],
+    },
+    "more": {
+        "name": "全能大管家 更多",
+        "chat_bar": "更多",
+        "cells": [
+            ("提醒", "REMIND",  "#5B8DA6", ("message", "/提醒")),
+            ("額度", "QUOTA",   "#4A7A92", ("message", "/額度")),
+            ("成本", "COST",    "#6B9CB5", ("message", "/cost")),
+            ("預覽", "PREVIEW", "#3E6A80", ("message", "/預覽")),
+            ("說明", "HELP",    "#7DAEC4", ("message", "/help")),
+            _BACK,
+        ],
+    },
+}
 
 
 _CHINESE_FONT_CANDIDATES = [
@@ -78,16 +144,18 @@ def _find_font(size):
     return ImageFont.load_default()
 
 
-def generate_image(out_path):
+def generate_image(cells, out_path):
     """畫 2500×1686 PNG，6 格純色塊 + 中文大字 + EN 副標。"""
     from PIL import Image, ImageDraw
 
     img = Image.new("RGB", (W, H), "white")
     draw = ImageDraw.Draw(img)
-    main_font = _find_font(280)
+    # 四字標籤（「本月支出」）比兩字的窄很多，字級要跟著縮，不然會爆格
+    longest = max(len(label) for label, _s, _c, _a in cells)
+    main_font = _find_font(280 if longest <= 2 else 170)
     sub_font = _find_font(72)
 
-    for i, (label, sub, color, _action) in enumerate(CELLS):
+    for i, (label, sub, color, _action) in enumerate(cells):
         r = i // COLS
         c = i % COLS
         x0, y0 = c * CELL_W, r * CELL_H
@@ -144,28 +212,44 @@ def _delete_existing_menus():
         print(f"[richmenu] 刪 {mid[:12]}... → {dr.status_code}")
 
 
-def _create_menu_definition():
-    """POST /richmenu — 建定義（尺寸 + 6 個 action area）；回 richMenuId。"""
+def build_areas(cells):
+    """把 6 格轉成 LINE 的 action area 定義（row-major）。
+
+    switch 用 richmenuswitch，alias id 直接沿用 MENUS 的 key —— 少一層對照表。
+    """
     areas = []
-    for i, (_label, _sub, _color, action_text) in enumerate(CELLS):
-        r = i // COLS
-        c = i % COLS
+    for i, (_label, _sub, _color, action) in enumerate(cells):
+        kind, param = action
+        if kind == "message":
+            line_action = {"type": "message", "text": param}
+        elif kind == "switch":
+            line_action = {
+                "type": "richmenuswitch",
+                "richMenuAliasId": param,
+                "data": f"switch={param}",
+            }
+        else:
+            raise ValueError(f"未知的 action 類型：{kind}")
+
+        r, c = divmod(i, COLS)
         areas.append({
             "bounds": {
                 "x": c * CELL_W, "y": r * CELL_H,
                 "width": CELL_W, "height": CELL_H,
             },
-            "action": {
-                "type": "message",
-                "text": action_text,
-            },
+            "action": line_action,
         })
+    return areas
+
+
+def _create_menu_definition(menu):
+    """POST /richmenu — 建定義；回 richMenuId。"""
     payload = {
         "size": {"width": W, "height": H},
-        "selected": True,                 # 預設展開
-        "name": "ReportRobot 主選單",
-        "chatBarText": "選單",
-        "areas": areas,
+        "selected": True,
+        "name": menu["name"],
+        "chatBarText": menu["chat_bar"],
+        "areas": build_areas(menu["cells"]),
     }
     r = requests.post(
         f"{LINE_API_BASE}/richmenu",
@@ -176,6 +260,35 @@ def _create_menu_definition():
     if r.status_code != 200:
         raise RuntimeError(f"建立 richmenu 失敗 {r.status_code}: {r.text[:400]}")
     return r.json()["richMenuId"]
+
+
+def _delete_existing_aliases():
+    """alias 必須先清掉，否則同 id 再建會 409。"""
+    r = requests.get(f"{LINE_API_BASE}/richmenu/alias/list", headers=_headers(), timeout=10)
+    if r.status_code != 200:
+        print(f"[richmenu] 取 alias 列表失敗 {r.status_code}：{r.text[:200]}")
+        return
+    for a in r.json().get("aliases") or []:
+        aid = a.get("richMenuAliasId")
+        if not aid:
+            continue
+        dr = requests.delete(
+            f"{LINE_API_BASE}/richmenu/alias/{aid}",
+            headers=_headers(),
+            timeout=10,
+        )
+        print(f"[richmenu] 刪 alias {aid} → {dr.status_code}")
+
+
+def _create_alias(alias_id, menu_id):
+    r = requests.post(
+        f"{LINE_API_BASE}/richmenu/alias",
+        headers=_headers(),
+        json={"richMenuAliasId": alias_id, "richMenuId": menu_id},
+        timeout=10,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(f"建立 alias {alias_id} 失敗 {r.status_code}: {r.text[:300]}")
 
 
 def _upload_image(menu_id, image_path):
@@ -207,32 +320,41 @@ def _set_default(menu_id):
 
 
 def setup():
-    """主流程；回 menu_id。"""
+    """主流程：建立所有分頁 + alias，主選單設為 default。回 {key: menu_id}。
+
+    順序有講究 —— alias 必須在所有 menu 都建好之後才建，
+    因為 alias 是指到 menu_id 的。
+    """
     if not LINE_CHANNEL_TOKEN:
         raise RuntimeError("LINE_CHANNEL_TOKEN 未設定")
-    img_path = "/tmp/richmenu.png" if os.path.isdir("/tmp") else "richmenu.png"
-    print(f"[richmenu] 生成圖 → {img_path}")
-    generate_image(img_path)
-    img_size = os.path.getsize(img_path)
-    print(f"[richmenu] 圖大小 {img_size / 1024:.0f} KB")
-    if img_size > 1024 * 1024:
-        print("[richmenu] ⚠️ 圖大於 1MB，LINE 會拒收；考慮降畫質或縮尺寸")
 
-    print("[richmenu] 清除舊 menu...")
+    tmp_dir = "/tmp" if os.path.isdir("/tmp") else "."
+
+    print("[richmenu] 清除舊 alias 與 menu...")
+    _delete_existing_aliases()
     _delete_existing_menus()
 
-    print("[richmenu] 建立 menu definition...")
-    menu_id = _create_menu_definition()
-    print(f"[richmenu] menu_id = {menu_id}")
+    menu_ids = {}
+    for key, menu in MENUS.items():
+        img_path = os.path.join(tmp_dir, f"richmenu_{key}.png")
+        generate_image(menu["cells"], img_path)
+        size_kb = os.path.getsize(img_path) / 1024
+        if size_kb > 1024:
+            print(f"[richmenu] ⚠️ {key} 圖 {size_kb:.0f} KB 超過 1MB，LINE 會拒收")
 
-    print("[richmenu] 上傳圖...")
-    _upload_image(menu_id, img_path)
+        menu_id = _create_menu_definition(menu)
+        _upload_image(menu_id, img_path)
+        menu_ids[key] = menu_id
+        print(f"[richmenu] {key} → {menu_id[:16]}... ({size_kb:.0f} KB)")
 
-    print("[richmenu] 設為 default...")
-    _set_default(menu_id)
+    # alias id 直接用 MENUS 的 key，跟 build_areas 的 richMenuAliasId 對得上
+    for key, menu_id in menu_ids.items():
+        _create_alias(key, menu_id)
+        print(f"[richmenu] alias {key} ✓")
 
-    print("[richmenu] ✅ 完成")
-    return menu_id
+    _set_default(menu_ids["main"])
+    print(f"[richmenu] ✅ 完成，{len(menu_ids)} 個分頁，default = main")
+    return menu_ids
 
 
 if __name__ == "__main__":
