@@ -61,6 +61,22 @@ def _kitchen_reminder(threshold_days=3):
     return "\n\n".join(parts)
 
 
+def _spending_recent():
+    """最近一天的消費明細 + 本月累計。沒有任何支出資料就回 None。
+
+    刻意不是「昨天」：國泰消費彙整信每天彙整前一日，早上 7 點推播時昨天的
+    資料還沒進 Notion。寫死「昨日」會每天都是空的（見 spec 第 2 節）。
+    """
+    import finance_report
+    import notion_db
+
+    if not notion_db.is_configured():
+        return None
+
+    txns = notion_db.transactions_load()
+    return finance_report.format_latest_day_spending(txns, today_tpe())
+
+
 async def run_daily_report(force_premarket=False):
     print(f"開始執行每日情報... (force_premarket={force_premarket})")
     today = today_tpe().strftime("%Y-%m-%d")

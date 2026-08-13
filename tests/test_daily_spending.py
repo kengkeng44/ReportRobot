@@ -4,8 +4,12 @@
 不是字面上的昨天，而且日期要照實寫出來。
 """
 
+import sys
 from datetime import date
 
+import pytest
+
+import daily_report
 import finance_report
 
 
@@ -208,3 +212,48 @@ def test_stale_warning_sits_between_details_and_month_total():
     )
 
     assert text.index("全聯") < text.index("⚠️") < text.index("本月累計")
+
+
+# ── daily_report 取數 ─────────────────────────────────────
+
+class FakeNotion:
+    def __init__(self, txns=None, configured=True):
+        self._txns = txns or []
+        self._configured = configured
+
+    def is_configured(self):
+        return self._configured
+
+    def transactions_load(self, limit=200):
+        return self._txns
+
+
+@pytest.fixture
+def use_notion(monkeypatch):
+    def _install(**kwargs):
+        fake = FakeNotion(**kwargs)
+        monkeypatch.setitem(sys.modules, "notion_db", fake)
+        return fake
+    return _install
+
+
+def test_spending_recent_returns_none_when_notion_not_configured(use_notion):
+    use_notion(txns=[_txn("2026-08-12", 100, "全聯")], configured=False)
+
+    assert daily_report._spending_recent() is None
+
+
+def test_spending_recent_returns_none_when_no_transactions(use_notion):
+    use_notion(txns=[])
+
+    assert daily_report._spending_recent() is None
+
+
+def test_spending_recent_uses_taipei_today(use_notion, monkeypatch):
+    """今天用台北時間判斷 —— Railway 容器是 UTC，凌晨會算成前一天。"""
+    use_notion(txns=[_txn("2026-08-12", 839, "全聯")])
+    monkeypatch.setattr(daily_report, "today_tpe", lambda: date(2026, 8, 13))
+
+    text = daily_report._spending_recent()
+
+    assert "全聯" in text and "8/12" in text
