@@ -228,6 +228,9 @@ def format_latest_day_spending(txns, today, stale_days=3, max_rows=5):
         name = t.get("shop") or t.get("category") or "消費"
         lines.append(f"・{name}　NT${_money(t.get('amount'))}")
 
+    if len(ordered) > max_rows:
+        lines.append(f"　…另 {len(ordered) - max_rows} 筆")
+
     month = today.strftime("%Y-%m")
     month_total = sum(
         t.get("amount") or 0 for day, t in rows if day.strftime("%Y-%m") == month

@@ -139,3 +139,38 @@ def test_month_total_excludes_income():
     text = finance_report.format_latest_day_spending(txns, date(2026, 8, 13))
 
     assert "本月累計 NT$100" in text
+
+
+# ── 明細截斷 ──────────────────────────────────────────────
+
+def test_truncates_detail_rows():
+    txns = [_txn("2026-08-12", 100 + i, f"店{i}") for i in range(7)]
+
+    text = finance_report.format_latest_day_spending(
+        txns, date(2026, 8, 13), max_rows=5
+    )
+
+    assert "…另 2 筆" in text
+    assert "7 筆" in text, "筆數要算全部，不是只算顯示出來的"
+
+
+def test_no_truncation_note_when_within_limit():
+    txns = [_txn("2026-08-12", 100, f"店{i}") for i in range(5)]
+
+    text = finance_report.format_latest_day_spending(
+        txns, date(2026, 8, 13), max_rows=5
+    )
+
+    assert "另" not in text
+
+
+def test_details_sorted_by_amount_desc():
+    txns = [
+        _txn("2026-08-12", 100, "小"),
+        _txn("2026-08-12", 900, "大"),
+        _txn("2026-08-12", 500, "中"),
+    ]
+
+    text = finance_report.format_latest_day_spending(txns, date(2026, 8, 13))
+
+    assert text.index("大") < text.index("中") < text.index("小")
