@@ -178,3 +178,73 @@ def parse_manual(text, today=None):
         "source": "手動",
         "fingerprint": make_manual_fingerprint(day, amount, shop),
     }
+
+
+# ─────────────────────────────────────────────────────────
+# 最近一天消費（每日推播用）
+# ─────────────────────────────────────────────────────────
+
+_WEEKDAY_ZH = "一二三四五六日"
+_STALE_HINT = "可能是沒刷卡,也可能是同步中斷"
+
+
+def _to_date(value):
+    """'2026-08-12' 或 '2026-08-12T00:00' → date。壞資料回 None。"""
+    try:
+        return date.fromisoformat((value or "")[:10])
+    except ValueError:
+        return None
+
+
+def format_latest_day_spending(txns, today, stale_days=3, max_rows=5):
+    """資料裡最新一天的支出明細 + 本月累計。沒有任何支出就回 None。
+
+    刻意不是「昨天」：國泰消費彙整信每天彙整前一日，今天早上推播時昨天的
+    資料還沒進 Notion（見 spec 第 2 節）。硬寫「昨日」會每天都是空的。
+
+    沒資料時回 None 而不是說明文案 —— 這是每天自動來的推播，不是使用者
+    主動按按鈕查詢。剛啟用時天天跳「還沒有紀錄」會讓人略過整則推播。
+    """
+    rows = []
+    for t in txns or []:
+        if not _is_spending(t):
+            continue
+        day = _to_date(t.get("date"))
+        if day is None or day > today:
+            continue
+        rows.append((day, t))
+
+    if not rows:
+        return None
+
+    latest = max(day for day, _ in rows)
+    day_rows = [t for day, t in rows if day == latest]
+    total = sum(t.get("amount") or 0 for t in day_rows)
+
+    head = f"{latest.month}/{latest.day:02d}（{_WEEKDAY_ZH[latest.weekday()]}）"
+    lines = [f"{head}　NT${_money(total)}　{len(day_rows)} 筆", ""]
+
+    ordered = sorted(day_rows, key=lambda t: t.get("amount") or 0, reverse=True)
+    for t in ordered[:max_rows]:
+        name = t.get("shop") or t.get("category") or "消費"
+        lines.append(f"・{name}　NT${_money(t.get('amount'))}")
+
+    if len(ordered) > max_rows:
+        lines.append(f"　…另 {len(ordered) - max_rows} 筆")
+
+    # 同步默默壞掉時，畫面會停在舊資料卻長得很正常 —— 要講出來
+    stale = (today - latest).days
+    if stale > stale_days:
+        lines.append("")
+        lines.append(f"⚠️ 已 {stale} 天沒新消費資料")
+        lines.append(f"　{_STALE_HINT}")
+
+    month = today.strftime("%Y-%m")
+    month_total = sum(
+        t.get("amount") or 0 for day, t in rows if day.strftime("%Y-%m") == month
+    )
+
+    lines.append("")
+    lines.append(f"本月累計 NT${_money(month_total)}")
+
+    return "\n".join(lines)

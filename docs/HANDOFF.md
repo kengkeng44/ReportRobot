@@ -59,6 +59,7 @@
 | 財務查詢 5 個按鈕 | ❌ **只用假資料跑過,沒在 LINE 上按過** |
 | 採購清單 | ❌ 沒用過 |
 | 每日推播的食材提醒 | ❌ 沒觸發過(要有快過期食材才會出現) |
+| 每日推播的消費摘要 | ❌ **沒在真實推播裡看過**(26 個單元測試齊全,含整合) |
 
 ---
 
@@ -95,19 +96,21 @@
 目標是**簡潔好用**。研究結論:記帳系統被放棄的主因是「每天要手動輸入」,
 所以優化方向是**減少操作次數**,不是增加功能。
 
-### 1️⃣ 每日推播加「昨天花了多少」〔下一個要做〕
+### 1️⃣ 每日推播加「最近一天消費」〔✅ 已完成〕
 
-早上 7 點推播加一段:
+早上 7 點推播多一個 bubble:最近一天的消費明細 + 本月累計,超過 3 天沒新資料會講明原因。
 
-```
-💳 昨日消費 NT$1,290（3 筆）
-　最大一筆:全聯 NT$839
-```
+⚠️ **不是「昨天」** —— 國泰消費彙整信每天彙整**前一日**,交易日期取的是授權日,
+所以早上 7 點推播時昨天的資料還沒進 Notion(要等當天 14:2x 那封信)。
+原本規劃的「昨日消費」寫死了會**每天都是空的**;把 `FINANCE_CRON` 提前也沒用,
+信本來就晚一天寄。改成顯示資料裡最新的那一天並寫出實際日期。
 
-多數日子連選單都不用點。資料都在 Notion 了,工作量小。
+規格:`docs/superpowers/specs/2026-08-13-daily-spending-bubble-design.md`
+計畫:`docs/superpowers/plans/2026-08-13-daily-spending-bubble.md`
 
-實作位置:`daily_report.py` 加 `_spending_yesterday()`(比照既有 `_kitchen_reminder()`),
-`finance_report.py` 加 formatter,`flex_builder.daily_report_carousel()` 加一個 bubble 參數。
+實作位置:`finance_report.format_latest_day_spending()`(純邏輯)、
+`daily_report._spending_recent()`(取數)、`flex_builder.daily_report_carousel()`
+的 `spending_text` 參數(bubble 排最後)。
 
 ### 2️⃣ 「買了」改成常買清單 Quick Reply
 

@@ -35,3 +35,36 @@ def test_no_extra_still_works(monkeypatch):
         today_str="2026-08-03",
     )
     assert "🌤️ 天氣報告" in _titles(msg)
+
+
+# ── 最近一天消費 bubble ───────────────────────────────────
+
+def test_spending_bubble_appears_when_text_given():
+    msg = flex_builder.daily_report_carousel(
+        extra_text="小知識", weather_text="晴天", premarket_text="盤前",
+        today_str="2026-08-13", spending_text="8/12　NT$1,290　3 筆",
+    )
+    assert "💳 最近一天消費" in _titles(msg)
+
+
+def test_spending_bubble_absent_when_none():
+    msg = flex_builder.daily_report_carousel(
+        extra_text="小知識", weather_text="晴天", premarket_text="盤前",
+        today_str="2026-08-13",
+    )
+    assert "💳 最近一天消費" not in _titles(msg)
+
+
+def test_spending_bubble_is_last():
+    """消費是回顧性資訊，優先度最低，排在盤前後面。"""
+    msg = flex_builder.daily_report_carousel(
+        extra_text="小知識", weather_text="晴天", premarket_text="盤前",
+        today_str="2026-08-13", spending_text="8/12　NT$1,290　3 筆",
+    )
+    titles = _titles(msg)
+    assert titles[-1] == "💳 最近一天消費"
+
+
+def test_existing_callers_without_spending_still_work():
+    msg = flex_builder.daily_report_carousel("a", "b", "c", "2026-08-13")
+    assert msg is not None
