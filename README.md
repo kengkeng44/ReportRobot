@@ -1,6 +1,10 @@
 #  LINE 情報機器人 (ReportRobot)
 
+> 🔴 **接手開發前先讀 [`docs/HANDOFF.md`](docs/HANDOFF.md)** —— 目前進度、未解問題、下一步、踩過的坑都在裡面。
+
 每天台灣早上 6 點自動推播每日情報到 LINE 群組，**並且支援即時對話查詢個股、ETF、持倉、待辦提醒**。
+
+已擴充為「全能大管家」：分頁式 Rich Menu、Notion 財務中心（信用卡消費自動同步）、煮飯模板（食材／到期提醒／煮什麼）。
 
 含 HMAC webhook 驗章、log 脫敏、外部 API exponential backoff retry、graceful degradation、管理員錯誤通知、排程冪等性等生產等級的資安／可靠性／可觀測性補強。
 
