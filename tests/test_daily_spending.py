@@ -257,3 +257,58 @@ def test_spending_recent_uses_taipei_today(use_notion, monkeypatch):
     text = daily_report._spending_recent()
 
     assert "全聯" in text and "8/12" in text
+
+
+# ── run_daily_report 整合 ─────────────────────────────────
+
+def _stub_daily_report(monkeypatch, captured, sent):
+    """把 run_daily_report 的對外相依全部換掉，只留下要測的那條線。"""
+    def fake_carousel(*args, **kwargs):
+        captured.update(kwargs)
+        return {"type": "flex", "contents": {}}
+
+    async def fake_push(msg):
+        sent.append(msg)
+
+    monkeypatch.setattr(daily_report, "daily_report_carousel", fake_carousel)
+    monkeypatch.setattr(daily_report, "push_message", fake_push)
+    monkeypatch.setattr(daily_report, "get_weather_report", lambda: ("晴天", None))
+    monkeypatch.setattr(daily_report, "build_premarket_report", lambda force=False: None)
+    monkeypatch.setattr(daily_report.humor, "get_daily_extra", lambda: "小知識")
+    monkeypatch.setattr(daily_report, "notify_admin", lambda *a, **k: None)
+
+
+def test_run_daily_report_passes_spending_to_carousel(use_notion, monkeypatch):
+    """整條線接起來：Notion 有交易 → carousel 收到 spending_text。"""
+    import asyncio
+
+    use_notion(txns=[_txn("2026-08-12", 839, "全聯")])
+    monkeypatch.setattr(daily_report, "today_tpe", lambda: date(2026, 8, 13))
+
+    captured, sent = {}, []
+    _stub_daily_report(monkeypatch, captured, sent)
+
+    asyncio.run(daily_report.run_daily_report())
+
+    assert "全聯" in captured["spending_text"]
+    assert sent, "應該有推出去"
+
+
+def test_run_daily_report_survives_spending_failure(monkeypatch):
+    """消費那段炸了不能拖垮整則推播 —— 天氣跟盤前還是要出得去。"""
+    import asyncio
+
+    monkeypatch.setattr(daily_report, "today_tpe", lambda: date(2026, 8, 13))
+
+    def boom():
+        raise RuntimeError("notion 掛了")
+
+    monkeypatch.setattr(daily_report, "_spending_recent", boom)
+
+    captured, sent = {}, []
+    _stub_daily_report(monkeypatch, captured, sent)
+
+    asyncio.run(daily_report.run_daily_report())
+
+    assert captured["spending_text"] is None
+    assert sent, "消費段失敗仍要推出去"
