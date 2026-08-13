@@ -185,6 +185,7 @@ def parse_manual(text, today=None):
 # ─────────────────────────────────────────────────────────
 
 _WEEKDAY_ZH = "一二三四五六日"
+_STALE_HINT = "可能是沒刷卡,也可能是同步中斷"
 
 
 def _to_date(value):
@@ -230,6 +231,13 @@ def format_latest_day_spending(txns, today, stale_days=3, max_rows=5):
 
     if len(ordered) > max_rows:
         lines.append(f"　…另 {len(ordered) - max_rows} 筆")
+
+    # 同步默默壞掉時，畫面會停在舊資料卻長得很正常 —— 要講出來
+    stale = (today - latest).days
+    if stale > stale_days:
+        lines.append("")
+        lines.append(f"⚠️ 已 {stale} 天沒新消費資料")
+        lines.append(f"　{_STALE_HINT}")
 
     month = today.strftime("%Y-%m")
     month_total = sum(

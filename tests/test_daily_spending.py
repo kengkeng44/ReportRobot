@@ -174,3 +174,37 @@ def test_details_sorted_by_amount_desc():
     text = finance_report.format_latest_day_spending(txns, date(2026, 8, 13))
 
     assert text.index("大") < text.index("中") < text.index("小")
+
+
+# ── 資料過舊 ──────────────────────────────────────────────
+
+def test_no_stale_warning_at_threshold():
+    """剛好 3 天不算舊 —— 國泰的信本來就延遲一天，加上週末就會到 3 天。"""
+    txns = [_txn("2026-08-10", 100, "全聯")]
+
+    text = finance_report.format_latest_day_spending(
+        txns, date(2026, 8, 13), stale_days=3
+    )
+
+    assert "⚠️" not in text
+
+
+def test_stale_warning_past_threshold():
+    txns = [_txn("2026-08-09", 100, "全聯")]
+
+    text = finance_report.format_latest_day_spending(
+        txns, date(2026, 8, 13), stale_days=3
+    )
+
+    assert "⚠️ 已 4 天沒新消費資料" in text
+    assert "同步中斷" in text, "要講出兩種可能，不然分不出是壞了還是本來就沒花錢"
+
+
+def test_stale_warning_sits_between_details_and_month_total():
+    txns = [_txn("2026-08-01", 100, "全聯")]
+
+    text = finance_report.format_latest_day_spending(
+        txns, date(2026, 8, 13), stale_days=3
+    )
+
+    assert text.index("全聯") < text.index("⚠️") < text.index("本月累計")
