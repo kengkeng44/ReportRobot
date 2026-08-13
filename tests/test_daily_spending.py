@@ -101,3 +101,41 @@ def test_none_amount_counts_as_a_row_but_zero():
     assert "NT$100" in text
     assert "沒金額" in text
     assert "NT$-" in text, "金額不明要顯示 -，不是 0，才看得出是缺資料"
+
+
+# ── 本月累計 ──────────────────────────────────────────────
+
+def test_month_total_uses_today_month_not_latest_txn_month():
+    """月初時本月累計會很小甚至 0 —— 那是預期，它回答的是
+    『這個月到目前為止花了多少』。"""
+    txns = [
+        _txn("2026-07-31", 5000, "上月的"),
+        _txn("2026-08-02", 300, "本月的"),
+    ]
+
+    text = finance_report.format_latest_day_spending(txns, date(2026, 8, 13))
+
+    assert "本月累計 NT$300" in text
+
+
+def test_month_total_sums_whole_month():
+    txns = [
+        _txn("2026-08-01", 1000, "月初"),
+        _txn("2026-08-12", 839, "全聯"),
+        _txn("2026-08-12", 351, "超商"),
+    ]
+
+    text = finance_report.format_latest_day_spending(txns, date(2026, 8, 13))
+
+    assert "本月累計 NT$2,190" in text
+
+
+def test_month_total_excludes_income():
+    txns = [
+        _txn("2026-08-05", 50000, "薪水", direction="收入"),
+        _txn("2026-08-12", 100, "全聯"),
+    ]
+
+    text = finance_report.format_latest_day_spending(txns, date(2026, 8, 13))
+
+    assert "本月累計 NT$100" in text
