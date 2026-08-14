@@ -509,6 +509,37 @@ _BUY_USAGE = (
 
 _CONSUME_USAGE = "要用掉哪一樣?這樣打:\n用掉 高麗菜"
 
+_BUY_QUICK_HINT = (
+    "要加什麼食材?點下面常買的,或直接打:\n"
+    "買了 高麗菜1顆 番茄5顆\n\n"
+    "按鈕一次一樣、數量算 1;要一次加好幾樣還是打字快。"
+)
+
+
+def _buy_quick_reply():
+    """「買了」不帶參數 → 常買清單按鈕。Notion 掛掉就退回原本的用法說明。
+
+    在庫 + 用完都撈：只看在庫的話,常買但剛好吃完的會從清單上消失,
+    而那正是最該出現在「要買什麼」按鈕列上的東西。
+    """
+    import kitchen
+    import notion_db
+    from flex_builder import quick_reply_text
+
+    if not notion_db.is_configured():
+        return _BUY_USAGE
+
+    try:
+        rows = list(notion_db.pantry_load()) + list(notion_db.pantry_load("用完"))
+    except Exception as e:
+        print(f"常買清單載入失敗:{e}")
+        return _BUY_USAGE
+
+    names = kitchen.frequent_items(rows)
+    if not names:
+        return _BUY_USAGE
+    return quick_reply_text(_BUY_QUICK_HINT, [(n, f"買了 {n}") for n in names])
+
 
 def _handle_kitchen(kind, arg):
     """煮飯模板的六個指令。Notion 掛掉時回可讀的訊息，不丟例外。"""
@@ -517,7 +548,7 @@ def _handle_kitchen(kind, arg):
 
     if kind == "pantry_add":
         if not arg:
-            return _BUY_USAGE
+            return _buy_quick_reply()
         items, unknown = kitchen.parse_purchase(arg)
         today = _date.today()
         added = []

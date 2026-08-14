@@ -388,6 +388,37 @@ def kitchen_reminder_bubble(items, subtitle="", extra_text="", more_count=0):
     }
 
 
+QUICK_REPLY_MAX = 13      # LINE 一則最多 13 顆，超過整包被打回
+QUICK_REPLY_LABEL_MAX = 20
+
+
+def quick_reply_text(body, options):
+    """一則文字訊息 + 一排 quick reply 按鈕。
+
+    options: [(label, 送出的文字)]。按下去等同使用者自己打那串字，
+    所以送出的文字必須是 parse() 認得的指令，不然點了沒反應。
+
+    超過上限的直接截掉、label 過長截短 —— LINE 是整則退回，
+    寧可少一顆按鈕也不要整句話送不出去。
+    options 空的時候不放 quickReply key：空物件會被當格式錯誤。
+    """
+    msg = {"type": "text", "text": body}
+    items = [
+        {
+            "type": "action",
+            "action": {
+                "type": "message",
+                "label": str(label)[:QUICK_REPLY_LABEL_MAX],
+                "text": str(text),
+            },
+        }
+        for label, text in (options or [])[:QUICK_REPLY_MAX]
+    ]
+    if items:
+        msg["quickReply"] = {"items": items}
+    return msg
+
+
 def daily_report_carousel(extra_text, weather_text, premarket_text, today_str,
                           kitchen_text=None, spending_text=None,
                           kitchen_items=None, kitchen_more=0):

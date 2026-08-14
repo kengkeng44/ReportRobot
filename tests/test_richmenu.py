@@ -109,8 +109,12 @@ def test_prompt_prefill_within_line_limit():
 
 
 def test_input_needing_cells_use_prompt_not_message():
-    """需要接著打字的格子，送死指令沒有意義 —— 要用 prompt。"""
-    needs_input = {"買了", "記一筆", "查個股"}
+    """需要接著打字的格子，送死指令沒有意義 —— 要用 prompt。
+
+    「買了」不在這裡：它送出去會回一排常買清單 quick reply，點一下就完成，
+    是刻意的 message 而不是 prompt（見 test_buy_cell_sends_bare_command）。
+    """
+    needs_input = {"記一筆", "查個股"}
     for menu in rm.MENUS.values():
         for label, _s, _c, (kind, _p) in menu["cells"]:
             if label in needs_input:

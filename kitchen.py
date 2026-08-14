@@ -417,6 +417,45 @@ def expiring_actions(pantry, threshold_days=3, limit=5):
     return items, max(0, len(hits) - limit)
 
 
+# 第一天沒有任何歷史時墊檔用的，台灣家庭冰箱的最大公因數。
+# 只是墊檔：使用者自己買過的一律排在前面，買幾次之後這串就會被擠光。
+_COMMON_ITEMS = ["高麗菜", "雞蛋", "牛奶", "番茄", "洋蔥",
+                 "紅蘿蔔", "雞胸肉", "豆腐", "香蕉", "吐司",
+                 "馬鈴薯", "青蔥", "白米"]
+
+
+def frequent_items(rows, limit=10, pad=True):
+    """常買清單：買過的次數多的排前面。純邏輯，不碰 Notion。
+
+    rows 是庫存列（在庫 + 用完都要餵進來，只看在庫的話常買但剛好吃完的
+    會消失）。同次數保持第一次出現的順序 —— 每次跳出來的按鈕位置都在動
+    比排序不準更難用。
+
+    pad=True 時用 _COMMON_ITEMS 補到 limit：沒歷史就給空按鈕列，
+    等於這個功能第一天不存在。
+    """
+    counts = {}
+    order = []
+    for r in rows or []:
+        name = (r.get("name") or "").strip()
+        if not name:
+            continue
+        if name not in counts:
+            order.append(name)
+        counts[name] = counts.get(name, 0) + 1
+
+    ranked = sorted(order, key=lambda n: (-counts[n], order.index(n)))
+    out = ranked[:limit]
+
+    if pad:
+        for name in _COMMON_ITEMS:
+            if len(out) >= limit:
+                break
+            if name not in counts:
+                out.append(name)
+    return out
+
+
 def recommend(pantry, recipes, threshold_days=3):
     """依「用掉最多快過期食材」推薦食譜，同分則挑烹調時間短的。
 
