@@ -463,30 +463,38 @@ def _parse_record(line, fallback_date=None, name_to_code=None):
 # 內容解析：PDF / 純文字
 # ════════════════════════════════════════════════════════════
 
-def extract_trades_from_pdf(pdf_path, fallback_date=None, name_to_code=None):
-    """解密 PDF（無密碼也能跑），逐行嘗試所有解析器。"""
+def pdf_text(pdf_path):
+    """解密 PDF（無密碼也能跑）→ 純文字。失敗回 ''。
+
+    抽出來獨立一支是為了寫新 parser 前先看得到真實格式 ——
+    月對帳單的庫存欄位長什麼樣沒人看過，照 snippet 猜格式的下場見
+    HANDOFF 第 7 節。
+    """
     password = os.environ.get('PDF_PASSWORD', PDF_PASSWORD_PREFIX)
     decrypted_path = _tempfile('fbs_decrypted.pdf')
-    trades = []
 
     try:
         with pikepdf.open(pdf_path, password=password) as pdf:
             pdf.save(decrypted_path)
     except Exception as e:
         print(f"  PDF 解密失敗（密碼前四碼：{password[:4]}***）：{e}")
-        return []
+        return ''
 
     try:
         with pdfplumber.open(decrypted_path) as pdf:
-            for page in pdf.pages:
-                text = page.extract_text() or ""
-                for line in text.split('\n'):
-                    trade = _parse_record(line, fallback_date, name_to_code)
-                    if trade:
-                        trades.append(trade)
+            return "\n".join((page.extract_text() or "") for page in pdf.pages)
     except Exception as e:
         print(f"  PDF 解析失敗：{e}")
-        return []
+        return ''
+
+
+def extract_trades_from_pdf(pdf_path, fallback_date=None, name_to_code=None):
+    """解密 PDF（無密碼也能跑），逐行嘗試所有解析器。"""
+    trades = []
+    for line in pdf_text(pdf_path).split('\n'):
+        trade = _parse_record(line, fallback_date, name_to_code)
+        if trade:
+            trades.append(trade)
     return trades
 
 

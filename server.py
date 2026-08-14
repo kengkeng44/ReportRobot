@@ -429,3 +429,44 @@ async def portfolio_debug(request: Request):
         if t.get("date"):
             t["date"] = str(t["date"])
     return {"trade_count": len(all_trades), "portfolio": portfolio, "trades": all_trades}
+
+
+@app.get("/admin/statement-dump")
+async def statement_dump(request: Request):
+    """Dump 最近一期月對帳單的原始文字，用來寫「庫存」欄位的 parser。
+
+    HANDOFF 4.1 的正解是拿月對帳單的庫存欄位當持倉起點，但那段長什麼樣
+    沒人看過。這支只讀不寫，先把真實格式撈出來再動手寫 parser ——
+    照 snippet 猜格式的下場見 HANDOFF 第 7 節。
+
+    ⚠️ 回傳內容含帳號與持倉，只給 admin，不要貼進公開的地方。
+    要 X-Admin-Token header。
+    """
+    admin_token = os.environ.get("ADMIN_TOKEN", "")
+    if not admin_token:
+        raise HTTPException(status_code=503, detail="Admin disabled")
+    if request.headers.get("X-Admin-Token") != admin_token:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    import holdings
+    from gmail_reader import _download_email_items, pdf_text
+
+    items = _download_email_items()
+    latest = holdings.pick_latest_monthly([it["subject"] for it in items])
+
+    out = []
+    for it in items:
+        period = holdings.monthly_statement_period(it["subject"])
+        market = holdings.statement_market(it["subject"])
+        if not period or latest.get(market) != period:
+            continue  # 只給每個市場最新那一期，其餘是雜訊
+        text = it["body_text"] or ""
+        for path in it["pdf_paths"]:
+            text += "\n" + pdf_text(path)
+        out.append({
+            "subject": it["subject"],
+            "market": market,
+            "period": list(period),
+            "text": text[:20000],
+        })
+    return {"latest": {k: list(v) for k, v in latest.items()}, "statements": out}
