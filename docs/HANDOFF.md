@@ -60,6 +60,8 @@
 | 採購清單 | ❌ 沒用過 |
 | 每日推播的食材提醒 | ❌ 沒觸發過(要有快過期食材才會出現) |
 | 每日推播的消費摘要 | ❌ **沒在真實推播裡看過**(26 個單元測試齊全,含整合) |
+| 食材提醒的「已用掉」按鈕 | ❌ 沒在 LINE 上按過(23 個單元測試) |
+| 「買了」常買清單 Quick Reply | ❌ 沒在 LINE 上按過(20 個單元測試);**要重跑 `/admin/setup-richmenu`** 才會生效 |
 
 ---
 
@@ -80,6 +82,31 @@
 **❌ 不要寫「自動清掉不在 portfolio 裡的資料列」** —— 因為範圍限制,那會刪掉真實持倉。
 
 **建議解法:** 從最近一期月對帳單的**庫存欄位**做一次性初始化,而不是從成交紀錄累加。(規格第 10 節本來就列了這條。)
+
+#### 進度〔🟡 純邏輯做完,還沒接上真實資料〕
+
+`holdings.py` 已完成並有 22 個測試:
+
+- `build_portfolio(trades, snapshots)` —— 每個市場用自己那期的月底當 cutoff
+  (實測複委託到 7 月、有價證券只到 6 月,共用一個 cutoff 會算錯)
+- 快照日以前的成交跳過(已含在庫存裡);無日期的也跳過**不猜**,但記進
+  `sources` 讓數字對不上時看得出原因
+- 庫存解析為空不當成「真的沒持倉」,退回成交累加 —— 否則淨值直接歸零
+- `describe_sources()` 在沒快照時講明為什麼可能少算
+- **沒有任何刪除邏輯**(見上面那條紅線)
+
+**還缺的那一塊:** 月對帳單裡「庫存」區塊的文字格式沒人看過,
+`gmail_reader` 目前只抽成交列。已加 `GET /admin/statement-dump`(唯讀,
+要 `X-Admin-Token`)把每個市場最新一期對帳單的原始文字撈出來 ——
+**先看到真實格式再寫 parser,不要照 snippet 猜**(第 7 節)。
+
+```powershell
+$t = [Environment]::GetEnvironmentVariable('ADMIN_TOKEN','User')
+Invoke-RestMethod -Uri "https://chengreportbot-production.up.railway.app/admin/statement-dump" `
+  -Headers @{ 'X-Admin-Token' = $t } | ConvertTo-Json -Depth 5
+```
+
+⚠️ 回傳含帳號與持倉,不要貼到公開的地方。
 
 ### 4.2 代號回填(已修,但不是主因)
 
@@ -112,17 +139,35 @@
 `daily_report._spending_recent()`(取數)、`flex_builder.daily_report_carousel()`
 的 `spending_text` 參數(bubble 排最後)。
 
-### 2️⃣ 「買了」改成常買清單 Quick Reply
+### 2️⃣ 「買了」改成常買清單 Quick Reply〔✅ 已完成〕
 
-現在要打「買了 高麗菜1顆」。改成按「買了」後回一組 Quick Reply 按鈕(最常買的 10 樣),點兩下完成。
+只打「買了」會回一排常買清單按鈕,點一下送出「買了 高麗菜」,兩下完成。
 
-⚠️ 已查證:`line_sender.py` 目前**沒有 quickReply 支援**,`_to_messages()` 要先擴充。
+- `kitchen.frequent_items()` —— 在庫 + 用完一起算次數。只看在庫的話,
+  常買但剛好吃完的會從清單消失,而那正是最該出現在按鈕上的東西
+- 沒歷史時用預設清單墊到 10 樣(第一天給空按鈕列等於功能不存在)
+- `flex_builder.quick_reply_text()` —— 截到 13 顆、label 截到 20 字。
+  LINE 是**整則退回**,寧可少一顆也不要整句送不出去
+- `line_sender._to_messages()` 只留**最後一則**的 `quickReply`,
+  LINE 也只認這一則,掛在前面的會靜默消失
+- Rich Menu 的「買了」從 `prompt` 改成 `message`,不然永遠送不出裸指令
+  → **改完要重跑 `/admin/setup-richmenu`**
 
-### 4️⃣ 推播直接附操作按鈕
+補記:HANDOFF 原本寫「`_to_messages()` 沒有 quickReply 支援」,實際上
+dict 是原樣通過的,真正缺的是「字串回覆沒辦法帶按鈕」與上面那條
+只留最後一則的規則。
 
-食材提醒那則直接放「已用掉」按鈕。
-`flex_builder.todo_list_flex()` 已有 postback 按鈕的現成寫法可抄,
-`command_router.handle_postback()` 也現成。
+### 4️⃣ 推播直接附操作按鈕〔✅ 已完成〕
+
+食材提醒每樣後面一顆「已用掉」,按下去等同打「用掉 X」。
+
+- `kitchen.expiring_actions()` 濾掉沒 `page_id` 的 —— 按鈕定位不到
+  Notion 那一列,放了也是按了沒事,比沒有按鈕更糟
+- 最多 5 顆,被截掉的在卡片上寫明還有幾樣
+- 撈不到 items 時退回原本的純文字 bubble,提醒不會消失
+- **postback 只認 `ADMIN_LINE_USER_ID`**:每日情報推到家人群組,
+  這顆按鈕誰都按得到,但庫存在 `_PERSONAL_KINDS` 裡是個人資料
+- 隔天再按到會友善提示,不會重複寫 Notion 也不重複加採購清單
 
 ### 其他(未排序)
 
