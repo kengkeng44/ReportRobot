@@ -112,6 +112,28 @@ Invoke-RestMethod -Uri "https://chengreportbot-production.up.railway.app/admin/s
 
 `ddda56f` 修好了「對照表查不到就把中文名當 ticker」的問題(會導致誤判成美股、抓不到現價)。修正是對的,但**當初的台積電問題主因是 4.1 的範圍限制,不是這個**。診斷時我一開始判斷錯,記錄下來避免重蹈。
 
+### 4.4 選單按鈕漏進付費 AI〔已修,但這個坑要記住〕
+
+投資分頁的「比較」「盤前」「大盤」三格送的是裸指令(`/比較`、`/盤前`、
+`/大盤`),`command_router` 都不認得,於是掉進 `free_query` —— 也就是
+「不認得的中文指令丟給 AI 上網查」。按一次付一次 Anthropic 的錢,
+買到一段跟股票無關的通用解釋。
+
+`premarket` 與 `market` 這兩個 kind **從頭到尾就沒實作過**,
+但 `markets.build_market_summary()` 與 `premarket.build_premarket_report()`
+其實早就寫好了,只是沒接上指令。
+
+**為什麼一直沒被發現:** free_query 這條 fallback 讓任何裸指令都「有反應」。
+不會壞、不會有紅字、不會進 log 的錯誤區,只會安靜地花錢。
+
+**現在有防護:** `test_invest_menu.py::test_no_menu_cell_falls_through_to_paid_ai`
+掃過所有 5 張選單每一格 `message` 型的 cell,parse 出來是 `free_query`
+就紅。之後再加按鈕不會重蹈。
+
+順帶:`/比較` 只補一檔就送出也會漏到 free_query,已攔下來回用法。
+`premarket._build_ai_summary()` 加了當日快取 —— 早上推播跑過一次之後,
+按鈕不再重複付費。
+
 ### 4.3 消費類別會自然增生
 
 `類別` 是 Notion select,寫入未知選項時會自動新增。實測已多出「線上付款」「教育∕學費」——那是國泰原始值,程式沒有改寫。schema 遷移只新增不覆寫,所以使用者在 Notion 手動調整不會被蓋掉。

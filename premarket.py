@@ -116,7 +116,32 @@ def _strip_to_bullets(text):
     return "\n".join(bullets)
 
 
+# 盤前重點是這份報告裡唯一要付費的一段（Claude web_search）。
+# 早上推播跑一次，使用者按「盤前」按鈕又跑一次，同一天的內容其實一樣，
+# 沒理由付兩次錢。用當日快取讓一天只真的呼叫一次。
+_AI_CACHE = {"day": None, "text": ""}
+
+
+def _clear_ai_cache():
+    _AI_CACHE.update(day=None, text="")
+
+
 def _build_ai_summary(chip_data=None):
+    """當日快取版。同一天重複呼叫直接回上次結果，不重複付費。
+
+    失敗（回空字串）不快取 —— 把失敗記起來會讓那一整天都沒有盤前重點。
+    """
+    today = today_tpe()
+    if _AI_CACHE["day"] == today and _AI_CACHE["text"]:
+        return _AI_CACHE["text"]
+
+    text = _ai_summary_uncached(chip_data)
+    if text:
+        _AI_CACHE.update(day=today, text=text)
+    return text
+
+
+def _ai_summary_uncached(chip_data=None):
     """用 Claude web_search 整理盤前重點。失敗回空字串。
     chip_data：來自 chips.get_institutional_trades()，把真實數字注入 prompt
     讓 AI 用準確基準寫昨日資金流向。

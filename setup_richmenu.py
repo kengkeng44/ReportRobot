@@ -95,9 +95,10 @@ MENUS = {
         "cells": [
             ("持股",   "HOLDINGS",  "#D9534F", ("message", "仁和持股")),
             ("查個股", "QUOTE",     "#C64540", ("prompt",  "/")),
-            ("比較",   "COMPARE",   "#E0645F", ("message", "/比較")),
-            ("盤前",   "PREMARKET", "#B33F3B", ("message", "/盤前")),
-            ("大盤",   "MARKET",    "#EC7370", ("message", "/大盤")),
+            # 比較要帶兩個代號才有意義，裸指令沒東西可比 —— 開鍵盤讓使用者補
+            ("比較",   "COMPARE",   "#E0645F", ("prompt",  "/比較 ")),
+            ("盤前",   "PREMARKET", "#B33F3B", ("message", "/盤前")),  # → premarket
+            ("大盤",   "MARKET",    "#EC7370", ("message", "/大盤")),  # → markets（免費）
             _BACK,
         ],
     },

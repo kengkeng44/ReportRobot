@@ -23,6 +23,15 @@ _LINE_QUOTA_KEYWORDS = {
     "額度", "line額度", "LINE額度", "line配額", "LINE配額", "quota", "Quota", "QUOTA",
 }
 
+# 投資分頁那兩顆按鈕。功能本來就寫好了（markets / premarket），
+# 只是一直沒接上指令，所以按下去會掉進付費的 free_query。
+_MARKET_KEYWORDS = {
+    "大盤", "指數", "大盤指數", "market", "Market", "MARKET",
+}
+_PREMARKET_KEYWORDS = {
+    "盤前", "盤前報告", "premarket", "Premarket", "PREMARKET",
+}
+
 # 個人指令（只在 1 對 1 chat 觸發）
 _REMINDER_RE = re.compile(r"^(?:提醒|remind)\s*(.*)$", re.IGNORECASE)
 _REMINDER_LIST_KEYWORDS = {"提醒", "remind", "提醒清單", "我的提醒"}
@@ -86,7 +95,12 @@ HELP_TEXT = (
     "  • /比較 加權 櫃買 ytd\n"
     "  • /SPY vs QQQ 3m\n"
     "  • /台積 跟 鴻海 比較 6m\n"
-    "  區間：1m / 3m / 6m / 1y / ytd / 5y / max\n"
+    "  區間：1m / 3m / 6m / 1y / ytd / 5y / max（可省略）\n"
+    "\n"
+    "📊 大盤與盤前\n"
+    "  • /大盤 或 /指數   ← 台股加權、美股、匯率等即時報價（免費）\n"
+    "  • /盤前            ← 跟早上推播同一份盤前報告\n"
+    "    ℹ️ 盤前含 AI 整理那段會計費，但同一天只算一次（早上跑過就重用）\n"
     "\n"
     "💼 查仁和持倉\n"
     "  • 仁和持股 / 我的持股 / 持股 / 持倉\n"
@@ -232,6 +246,18 @@ _COMPARE_PATTERNS = [
 ]
 
 
+# 選單的「比較」是預填鍵盤，使用者可能只補一檔就送出。那樣會漏到付費的
+# free_query 買一段廢話，所以攔下來回用法就好。
+_COMPARE_INCOMPLETE_RE = re.compile(r"^比較\s*[:：]?\s*(\S*)$")
+
+COMPARE_USAGE = (
+    "要比哪兩檔?這樣打:\n"
+    "/比較 0050 0056 1y\n\n"
+    "區間可省略,支援 1m / 3m / 6m / 1y / ytd / 5y / max。\n"
+    "中文名也可以:/比較 台積電 鴻海"
+)
+
+
 def _try_parse_compare(cleaned):
     """試 parse 比較指令；成功回 (sym1, sym2, period_or_None)。"""
     for pat in _COMPARE_PATTERNS:
@@ -282,6 +308,13 @@ def parse(text):
 
     if cleaned in _LINE_QUOTA_KEYWORDS:
         return ("line_quota", None)
+
+    # 要排在股票代號查詢前面：「大盤」「盤前」都是中文，會被中文反查吃掉
+    if cleaned in _MARKET_KEYWORDS:
+        return ("market", None)
+
+    if cleaned in _PREMARKET_KEYWORDS:
+        return ("premarket", None)
 
     if cleaned in _PORTFOLIO_KEYWORDS:
         return ("portfolio", None)
@@ -356,6 +389,9 @@ def parse(text):
         compare = _try_parse_compare(cleaned)
         if compare:
             return ("compare", compare)
+        # 只補了一檔（或什麼都沒補）就送出 —— 回用法，別漏到付費的 AI
+        if _COMPARE_INCOMPLETE_RE.match(cleaned):
+            return ("compare", None)
 
     if _TW_RE.match(cleaned):
         return ("stock", cleaned)
@@ -693,6 +729,18 @@ def handle(text, ctx=None):
             import line_quota
             return line_quota.format_stats()
 
+        if kind == "market":
+            import markets
+            return markets.build_market_summary()
+
+        if kind == "premarket":
+            import premarket
+            # force=True：排程週末會 skip，但使用者主動按就是想看，
+            # 回一句「週末沒有」對按鈕來說是最沒用的回答。
+            # AI 那段有當日快取，早上推播跑過就不會重複付費。
+            return (premarket.build_premarket_report(force=True)
+                    or "盤前資料暫時取不到，等一下再試。")
+
         if kind in ("pantry_list", "pantry_expiring", "cook_what",
                     "pantry_add", "pantry_consume", "shopping_list",
                     "shopping_add", "shopping_bought"):
@@ -720,6 +768,8 @@ def handle(text, ctx=None):
             return carousel or text  # 解析失敗 fallback 純文字
 
         if kind == "compare":
+            if not arg:
+                return COMPARE_USAGE
             from compare import compare_returns
             return compare_returns(*arg)
 
