@@ -409,6 +409,18 @@ def _is_admin(ctx):
     return ctx.get("user_id") == admin_id
 
 
+def _is_postback_owner(user_id):
+    """postback 沒有 ctx，只拿得到按的人是誰，所以直接比對 ADMIN_LINE_USER_ID。
+
+    沒設就一律放行 —— 這跟 _is_admin 的 deny-by-default 相反是刻意的：
+    那邊擋的是 Gmail 財務 PII（外洩代價高），這邊只是把自家冰箱裡的
+    菜標成用完，misconfig 時整個功能死掉的代價比誤按高。
+    """
+    import os
+    admin_id = os.environ.get("ADMIN_LINE_USER_ID", "")
+    return (not admin_id) or user_id == admin_id
+
+
 def _handle_todo_subcmd(user_id, body):
     """處理 /待辦 加|完成|刪|清完成 子命令；用 regex 支援「加X」黏在一起。"""
     import personal
@@ -804,6 +816,30 @@ def handle_postback(data, user_id):
             if ok:
                 return [f"🗑️ 已取消提醒 [{rid}]", new_list]
             return f"找不到編號 {rid} 的提醒"
+
+        if action == "pantry_used":
+            pid = (parsed.get("pid") or [""])[0]
+            name = (parsed.get("n") or [""])[0] or "那樣食材"
+            # 每日情報是推到家人群組的，這顆按鈕誰都按得到。庫存在
+            # _PERSONAL_KINDS 裡是個人資料，寫入更該只認本人。
+            if not _is_postback_owner(user_id):
+                return "庫存只有本人能改，這顆按鈕對你沒有作用。"
+            if not pid:
+                return (f"這張卡片定位不到「{name}」在 Notion 的位置。\n"
+                        f"改打「用掉 {name}」就可以。")
+            import notion_db
+            row = next((r for r in notion_db.pantry_load()
+                        if r.get("page_id") == pid), None)
+            if row is None:
+                # 推播卡片會一直留在聊天室，隔天再按到是常態不是錯誤，
+                # 講清楚就好，別再寫一次 Notion 也別重複加採購清單
+                return f"「{name}」已經標成用完了，不用再按一次。"
+            if not notion_db.pantry_set_status(pid, "用完"):
+                return f"「{name}」寫入 Notion 失敗，請稍後再試。"
+            # 用完就自動排進採購清單 —— 跟打「用掉」走同一條路
+            notion_db.shopping_add(row["name"], category=row.get("category"),
+                                   source="低庫存自動")
+            return f"✅ 已把「{row['name']}」標成用完，並加進採購清單。"
 
         if action == "reminder_snooze":
             from datetime import datetime, timedelta
