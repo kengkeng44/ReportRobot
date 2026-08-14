@@ -70,6 +70,9 @@ def _to_messages(response):
     dict → 假設已是 LINE message dict（含 'type'），直接用
     list → 上述兩種混合，依序展開
     None/空字串 → []
+
+    quickReply 只會留在最後一則：LINE 只認最後那則的 quickReply，
+    掛在前面的會靜默消失，留著只是讓人以為送出去了。
     """
     if response is None:
         return []
@@ -85,7 +88,13 @@ def _to_messages(response):
                 out.append({"type": "text", "text": c})
         if len(out) >= MAX_MESSAGES:
             break
-    return out[:MAX_MESSAGES]
+    out = out[:MAX_MESSAGES]
+    # 複製而不是 pop：呼叫端的 dict 不該因為送過一次就被改掉
+    return [
+        {k: v for k, v in m.items() if k != "quickReply"}
+        if i < len(out) - 1 and "quickReply" in m else m
+        for i, m in enumerate(out)
+    ]
 
 
 def _post(url, payload):
