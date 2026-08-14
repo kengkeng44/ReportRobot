@@ -309,13 +309,97 @@ def text_bubble(title, body, subtitle="", header_color=_BROWN, bold_subheaders=T
     }
 
 
+def kitchen_reminder_bubble(items, subtitle="", extra_text="", more_count=0):
+    """食材提醒 bubble：每樣快過期食材一列 + 一顆「已用掉」按鈕。
+
+    items 由 kitchen.expiring_actions() 產生：[{page_id, name, days_text}]。
+    數量已在那裡截斷（一張 bubble 塞不下無限顆按鈕），這裡只負責畫。
+    more_count > 0 時會寫出還有幾樣沒放上來 —— 默默吞掉會讓人以為只剩這些。
+    extra_text 放建議菜色那段（快過期清單本身已由按鈕列呈現，不要重複）。
+    """
+    rows = []
+    for i, it in enumerate(items):
+        if i > 0:
+            rows.append(_separator())
+        name = it["name"]
+        rows.append({
+            "type": "box", "layout": "horizontal",
+            "spacing": "md", "alignItems": "center",
+            "contents": [
+                {
+                    "type": "box", "layout": "vertical",
+                    "flex": 5, "spacing": "xs",
+                    "contents": [
+                        {"type": "text", "text": name,
+                         "size": "sm", "weight": "bold",
+                         "color": _TEXT_DARK, "wrap": True},
+                        {"type": "text", "text": it.get("days_text") or "",
+                         "size": "xs", "color": _TEXT_LIGHT},
+                    ],
+                },
+                {
+                    "type": "button",
+                    "style": "primary", "color": _GREEN,
+                    "height": "sm", "flex": 3,
+                    "action": {
+                        "type": "postback",
+                        "label": "已用掉",
+                        # 用 page_id 定位：名稱可能重複，而且點下去時庫存可能已變動。
+                        # n 只給「重複點擊」時的可讀訊息用，截短以守住 300 字元上限。
+                        "data": _postback("pantry_used",
+                                          pid=it["page_id"], n=name[:8]),
+                        "displayText": f"🍳 用掉 {name[:20]}",
+                    },
+                },
+            ],
+        })
+
+    if more_count > 0:
+        rows.append(_separator())
+        rows.append({
+            "type": "text",
+            "text": f"還有 {more_count} 樣快過期，打「快過期」看全部",
+            "size": "xs", "color": _TEXT_LIGHT, "wrap": True,
+        })
+
+    if extra_text:
+        rows.append(_separator())
+        for para in [p.strip() for p in _strip_html(extra_text).split("\n\n") if p.strip()]:
+            rows.append({
+                "type": "text", "text": para,
+                "size": "xs", "color": _TEXT_DARK, "wrap": True,
+            })
+
+    if not rows:
+        rows = [{
+            "type": "text", "text": "（無內容）",
+            "size": "sm", "color": _TEXT_LIGHT, "align": "center",
+        }]
+
+    return {
+        "type": "bubble", "size": "mega",
+        "header": _header("🥬 食材提醒", subtitle, bg="#6F9A62"),
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "sm",
+            "backgroundColor": _LIGHT_BG, "paddingAll": "lg",
+            "contents": rows,
+        },
+        "footer": _footer_tip("點「已用掉」會標成用完並自動排進採購清單"),
+    }
+
+
 def daily_report_carousel(extra_text, weather_text, premarket_text, today_str,
-                          kitchen_text=None, spending_text=None):
+                          kitchen_text=None, spending_text=None,
+                          kitchen_items=None, kitchen_more=0):
     """把每日報組成 carousel（橫滑），1 則 push 搞定。
     順序：今日一則 → 食材提醒 → 天氣 → 盤前 → 消費。全部缺回 None。
 
     kitchen_text 只在真的有食材快過期時才給 —— 沒事就不要佔一個 bubble，
     每天都跳「沒有要過期的」會讓人開始略過整則推播。
+
+    kitchen_items 有值時走「附按鈕」版本，kitchen_text 這時只放建議菜色那段
+    （快過期清單改由按鈕列呈現）；沒有 items（例如撈不到 page_id）就退回純文字
+    bubble，提醒還是要出現，只是少了按鈕。
     """
     bubbles = []
 
@@ -328,7 +412,14 @@ def daily_report_carousel(extra_text, weather_text, premarket_text, today_str,
         ))
 
     # 排在天氣前面：這是有時效、要今天動手的事，看得越早越好
-    if kitchen_text:
+    if kitchen_items:
+        bubbles.append(kitchen_reminder_bubble(
+            kitchen_items,
+            subtitle=today_str,
+            extra_text=kitchen_text or "",
+            more_count=kitchen_more,
+        ))
+    elif kitchen_text:
         bubbles.append(text_bubble(
             title="🥬 食材提醒",
             subtitle=today_str,

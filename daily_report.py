@@ -36,11 +36,18 @@ def _fetch_market_news(limit=3):
     return "\n".join(lines) if lines else None
 
 
-def _kitchen_reminder(threshold_days=3):
-    """快過期食材 + 建議今天煮什麼。沒有快過期的就回 None。
+def _kitchen_payload(threshold_days=3):
+    """食材提醒的素材。沒有快過期的就回 None。
 
     刻意在沒事時回 None 而不是「沒有要過期的食材」：每天都跳一則
     無事發生的提醒，人很快就會開始略過整則推播。
+
+    回 dict：
+    - items / more：給按鈕版 bubble 用（沒 page_id 的食材按了也無法定位，
+      expiring_actions 已把它們濾掉）
+    - recipe_text：只有建議菜色那段。有按鈕時快過期清單由按鈕列呈現，
+      文字再列一次會變成同一份資料講兩遍
+    - text：純文字 fallback，清單 + 建議都要在裡面
     """
     import kitchen
     import notion_db
@@ -52,13 +59,31 @@ def _kitchen_reminder(threshold_days=3):
     if not kitchen.expiring_soon(pantry, threshold_days):
         return None
 
-    parts = [kitchen.format_expiring(pantry, threshold_days)]
+    items, more = kitchen.expiring_actions(pantry, threshold_days)
+
+    recipe_text = ""
     recipes = notion_db.recipes_load(pantry)
     if recipes:
         recs = kitchen.recommend(pantry, recipes, threshold_days)
         if recs:
-            parts.append(kitchen.format_recommendations(recs))
-    return "\n\n".join(parts)
+            recipe_text = kitchen.format_recommendations(recs)
+
+    parts = [kitchen.format_expiring(pantry, threshold_days)]
+    if recipe_text:
+        parts.append(recipe_text)
+
+    return {
+        "items": items,
+        "more": more,
+        "recipe_text": recipe_text,
+        "text": "\n\n".join(parts),
+    }
+
+
+def _kitchen_reminder(threshold_days=3):
+    """快過期食材 + 建議今天煮什麼的純文字版。沒有快過期的就回 None。"""
+    payload = _kitchen_payload(threshold_days)
+    return payload["text"] if payload else None
 
 
 def _spending_recent():
@@ -103,7 +128,11 @@ async def run_daily_report(force_premarket=False):
     extra_text = _safe("今日一則", humor.get_daily_extra)
 
     # 4. 食材提醒（沒有快過期的就回 None，不佔 bubble）
-    kitchen_text = _safe("食材提醒", _kitchen_reminder)
+    kitchen = _safe("食材提醒", _kitchen_payload) or {}
+    kitchen_items = kitchen.get("items") or []
+    # 有按鈕時文字只留菜色建議，清單交給按鈕列；撈不到 page_id 就退回完整文字
+    kitchen_text = (kitchen.get("recipe_text") if kitchen_items
+                    else kitchen.get("text")) or None
 
     # 5. 最近一天消費（沒有任何支出資料就回 None，不佔 bubble）
     spending_text = _safe("消費摘要", _spending_recent)
@@ -111,6 +140,8 @@ async def run_daily_report(force_premarket=False):
     # 組 carousel 一次推（1 則 push）
     carousel = daily_report_carousel(extra_text, weather_text, premarket_text, today,
                                      kitchen_text=kitchen_text,
+                                     kitchen_items=kitchen_items,
+                                     kitchen_more=kitchen.get("more", 0),
                                      spending_text=spending_text)
     if carousel is None:
         # 兩段都炸了 → 推一則純文字告知

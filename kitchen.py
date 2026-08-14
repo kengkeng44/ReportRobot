@@ -398,6 +398,25 @@ def expiring_soon(pantry, threshold_days=3):
     return sorted(hits, key=lambda p: p["days_left"])
 
 
+def expiring_actions(pantry, threshold_days=3, limit=5):
+    """快過期食材的「可操作」清單，給推播卡片放按鈕用（純邏輯，不碰 Notion/LINE）。
+
+    回 (items, more)：
+    - items: [{"page_id", "name", "days_text"}]，最急的排前面，最多 limit 筆
+    - more:  被 limit 截掉、卡片上放不下的筆數
+
+    沒有 page_id 的直接跳過 —— 按鈕定位不到 Notion 那一列，放了也是按了沒事，
+    比沒有按鈕更糟。跳過的不計入 more（那是「放不下」，不是「不能放」）。
+    """
+    hits = [r for r in expiring_soon(pantry, threshold_days) if r.get("page_id")]
+    items = [{
+        "page_id": r["page_id"],
+        "name": r["name"],
+        "days_text": _days_text(r.get("days_left")),
+    } for r in hits[:limit]]
+    return items, max(0, len(hits) - limit)
+
+
 def recommend(pantry, recipes, threshold_days=3):
     """依「用掉最多快過期食材」推薦食譜，同分則挑烹調時間短的。
 
