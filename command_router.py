@@ -28,6 +28,12 @@ _LINE_QUOTA_KEYWORDS = {
 _MARKET_KEYWORDS = {
     "大盤", "指數", "大盤指數", "market", "Market", "MARKET",
 }
+
+# 發票品項查詢。「買了什麼」要排在 _PANTRY_ADD_RE 前面，
+# 不然會被「買了」的前綴吃掉變成入庫指令。
+_EINVOICE_KEYWORDS = {
+    "買了什麼", "品項", "發票", "明細", "消費明細", "發票明細",
+}
 _PREMARKET_KEYWORDS = {
     "盤前", "盤前報告", "premarket", "Premarket", "PREMARKET",
 }
@@ -110,6 +116,11 @@ HELP_TEXT = (
     "  • 記一筆 午餐 120     ← 手動記帳\n"
     "  • 記一筆 薪水 50000   ← 含薪水/獎金/退款會記成收入\n"
     "  信用卡消費每天 15:30 自動同步進 Notion\n"
+    "\n"
+    "🧾 買了什麼（具體品項）\n"
+    "  • /買了什麼 或 /品項 或 /發票\n"
+    "  ℹ️ 信用卡通知只有「商店名 + 金額」，買了哪些菜銀行收不到。\n"
+    "     品項來自財政部手機條碼載具，只有結帳時掃了條碼的才查得到\n"
     "\n"
     "🍳 煮飯（1 對 1 才能用）\n"
     "  • 買了          ← 只打這兩個字會跳一排常買清單，點一下就入庫\n"
@@ -309,6 +320,10 @@ def parse(text):
     if cleaned in _LINE_QUOTA_KEYWORDS:
         return ("line_quota", None)
 
+    # 要排在 _PANTRY_ADD_RE 前面：「買了什麼」會被「買了」的前綴吃掉
+    if cleaned in _EINVOICE_KEYWORDS:
+        return ("einvoice_items", None)
+
     # 要排在股票代號查詢前面：「大盤」「盤前」都是中文，會被中文反查吃掉
     if cleaned in _MARKET_KEYWORDS:
         return ("market", None)
@@ -425,7 +440,9 @@ _PERSONAL_KINDS = {"reminder_add", "reminder_list", "reminder_cancel",
                    "pantry_add", "pantry_consume", "shopping_list",
                    "shopping_add", "shopping_bought",
                    "fin_spending", "fin_recent", "fin_card",
-                   "fin_networth", "fin_manual"}
+                   "fin_networth", "fin_manual",
+                   # 買了什麼菜是個人消費資料
+                   "einvoice_items"}
 
 # Admin-only kinds（要 1 對 1 + LINE userId == ADMIN_LINE_USER_ID）
 _ADMIN_KINDS = {"finance_overview", "finance_overview_detail"}
@@ -445,6 +462,44 @@ def _is_admin(ctx):
     if not admin_id:
         return False
     return ctx.get("user_id") == admin_id
+
+
+_EINVOICE_SETUP_MSG = (
+    "還沒接上財政部電子發票。\n\n"
+    "信用卡的通知信只有「商店名 + 金額」,買了什麼銀行收不到,\n"
+    "所以品項只能從財政部的手機條碼載具撈。\n\n"
+    "要開通的話:\n"
+    "1. 到 https://einvoice.nat.gov.tw/APCONSUMER/BTC605W/ 申請 AppID\n"
+    "2. 把 AppID、手機條碼、手機條碼驗證碼設成環境變數\n"
+    "   EINVOICE_APP_ID / EINVOICE_CARD_NO / EINVOICE_CARD_ENCRYPT\n\n"
+    "⚠️ 只有結帳時出示手機條碼的發票才查得到。"
+)
+
+
+def _today():
+    """抽出來讓測試可以固定日期。"""
+    return _date.today()
+
+
+def _handle_einvoice_items():
+    """本月發票的品項明細。沒設定就講怎麼設定 —— 這功能的門檻是
+    使用者要自己去申請 AppID,講不清楚等於沒做。"""
+    import einvoice
+
+    if not einvoice.is_configured():
+        return _EINVOICE_SETUP_MSG
+
+    today = _today()
+    try:
+        invoices = einvoice.fetch_month(today.year, today.month)
+    except einvoice.EInvoiceError as e:
+        # 這個訊息已經是人話（explain_code 翻過），直接給使用者
+        return f"查發票失敗:{e}"
+    except Exception as e:
+        print(f"發票查詢失敗:{e}")
+        return "查發票失敗,稍後再試。"
+
+    return einvoice.format_purchases(invoices)
 
 
 def _is_postback_owner(user_id):
@@ -728,6 +783,9 @@ def handle(text, ctx=None):
         if kind == "line_quota":
             import line_quota
             return line_quota.format_stats()
+
+        if kind == "einvoice_items":
+            return _handle_einvoice_items()
 
         if kind == "market":
             import markets
