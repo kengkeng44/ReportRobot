@@ -64,6 +64,27 @@ def _parse_amount(text):
     return int(val) if val == int(val) else val
 
 
+# 前綴 → 幣別。順序有意義：US$ 要排在 $ 之類的寬鬆比對前面。
+_CURRENCY_PREFIXES = (
+    ("NT$", "TWD"), ("TWD", "TWD"),
+    ("US$", "USD"), ("USD", "USD"),
+)
+
+
+def _parse_currency(text):
+    """從金額文字的前綴判斷幣別，預設 TWD。
+
+    國泰的消費彙整通知**連海外消費都已換算成台幣**（region=US 的那筆也
+    寫 NT$），所以這個資料源實務上一律回 TWD。判斷邏輯仍寫出來，是為了
+    之後接券商或訂閱扣款信時不必再回頭改 parser —— 那些才會有真的 US$。
+    """
+    t = (text or "").upper().replace(" ", "")
+    for prefix, code in _CURRENCY_PREFIXES:
+        if t.startswith(prefix):
+            return code
+    return "TWD"
+
+
 def _parse_date(text):
     m = _DATE_RE.match((text or "").strip())
     return f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else None
@@ -114,6 +135,7 @@ def parse(html, card_last4=None):
             "date": date,
             "time": time_text if _TIME_RE.match(time_text) else "",
             "amount": amount,
+            "currency": _parse_currency(data_b[0]),
             "shop": shop,
             "category": data_b[2].strip(),
             "region": data_a[4].strip(),

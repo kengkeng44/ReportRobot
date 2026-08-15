@@ -46,6 +46,17 @@ def _is_spending(txn):
     return (txn.get("direction") or "支出") == "支出"
 
 
+def _currency(txn):
+    """遷移前的資料沒有幣別欄，當時只有國泰一個來源，一律台幣。"""
+    return txn.get("currency") or "TWD"
+
+
+def _is_overseas(txn):
+    """非台灣的消費。國泰標的是授權當下的台幣估算，結匯後金額會變。"""
+    region = txn.get("region") or ""
+    return bool(region) and region != "TW"
+
+
 # ─────────────────────────────────────────────────────────
 # 本月支出
 # ─────────────────────────────────────────────────────────
@@ -57,15 +68,33 @@ def format_monthly_spending(txns, month):
     if not rows:
         return _EMPTY_MONTH
 
+    # 不同幣別分開算。把 US$30 加進台幣總計會得到一個沒有意義的數字，
+    # 而且畫面上看不出來哪裡怪 —— 目前資料都是台幣，這是給未來的保險。
+    twd_rows = [t for t in rows if _currency(t) == "TWD"]
+    other_rows = [t for t in rows if _currency(t) != "TWD"]
+
     by_cat = defaultdict(float)
-    for t in rows:
+    for t in twd_rows:
         by_cat[t.get("category") or "其他"] += t.get("amount") or 0
     total = sum(by_cat.values())
 
-    lines = [f"💳 {month} 支出　NT${_money(total)}", f"　共 {len(rows)} 筆", ""]
+    lines = [f"💳 {month} 支出　NT${_money(total)}", f"　共 {len(twd_rows)} 筆", ""]
     for cat, amt in sorted(by_cat.items(), key=lambda kv: -kv[1]):
         pct = round(amt / total * 100) if total else 0
         lines.append(f"・{cat}　NT${_money(amt)}　{pct}%")
+
+    by_ccy = defaultdict(float)
+    for t in other_rows:
+        by_ccy[_currency(t)] += t.get("amount") or 0
+    for ccy, amt in sorted(by_ccy.items()):
+        lines.append(f"・（{ccy}）　{_money(amt)}")
+
+    # 海外消費的金額還會因結匯變動，總額看起來精確其實不是
+    overseas = [t for t in twd_rows if _is_overseas(t)]
+    if overseas:
+        amt = sum(t.get("amount") or 0 for t in overseas)
+        lines.append("")
+        lines.append(f"🌐 含海外 {len(overseas)} 筆 NT${_money(amt)}（結匯後會變動）")
     return "\n".join(lines)
 
 
@@ -84,7 +113,11 @@ def format_recent(txns, limit=10):
         name = t.get("shop") or t.get("category") or "消費"
         # 授權中代表金額還可能變（外幣結匯、退款），要讓人看得出來
         mark = "（授權）" if t.get("status") == "授權中" else ""
-        lines.append(f"・{day}　{name}　NT${_money(t.get('amount'))}{mark}")
+        # 海外那筆的台幣金額是估算，標出來才知道帳單來的時候可能對不上
+        area = f"🌐{t.get('region')}" if _is_overseas(t) else ""
+        ccy = _currency(t)
+        unit = "NT$" if ccy == "TWD" else f"{ccy} "
+        lines.append(f"・{day}　{name}　{unit}{_money(t.get('amount'))}{area}{mark}")
     return "\n".join(lines)
 
 

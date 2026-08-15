@@ -54,6 +54,28 @@ def test_overseas_region_kept(txns):
     assert txns[2]["shop"] == "Amazon web services"
 
 
+# ── 幣別 ──────────────────────────────────────────────────
+
+def test_currency_is_twd_even_for_overseas(txns):
+    """國泰的彙整通知連海外消費都已換算成台幣（region=US 那筆也寫 NT$）。
+    這是這個資料源的事實，不是 bug —— 別看到 US 就以為是美元。"""
+    assert txns[2]["region"] == "US"
+    assert txns[2]["currency"] == "TWD"
+    assert all(t["currency"] == "TWD" for t in txns)
+
+
+def test_currency_detects_usd_prefix():
+    """之後接券商 / 訂閱扣款信才會出現真的 US$，先確保判斷邏輯是對的。"""
+    assert cathay_daily._parse_currency("US$30.00") == "USD"
+    assert cathay_daily._parse_currency("USD 30") == "USD"
+    assert cathay_daily._parse_currency("NT$1,271") == "TWD"
+
+
+def test_currency_defaults_twd_when_unrecognised():
+    assert cathay_daily._parse_currency("") == "TWD"
+    assert cathay_daily._parse_currency("1234") == "TWD"
+
+
 def test_card_last4_applies_to_all(txns):
     """卡號在另一個 table，要正確套用到每一筆。"""
     assert {t["card_last4"] for t in txns} == {"1234"}

@@ -187,7 +187,16 @@ def test_skips_entirely_when_notion_not_configured():
     assert stats == {"parsed": 0, "written": 0, "skipped": 0, "sources": 0}
 
 
-def test_no_gmail_service_is_graceful():
+def test_no_gmail_service_is_graceful(monkeypatch):
+    """取不到 Gmail service（token 過期）時要安靜跳過，不能炸掉排程。
+
+    一定要 patch 掉真實的 get_gmail_service —— service=None 時 sync() 會
+    自己去取一個，在有 token.pickle 的開發機上這會**真的連上 Gmail 撈信**，
+    測試就變成在讀使用者的真實信箱，而且只在那台機器上紅。
+    """
+    import gmail_reader
+    monkeypatch.setattr(gmail_reader, "get_gmail_service", lambda: None)
+
     notion = FakeNotion()
     stats = finance_sync.sync(service=None, notion=notion)
     assert stats["written"] == 0

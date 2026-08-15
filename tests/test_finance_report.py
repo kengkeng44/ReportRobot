@@ -67,6 +67,66 @@ def test_monthly_empty_explains_how_to_start():
     assert "還沒有" in text
 
 
+# ── 幣別與海外消費 ────────────────────────────────────────
+
+def test_monthly_keeps_foreign_currency_out_of_twd_total():
+    """US$30 加進台幣總計會得到一個沒有意義的數字，而且畫面上看不出來。"""
+    txns = [
+        {**_txn("2026-08-01", 100), "currency": "TWD"},
+        {**_txn("2026-08-02", 30), "currency": "USD"},
+    ]
+
+    text = fr.format_monthly_spending(txns, "2026-08")
+
+    assert "NT$100" in text
+    assert "130" not in text, "台幣總計不可以把美元加進來"
+    assert "USD" in text, "外幣要另外列，不能默默消失"
+
+
+def test_monthly_treats_missing_currency_as_twd():
+    """遷移前的資料沒有幣別欄，當時只有國泰一個來源，一律台幣。"""
+    txns = [_txn("2026-08-01", 100), _txn("2026-08-02", 250)]
+
+    text = fr.format_monthly_spending(txns, "2026-08")
+
+    assert "350" in text
+
+
+def test_monthly_flags_overseas_amounts_as_provisional():
+    """海外消費的台幣金額是授權當下的估算，結匯後會變。"""
+    txns = [
+        {**_txn("2026-08-01", 100), "region": "TW"},
+        {**_txn("2026-08-02", 14, shop="Amazon web services"), "region": "US"},
+    ]
+
+    text = fr.format_monthly_spending(txns, "2026-08")
+
+    assert "海外" in text
+    assert "變動" in text
+
+
+def test_monthly_no_overseas_note_when_all_domestic():
+    txns = [{**_txn("2026-08-01", 100), "region": "TW"}]
+    assert "海外" not in fr.format_monthly_spending(txns, "2026-08")
+
+
+def test_recent_marks_overseas_transaction():
+    txns = [{**_txn("2026-08-08", 14, shop="Amazon web services"), "region": "US"}]
+
+    text = fr.format_recent(txns)
+
+    assert "US" in text
+
+
+def test_recent_uses_currency_unit():
+    txns = [{**_txn("2026-08-08", 30, shop="OpenAI"), "currency": "USD"}]
+
+    text = fr.format_recent(txns)
+
+    assert "USD" in text
+    assert "NT$30" not in text, "美元不能標成台幣"
+
+
 # ── 最近交易 ──────────────────────────────────────────────
 
 def test_recent_is_newest_first_and_limited():

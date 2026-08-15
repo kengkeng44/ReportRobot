@@ -149,6 +149,14 @@ _SCHEMAS = {
         "方向": _select(("支出", "red"), ("收入", "green"), ("轉帳", "gray"), ("還款", "blue")),
         "類別": _select(*_SPEND_CATEGORIES),
         "商店": {"rich_text": {}},
+        # 國泰的彙整通知連海外消費都已換算台幣，所以目前這欄一律 TWD。
+        # 先建起來，之後接券商 / 訂閱扣款信才不必再動一次 schema 與既有資料。
+        "幣別": _select(("TWD", "default"), ("USD", "green")),
+        # 海外消費（非 TW）的金額是授權當下的台幣估算，結匯後會變 ——
+        # 存下來才分得出「這筆還會變」跟「這筆定了」，否則畫面上長得一樣。
+        "消費地區": _select(("TW", "default"), ("US", "orange"),
+                            ("JP", "pink"), ("EU", "blue")),
+        "卡末四碼": {"rich_text": {}},
         # 授權 = 當下刷卡紀錄；已結帳 = 月帳單確認後的最終金額（見 spec 4.3）
         "狀態": _select(("授權中", "yellow"), ("已結帳", "green"), ("待確認", "red")),
         "來源": _select(
@@ -924,6 +932,11 @@ def transaction_add(txn):
         "摘要": {"title": [{"text": {"content": title}}]},
         "日期": {"date": {"start": txn["date"]}},
         "金額": _prop_number(txn.get("amount")),
+        # 沒給幣別就當台幣：手動記帳與既有資料都不會帶這欄
+        "幣別": _prop_select(txn.get("currency") or "TWD"),
+        "消費地區": _prop_select(txn.get("region")),
+        "卡末四碼": ({"rich_text": [{"text": {"content": txn["card_last4"]}}]}
+                     if txn.get("card_last4") else None),
         "方向": _prop_select(txn.get("direction")),
         "類別": _prop_select(txn.get("category")),
         "商店": {"rich_text": [{"text": {"content": txn.get("shop") or ""}}]},
@@ -962,6 +975,9 @@ def transactions_load(limit=200):
             out.append({
                 "date": (date_obj.get("start") or "")[:10],
                 "amount": _read_number(props, "金額"),
+                # 遷移前的資料沒有幣別欄，一律當台幣（那時只有國泰這個來源）
+                "currency": _read_select(props, "幣別") or "TWD",
+                "region": _read_select(props, "消費地區"),
                 "category": _read_select(props, "類別"),
                 "shop": _read_rich_text(props, "商店"),
                 "direction": _read_select(props, "方向") or "支出",
