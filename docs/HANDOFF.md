@@ -306,6 +306,7 @@ token 弄壞。用 `Read-Host` 並存成 User 層級環境變數。
 ```
 server.py              FastAPI + APScheduler + LINE webhook + admin 端點
 ├─ daily_report.py     每日推播(天氣/盤前/今日一則/食材提醒)
+│   └─ humor.py            今日一則;主題輪替(humor_topics.py)+ 歷史去重
 ├─ command_router.py   文字指令解析與分派(parse / handle / handle_postback)
 │   ├─ _handle_kitchen()   煮飯 8 個指令
 │   └─ _handle_finance()   財務 5 個指令
@@ -332,6 +333,7 @@ server.py              FastAPI + APScheduler + LINE webhook + admin 端點
 ```
 ReportRobot（根頁,NOTION_PARENT_PAGE_ID）
 ├─ Todos / Reminders / LineQuota      ← 核心 DB,已在線上跑,不要搬家
+├─ 今日一則                            ← 講過的小知識/笑話/新鮮事,給去重用
 ├─ 💰 財務中心
 │   └─ 帳戶 / 交易明細 / 信用卡帳單 / 持倉 / 淨值快照
 └─ 🍳 煮飯模板
