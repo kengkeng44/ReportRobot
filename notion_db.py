@@ -122,6 +122,14 @@ _SCHEMAS = {
         "Month": {"title": {}},                                 # YYYY-MM
         "Count": {"number": {"format": "number"}},
     },
+    # 已經講過的小知識/笑話/新鮮事。存在 Notion 而不是記憶體：
+    # Railway redeploy 會重啟 process，in-memory 的歷史一歸零就又開始重複。
+    "今日一則": {
+        "內容": {"title": {}},
+        "類型": _select(("小知識", "blue"), ("笑話", "orange"), ("新鮮事", "green")),
+        "主題": {"rich_text": {}},
+        "日期": {"date": {}},
+    },
 
     # ── 財務中心 ────────────────────────────────────────
     "帳戶": {
@@ -492,6 +500,63 @@ def quota_set_month(month_str, count):
         return True
     except Exception as e:
         print(f"[notion] quota_set_month 失敗：{e}")
+        return False
+
+
+# ─────────────────────────────────────────────────────────
+# 今日一則：已經講過的小知識 / 笑話 / 新鮮事
+# 一行 = 一則，給 humor.py 當「不要再講這些」的依據
+# ─────────────────────────────────────────────────────────
+
+def daily_extra_recent(kind, limit=25):
+    """撈某類型最近講過的內容，新到舊。Notion 不可用就回空 list。
+
+    刻意回 []（而不是 raise）：沒有歷史只是少了去重的保護，
+    主題輪替還在，不該讓整段「今日一則」消失。
+    """
+    db_id = get_or_create_db("今日一則")
+    client = _get_client()
+    if not db_id or not client:
+        return []
+    try:
+        res = client.databases.query(
+            database_id=db_id,
+            filter={"property": "類型", "select": {"equals": kind}},
+            sorts=[{"property": "日期", "direction": "descending"}],
+            page_size=min(int(limit), 100),
+        )
+        out = []
+        for page in res.get("results", []):
+            text = _read_title(page.get("properties", {}) or {}, "內容")
+            if text:
+                out.append(text)
+        return out
+    except Exception as e:
+        print(f"[notion] daily_extra_recent 失敗：{e}")
+        return []
+
+
+def daily_extra_add(kind, text, topic="", day=None):
+    """記下今天講了什麼。寫失敗只 print，不影響已經生出來的內容。"""
+    db_id = get_or_create_db("今日一則")
+    client = _get_client()
+    if not db_id or not client or not text:
+        return False
+    day_str = (day or datetime.now().date()).isoformat()
+    try:
+        client.pages.create(
+            parent={"database_id": db_id},
+            properties={
+                # Notion title 上限 2000 字元，這裡的內容遠短於此，不截斷
+                "內容": {"title": [{"text": {"content": text}}]},
+                "類型": {"select": {"name": kind}},
+                "主題": {"rich_text": [{"text": {"content": topic or ""}}]},
+                "日期": {"date": {"start": day_str}},
+            },
+        )
+        return True
+    except Exception as e:
+        print(f"[notion] daily_extra_add 失敗：{e}")
         return False
 
 
