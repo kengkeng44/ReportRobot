@@ -10,8 +10,16 @@ import humor_topics
 def _no_notion(monkeypatch):
     """測試一律不碰 Notion:歷史空的、寫入吞掉。要驗歷史的個別測試自己覆蓋。"""
     monkeypatch.setattr(humor, "_recent", lambda kind: [])
+    monkeypatch.setattr(humor, "_recent_links", lambda kind: [])
     monkeypatch.setattr(humor, "_remember",
-                        lambda kind, text, topic, day: None)
+                        lambda kind, text, topic, day, source=None: None)
+
+
+@pytest.fixture(autouse=True)
+def _no_ptt(monkeypatch):
+    """預設不打 PTT。要驗論壇路徑的測試自己覆蓋 fetch_ptt_jokes。"""
+    monkeypatch.setattr(humor.joke_sources, "fetch_ptt_jokes",
+                        lambda **kw: [])
 
 
 def test_trivia_on_even_yday(monkeypatch):
@@ -245,3 +253,136 @@ def test_fun_news_keeps_all_when_everything_seen(monkeypatch):
 def test_fun_news_none_when_no_items(monkeypatch):
     monkeypatch.setattr(humor, "_google_news_rss", lambda q, limit=8: [])
     assert humor._fun_news(date(2026, 1, 1)) is None
+
+
+# ── 論壇笑話:挑選結果解析 ─────────────────────────────────
+
+def test_parse_pick_reads_index():
+    idx, body = humor._parse_pick("#3\n劉備怎麼死的\n備 害死的")
+    assert idx == 2                      # #3 是第 3 則,轉成 0-based
+    assert body == "劉備怎麼死的\n備 害死的"
+
+
+def test_parse_pick_tolerates_missing_index():
+    """沒有編號也要拿得到笑話 —— 編號只是用來記來源,不值得為它丟掉內容。"""
+    idx, body = humor._parse_pick("劉備怎麼死的\n備 害死的")
+    assert idx is None
+    assert body == "劉備怎麼死的\n備 害死的"
+
+
+def test_parse_pick_accepts_punctuation_after_number():
+    idx, body = humor._parse_pick("3.\n笑話內容")
+    assert idx == 2
+    assert body == "笑話內容"
+
+
+# ── 論壇笑話:整條路徑 ─────────────────────────────────────
+
+def _fake_jokes():
+    return [
+        {"title": "[猜謎] 甲", "body": "甲的內文", "heat": 50,
+         "link": "https://www.ptt.cc/a"},
+        {"title": "[耍冷] 乙", "body": "乙的內文", "heat": 30,
+         "link": "https://www.ptt.cc/b"},
+    ]
+
+
+def test_forum_joke_returns_picked_body(monkeypatch):
+    monkeypatch.setattr(humor.joke_sources, "fetch_ptt_jokes",
+                        lambda **kw: _fake_jokes())
+    monkeypatch.setattr(humor, "_ai",
+                        lambda prompt, max_tokens=300: "#2\n乙的笑話整理版")
+
+    assert humor._joke_from_forum(date(2026, 1, 1)) == "乙的笑話整理版"
+
+
+def test_forum_joke_records_source_link(monkeypatch):
+    """要記下挑中的是哪一篇,否則明天可能又挑到同一篇。"""
+    saved = []
+    monkeypatch.setattr(humor.joke_sources, "fetch_ptt_jokes",
+                        lambda **kw: _fake_jokes())
+    monkeypatch.setattr(humor, "_ai",
+                        lambda prompt, max_tokens=300: "#2\n乙的笑話整理版")
+    monkeypatch.setattr(humor, "_remember",
+                        lambda kind, text, topic, day, source=None: saved.append(source))
+
+    humor._joke_from_forum(date(2026, 1, 1))
+    assert saved == ["https://www.ptt.cc/b"]
+
+
+def test_forum_joke_none_when_ai_rejects_all(monkeypatch):
+    """AI 判定全部不合格(性暗示等)就回 NONE,不能硬推。"""
+    monkeypatch.setattr(humor.joke_sources, "fetch_ptt_jokes",
+                        lambda **kw: _fake_jokes())
+    monkeypatch.setattr(humor, "_ai", lambda prompt, max_tokens=300: "NONE")
+
+    assert humor._joke_from_forum(date(2026, 1, 1)) is None
+
+
+def test_forum_joke_none_when_ptt_empty(monkeypatch):
+    monkeypatch.setattr(humor.joke_sources, "fetch_ptt_jokes", lambda **kw: [])
+    assert humor._joke_from_forum(date(2026, 1, 1)) is None
+
+
+def test_forum_joke_none_when_ptt_raises(monkeypatch):
+    """PTT 掛掉不能讓整段炸掉 —— 呼叫端要能 fallback 到 AI 生成。"""
+    def boom(**kw):
+        raise RuntimeError("PTT 連線失敗")
+    monkeypatch.setattr(humor.joke_sources, "fetch_ptt_jokes", boom)
+    assert humor._joke_from_forum(date(2026, 1, 1)) is None
+
+
+def test_forum_joke_rejects_duplicate(monkeypatch):
+    monkeypatch.setattr(humor.joke_sources, "fetch_ptt_jokes",
+                        lambda **kw: _fake_jokes())
+    monkeypatch.setattr(humor, "_ai",
+                        lambda prompt, max_tokens=300: "#1\n講過的老笑話")
+    monkeypatch.setattr(humor, "_recent", lambda kind: ["講過的老笑話"])
+
+    assert humor._joke_from_forum(date(2026, 1, 1)) is None
+
+
+def test_forum_joke_excludes_used_links(monkeypatch):
+    """已推播過的文章連結要傳給抓取器排除。"""
+    got = {}
+    monkeypatch.setattr(humor, "_recent_links",
+                        lambda kind: ["https://www.ptt.cc/old"])
+    monkeypatch.setattr(humor.joke_sources, "fetch_ptt_jokes",
+                        lambda **kw: got.update(kw) or _fake_jokes())
+    monkeypatch.setattr(humor, "_ai",
+                        lambda prompt, max_tokens=300: "#1\n甲的笑話")
+
+    humor._joke_from_forum(date(2026, 1, 1))
+    assert got["exclude_links"] == ["https://www.ptt.cc/old"]
+
+
+# ── 笑話日:論壇優先,沒料才生成 ───────────────────────────
+
+def test_joke_day_prefers_forum(monkeypatch):
+    monkeypatch.setattr(humor, "_joke_from_forum", lambda today: "論壇的梗")
+    monkeypatch.setattr(humor, "_generate_fresh",
+                        lambda *a, **k: pytest.fail("論壇有料時不該呼叫 AI 生成"))
+
+    header, body = humor._trivia_or_joke(date(2026, 1, 1))  # 奇數日 = 笑話
+    assert header == "😄 今日一笑"
+    assert body == "論壇的梗"
+
+
+def test_joke_day_falls_back_to_generation(monkeypatch):
+    monkeypatch.setattr(humor, "_joke_from_forum", lambda today: None)
+    monkeypatch.setattr(humor, "_ai",
+                        lambda prompt, max_tokens=300: "AI 生的笑話")
+
+    header, body = humor._trivia_or_joke(date(2026, 1, 1))
+    assert header == "😄 今日一笑"
+    assert body == "AI 生的笑話"
+
+
+def test_trivia_day_never_touches_forum(monkeypatch):
+    """小知識不從笑話板撈,免得白花一次 PTT 抓取。"""
+    monkeypatch.setattr(humor, "_joke_from_forum",
+                        lambda today: pytest.fail("小知識日不該碰論壇"))
+    monkeypatch.setattr(humor, "_ai", lambda prompt, max_tokens=300: "冷知識")
+
+    header, _ = humor._trivia_or_joke(date(2026, 1, 2))  # 偶數日 = 小知識
+    assert header == "💡 今日小知識"

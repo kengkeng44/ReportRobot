@@ -129,6 +129,9 @@ _SCHEMAS = {
         "類型": _select(("小知識", "blue"), ("笑話", "orange"), ("新鮮事", "green")),
         "主題": {"rich_text": {}},
         "日期": {"date": {}},
+        # 論壇來源文章連結。同一篇 PTT 文章不要被挑第二次 ——
+        # 內容比對擋不住「同一篇但 AI 換句話整理」的情況。
+        "來源": {"url": {}},
     },
 
     # ── 財務中心 ────────────────────────────────────────
@@ -544,7 +547,31 @@ def daily_extra_recent(kind, limit=25):
         return []
 
 
-def daily_extra_add(kind, text, topic="", day=None):
+def daily_extra_recent_links(kind, limit=60):
+    """撈某類型最近用過的來源連結。給 PTT 挑文時排除已經推播過的文章。"""
+    db_id = get_or_create_db("今日一則")
+    client = _get_client()
+    if not db_id or not client:
+        return []
+    try:
+        res = client.databases.query(
+            database_id=db_id,
+            filter={"property": "類型", "select": {"equals": kind}},
+            sorts=[{"property": "日期", "direction": "descending"}],
+            page_size=min(int(limit), 100),
+        )
+        out = []
+        for page in res.get("results", []):
+            url = (page.get("properties", {}) or {}).get("來源", {}).get("url")
+            if url:
+                out.append(url)
+        return out
+    except Exception as e:
+        print(f"[notion] daily_extra_recent_links 失敗：{e}")
+        return []
+
+
+def daily_extra_add(kind, text, topic="", day=None, source=None):
     """記下今天講了什麼。寫失敗只 print，不影響已經生出來的內容。"""
     db_id = get_or_create_db("今日一則")
     client = _get_client()
@@ -560,6 +587,8 @@ def daily_extra_add(kind, text, topic="", day=None):
                 "類型": {"select": {"name": kind}},
                 "主題": {"rich_text": [{"text": {"content": topic or ""}}]},
                 "日期": {"date": {"start": day_str}},
+                # url 欄位不接受空字串，沒有來源就送 None
+                "來源": {"url": source or None},
             },
         )
         return True
