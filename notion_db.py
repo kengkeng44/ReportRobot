@@ -957,36 +957,52 @@ def transaction_add(txn):
 
 
 def transactions_load(limit=200):
-    """撈交易明細（新到舊）。回 list of dict，欄位名對齊 finance_report。"""
+    """撈交易明細（新到舊）。回 list of dict，欄位名對齊 finance_report。
+
+    要真的撈到 limit 筆就必須分頁：Notion 單頁上限是 100，超過得用
+    next_cursor 續撈。原本只查一次就回，limit 傳 200 也只拿得到 100 筆 ——
+    而且不會報錯，本月支出只是靜靜變小，看起來就像那個月比較省。
+    """
     db_id = get_or_create_db("交易明細")
     client = _get_client()
     if not db_id or not client:
         return []
+    out = []
+    cursor = None
     try:
-        res = client.databases.query(
-            database_id=db_id,
-            sorts=[{"property": "日期", "direction": "descending"}],
-            page_size=min(limit, 100),
-        )
-        out = []
-        for r in res.get("results", []):
-            props = r.get("properties", {}) or {}
-            date_obj = (props.get("日期", {}) or {}).get("date") or {}
-            out.append({
-                "date": (date_obj.get("start") or "")[:10],
-                "amount": _read_number(props, "金額"),
-                # 遷移前的資料沒有幣別欄，一律當台幣（那時只有國泰這個來源）
-                "currency": _read_select(props, "幣別") or "TWD",
-                "region": _read_select(props, "消費地區"),
-                "category": _read_select(props, "類別"),
-                "shop": _read_rich_text(props, "商店"),
-                "direction": _read_select(props, "方向") or "支出",
-                "status": _read_select(props, "狀態"),
-            })
+        while len(out) < limit:
+            kwargs = {
+                "database_id": db_id,
+                "sorts": [{"property": "日期", "direction": "descending"}],
+                "page_size": min(limit - len(out), 100),
+            }
+            if cursor:
+                kwargs["start_cursor"] = cursor
+            res = client.databases.query(**kwargs)
+            for r in res.get("results", []):
+                props = r.get("properties", {}) or {}
+                date_obj = (props.get("日期", {}) or {}).get("date") or {}
+                out.append({
+                    "date": (date_obj.get("start") or "")[:10],
+                    "amount": _read_number(props, "金額"),
+                    # 遷移前的資料沒有幣別欄，一律當台幣（那時只有國泰這個來源）
+                    "currency": _read_select(props, "幣別") or "TWD",
+                    "region": _read_select(props, "消費地區"),
+                    "category": _read_select(props, "類別"),
+                    "shop": _read_rich_text(props, "商店"),
+                    "direction": _read_select(props, "方向") or "支出",
+                    "status": _read_select(props, "狀態"),
+                })
+            if not res.get("has_more"):
+                break
+            cursor = res.get("next_cursor")
+            if not cursor:
+                break
         return out
     except Exception as e:
-        print(f"[notion] transactions_load 失敗：{e}")
-        return []
+        # 已經撈到的先回去，總比整個變空好 —— 半個月的資料還是能算
+        print(f"[notion] transactions_load 失敗（已取得 {len(out)} 筆）：{e}")
+        return out
 
 
 def card_statements_load():
