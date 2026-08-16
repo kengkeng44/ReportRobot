@@ -1,7 +1,8 @@
 """
 股票情報模組 v3
 - 新聞：Yahoo Finance + 鉅亨網（英文標題用 AI 翻譯成中文）
-- 論壇：PTT / Reddit r/stocks & r/wallstreetbets / StockTwits / Dcard 股票版
+- 論壇：PTT Stock / Reddit r/stocks & r/wallstreetbets / StockTwits
+        （Dcard 股票版 2026-08-16 起被 Cloudflare 擋，見 get_dcard_posts）
 - AI 分析：結合新聞 + 論壇資料做深度分析
 """
 
@@ -320,13 +321,24 @@ def get_stocktwits_messages(stock_id):
 
 
 def get_dcard_posts(stock_id):
-    """從 Dcard 股票版抓熱門，標題含 stock_id 或中文名的篩出來。"""
+    """從 Dcard 股票版抓熱門，標題含 stock_id 或中文名的篩出來。
+
+    ⚠️ 2026-08-16 實測：Dcard 官方 API 已被 Cloudflare 擋，穩定回 403。
+    中文論壇的資料由 get_ptt_articles（PTT Stock 板）承擔，那條實測正常，
+    所以論壇分析不會整段消失，只會少了 Dcard 這半。
+
+    刻意不繞 Cloudflare：那是對方明確表示不歡迎爬蟲，繞過去的寫法也脆弱，
+    下次改版又壞。保留呼叫是為了 Dcard 哪天開放時能自動恢復。
+    """
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         url = "https://www.dcard.tw/service/api/v2/forums/stock/posts"
         params = {"popular": "true", "limit": 30}
         resp = requests.get(url, params=params, headers=headers, timeout=10)
         if resp.status_code != 200:
+            # 原本這裡直接 return []，連一行 log 都沒有 —— 403 走的是這條
+            # 而不是下面的 except，所以外面完全看不出資料源已經死了。
+            print(f"Dcard 無法取得（HTTP {resp.status_code}），本次略過此來源")
             return []
         data = resp.json()
         stock_name = get_stock_name(stock_id)
