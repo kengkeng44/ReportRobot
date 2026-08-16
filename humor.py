@@ -20,10 +20,11 @@ import anthropic
 import holidays
 
 import humor_topics
+import joke_sources
 import usage_tracker
 from prompts import (
     AVOID_REPEAT_BLOCK, DAILY_TRIVIA_PROMPT, DAILY_JOKE_PROMPT,
-    FESTIVAL_GREETING_PROMPT, FUN_NEWS_PROMPT,
+    FESTIVAL_GREETING_PROMPT, FUN_NEWS_PROMPT, JOKE_PICK_PROMPT,
 )
 from stock_news import _google_news_rss
 from tz_utils import today_tpe
@@ -41,6 +42,11 @@ AI_MODEL = "claude-sonnet-4-5"
 
 # 從 Notion 撈幾則歷史來比對
 HISTORY_LIMIT = 30
+# 來源連結要記得更久:內容比對擋不掉「同一篇 PTT 文換句話整理」
+LINK_HISTORY_LIMIT = 100
+# 每次翻幾頁 PTT、挑幾則候選送給 AI 篩
+FORUM_PAGES = 10
+FORUM_CANDIDATES = 12
 # 其中前幾則才塞進 prompt(全塞會灌爆 token,更早的交給本地比對擋)
 AVOID_IN_PROMPT = 12
 # 撞到重複時最多換幾次主題重生
@@ -101,13 +107,25 @@ def _recent(kind):
         return []
 
 
-def _remember(kind, text, topic, day):
+def _recent_links(kind):
+    """撈某類型最近用過的來源連結。同一篇論壇文章不要挑第二次。"""
+    try:
+        import notion_db
+        if not notion_db.is_configured():
+            return []
+        return notion_db.daily_extra_recent_links(kind, LINK_HISTORY_LIMIT)
+    except Exception as e:
+        print(f"[humor] 讀來源歷史失敗:{e}")
+        return []
+
+
+def _remember(kind, text, topic, day, source=None):
     """記下今天講了什麼。寫失敗不影響已經生出來的內容。"""
     try:
         import notion_db
         if not notion_db.is_configured():
             return
-        notion_db.daily_extra_add(kind, text, topic, day)
+        notion_db.daily_extra_add(kind, text, topic, day, source)
     except Exception as e:
         print(f"[humor] 寫歷史失敗:{e}")
 
@@ -163,16 +181,72 @@ def _festival_greeting(today):
         return None
 
 
+def _parse_pick(text):
+    """拆 AI 回覆的「#編號 + 笑話」。沒有編號就當作全文都是笑話。
+
+    容錯而不是 raise:編號只是用來記來源連結,解析失敗頂多少記一筆,
+    不值得為此丟掉一則已經挑好的笑話。
+    """
+    m = re.match(r"\s*#?\s*(\d+)\s*[\.\)、]?\s*\n", text)
+    if not m:
+        return None, text.strip()
+    return int(m.group(1)) - 1, text[m.end():].strip()
+
+
+def _joke_from_forum(today):
+    """從 PTT joke 板挑一則。撈不到或 AI 認為全都不合格就回 None。"""
+    try:
+        jokes = joke_sources.fetch_ptt_jokes(
+            pages=FORUM_PAGES, limit=FORUM_CANDIDATES,
+            exclude_links=_recent_links("笑話"))
+    except Exception as e:
+        print(f"[humor] PTT 笑話抓取失敗:{e}")
+        return None
+    if not jokes:
+        print("[humor] PTT 沒撈到可用的笑話")
+        return None
+
+    listed = "\n\n".join(
+        f"{i + 1}. ({j['heat']} 推) {j['title']}\n{j['body']}"
+        for i, j in enumerate(jokes))
+    raw = _ai(JOKE_PICK_PROMPT.format(candidates=listed), max_tokens=500)
+    if not raw or raw.strip().upper().startswith("NONE"):
+        print("[humor] PTT 候選全被 AI 判定不合格")
+        return None
+
+    idx, body = _parse_pick(raw)
+    if not body or body.upper() == "NONE":
+        return None
+
+    history = _recent("笑話")
+    if _too_similar(body, history):
+        print("[humor] 論壇笑話與歷史重複,退回 AI 生成")
+        return None
+
+    link = jokes[idx]["link"] if idx is not None and 0 <= idx < len(jokes) else None
+    _remember("笑話", body, "PTT joke", today, source=link)
+    return body
+
+
 def _trivia_or_joke(today):
-    """依當年第幾天單雙數決定小知識/笑話。回 (header, body) 或 None。"""
+    """依當年第幾天單雙數決定小知識/笑話。回 (header, body) 或 None。
+
+    笑話優先從 PTT 撈真人寫的梗(諧音梗多、有推文數背書),
+    撈不到或全被守門擋掉才退回 AI 生成。
+    """
     if today.timetuple().tm_yday % 2 == 0:
         header, kind = "💡 今日小知識", "小知識"
         prompt, topic_fn = DAILY_TRIVIA_PROMPT, humor_topics.trivia_topic
     else:
         header, kind = "😄 今日一笑", "笑話"
         prompt, topic_fn = DAILY_JOKE_PROMPT, humor_topics.joke_topic
+
     try:
-        body = _generate_fresh(prompt, kind, topic_fn, today)
+        if kind == "笑話":
+            body = _joke_from_forum(today) or _generate_fresh(
+                prompt, kind, topic_fn, today)
+        else:
+            body = _generate_fresh(prompt, kind, topic_fn, today)
         return (header, body) if body else None
     except Exception as e:
         print(f"小知識/笑話失敗:{e}")
