@@ -420,10 +420,13 @@ def quick_reply_text(body, options):
 
 
 def daily_report_carousel(extra_text, weather_text, premarket_text, today_str,
-                          kitchen_text=None, spending_text=None,
-                          kitchen_items=None, kitchen_more=0):
+                          kitchen_text=None, kitchen_items=None, kitchen_more=0):
     """把每日報組成 carousel（橫滑），1 則 push 搞定。
-    順序：今日一則 → 食材提醒 → 天氣 → 盤前 → 消費。全部缺回 None。
+    順序：今日一則 → 食材提醒 → 天氣 → 盤前。全部缺回 None。
+
+    曾經有第五張「最近一天消費」，2026-08-16 依使用者要求拿掉 ——
+    每天固定跳一段回顧性資訊會稀釋掉推播真正要提醒的事。
+    要看時自己問（LINE 打「最新消費」）。
 
     kitchen_text 只在真的有食材快過期時才給 —— 沒事就不要佔一個 bubble，
     每天都跳「沒有要過期的」會讓人開始略過整則推播。
@@ -481,15 +484,6 @@ def daily_report_carousel(extra_text, weather_text, premarket_text, today_str,
             header_color="#5B8DA6",
         ))
     # premarket_text 為 None 時通常是週末，這時就只有今日一則 + 天氣 bubble
-
-    # 排最後：食材是今天要動手的事，消費是回顧，優先度最低
-    if spending_text:
-        bubbles.append(text_bubble(
-            title="💳 最近一天消費",
-            subtitle=today_str,
-            body=spending_text,
-            header_color="#A66F6F",
-        ))
 
     if not bubbles:
         return None

@@ -58,6 +58,10 @@ _PANTRY_CONSUME_RE = re.compile(r"^(?:用掉|吃掉|用完)\s*(.*)$")
 # 財務分頁。同樣用行首錨定，不要求前綴。
 _SPENDING_KEYWORDS = {"本月支出", "這個月花多少", "月支出", "spending"}
 _RECENT_KEYWORDS = {"最近交易", "最近消費", "近期交易", "recent"}
+# 原本是每日推播的第五張卡，2026-08-16 拿掉改成要看時自己問。
+# 跟 _RECENT_KEYWORDS 的差別：這個只看「資料裡最新的那一天」並附本月累計
+# 與資料過舊警告，最近交易則是平鋪最近 10 筆。
+_LATEST_DAY_KEYWORDS = {"最新消費", "最近一天消費", "昨天花多少", "今天花多少"}
 _CARD_KEYWORDS = {"卡費", "信用卡帳單", "帳單", "card"}
 _NETWORTH_KEYWORDS = {"淨值", "資產", "networth"}
 _MANUAL_RE = re.compile(r"^(?:記一筆|記帳)\s*(.*)$")
@@ -113,6 +117,7 @@ HELP_TEXT = (
     "\n"
     "💳 財務（1 對 1 才能用）\n"
     "  • 本月支出 / 最近交易 / 卡費 / 淨值\n"
+    "  • 最新消費   ← 最新一天的明細 + 本月累計（原本在每日推播，已改成用問的）\n"
     "  • 記一筆 午餐 120     ← 手動記帳\n"
     "  • 記一筆 薪水 50000   ← 含薪水/獎金/退款會記成收入\n"
     "  信用卡消費每天 15:30 自動同步進 Notion\n"
@@ -190,9 +195,7 @@ HELP_TEXT = (
     "    ℹ️ 每樣後面有「已用掉」按鈕，按了等同打「用掉 X」；只有本人按有效\n"
     "  • 🌤️ 淡水區天氣 + 近期活動\n"
     "  • 📊 盤前報告（週末略過）\n"
-    "  • 💳 最近一天消費（只在有消費紀錄時出現）\n"
-    "    ℹ️ 日期通常是前天，不是昨天：國泰的彙整信每天寄「前一日」的\n"
-    "       刷卡明細，早上推播時昨天的還沒進系統，所以直接寫實際日期\n"
+    "  ℹ️ 消費卡片已拿掉，改成想看時打「最新消費」\n"
     "\n"
     "ℹ️ 一般聊天不會被當指令，家人聊天不會被打擾。"
 )
@@ -391,6 +394,8 @@ def parse(text):
         return ("fin_spending", None)
     if cleaned in _RECENT_KEYWORDS:
         return ("fin_recent", None)
+    if cleaned in _LATEST_DAY_KEYWORDS:
+        return ("fin_latest_day", None)
     if cleaned in _CARD_KEYWORDS:
         return ("fin_card", None)
     if cleaned in _NETWORTH_KEYWORDS:
@@ -440,7 +445,7 @@ _PERSONAL_KINDS = {"reminder_add", "reminder_list", "reminder_cancel",
                    "pantry_add", "pantry_consume", "shopping_list",
                    "shopping_add", "shopping_bought",
                    "fin_spending", "fin_recent", "fin_card",
-                   "fin_networth", "fin_manual",
+                   "fin_networth", "fin_manual", "fin_latest_day",
                    # 買了什麼菜是個人消費資料
                    "einvoice_items"}
 
@@ -747,6 +752,12 @@ def _handle_finance(kind, arg):
     if kind == "fin_recent":
         return finance_report.format_recent(notion_db.transactions_load())
 
+    if kind == "fin_latest_day":
+        from tz_utils import today_tpe
+        text = finance_report.format_latest_day_spending(
+            notion_db.transactions_load(), today_tpe())
+        return text or "還沒有任何消費紀錄。"
+
     if kind == "fin_card":
         return finance_report.format_card_bills(notion_db.card_statements_load())
 
@@ -805,7 +816,7 @@ def handle(text, ctx=None):
             return _handle_kitchen(kind, arg)
 
         if kind in ("fin_spending", "fin_recent", "fin_card",
-                    "fin_networth", "fin_manual"):
+                    "fin_networth", "fin_manual", "fin_latest_day"):
             return _handle_finance(kind, arg)
 
         if kind == "portfolio":

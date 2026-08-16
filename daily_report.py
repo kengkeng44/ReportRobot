@@ -86,20 +86,10 @@ def _kitchen_reminder(threshold_days=3):
     return payload["text"] if payload else None
 
 
-def _spending_recent():
-    """最近一天的消費明細 + 本月累計。沒有任何支出資料就回 None。
-
-    刻意不是「昨天」：國泰消費彙整信每天彙整前一日，早上 7 點推播時昨天的
-    資料還沒進 Notion。寫死「昨日」會每天都是空的（見 spec 第 2 節）。
-    """
-    import finance_report
-    import notion_db
-
-    if not notion_db.is_configured():
-        return None
-
-    txns = notion_db.transactions_load()
-    return finance_report.format_latest_day_spending(txns, today_tpe())
+# 2026-08-16 使用者要求把「最近一天消費」從每日推播拿掉 —— 每天固定跳
+# 一段回顧性資訊會稀釋掉推播真正要提醒的事。改成要看時自己問：
+# LINE 打「最新消費」走 command_router 的 fin_latest_day。
+# 邏輯本身留在 finance_report.format_latest_day_spending()，沒有刪。
 
 
 async def run_daily_report(force_premarket=False):
@@ -134,15 +124,11 @@ async def run_daily_report(force_premarket=False):
     kitchen_text = (kitchen.get("recipe_text") if kitchen_items
                     else kitchen.get("text")) or None
 
-    # 5. 最近一天消費（沒有任何支出資料就回 None，不佔 bubble）
-    spending_text = _safe("消費摘要", _spending_recent)
-
     # 組 carousel 一次推（1 則 push）
     carousel = daily_report_carousel(extra_text, weather_text, premarket_text, today,
                                      kitchen_text=kitchen_text,
                                      kitchen_items=kitchen_items,
-                                     kitchen_more=kitchen.get("more", 0),
-                                     spending_text=spending_text)
+                                     kitchen_more=kitchen.get("more", 0))
     if carousel is None:
         # 兩段都炸了 → 推一則純文字告知
         await push_message(f"<b>⚠️ 每日情報 {today}</b>\n資料暫時無法取得，已通知維運。")

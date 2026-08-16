@@ -124,10 +124,9 @@ def test_help_lists_every_daily_bubble():
 
 
 def test_help_says_conditional_bubbles_are_conditional():
-    """食材與消費 bubble 只在有資料時出現，沒寫的話使用者會以為壞了。"""
+    """食材 bubble 只在有資料時出現，沒寫的話使用者會以為壞了。"""
     daily = cr.HELP_TEXT.split("📅")[1]
     assert "快過期" in daily
-    assert "有消費紀錄" in daily or "有紀錄" in daily
 
 
 def test_help_does_not_hardcode_push_clock_time():
@@ -138,12 +137,12 @@ def test_help_does_not_hardcode_push_clock_time():
     assert "早上" in daily
 
 
-def test_help_explains_why_spending_date_is_not_yesterday():
-    """消費 bubble 的日期通常是前天 —— 國泰彙整信每天寄前一日的明細。
-    不解釋的話使用者會以為同步壞了（見 daily-spending-bubble spec 第 2 節）。"""
+def test_help_points_to_the_spending_command_after_removal():
+    """消費卡片 2026-08-16 從推播拿掉了。說明要指向替代的指令，
+    不然使用者只會覺得「本來有的東西不見了」。"""
     daily = cr.HELP_TEXT.split("📅")[1]
-    assert "前天" in daily
-    assert "彙整" in daily
+    assert "最新消費" in daily
+    assert cr.parse("最新消費") == ("fin_latest_day", None)
 
 
 # ── 名稱與長度 ────────────────────────────────────────────
