@@ -419,21 +419,15 @@ def quick_reply_text(body, options):
     return msg
 
 
-def daily_report_carousel(extra_text, weather_text, premarket_text, today_str,
-                          kitchen_text=None, kitchen_items=None, kitchen_more=0):
+def daily_report_carousel(extra_text, weather_text, premarket_text, today_str):
     """把每日報組成 carousel（橫滑），1 則 push 搞定。
-    順序：今日一則 → 食材提醒 → 天氣 → 盤前。全部缺回 None。
+    順序：今日一則 → 天氣 → 盤前。全部缺回 None。
 
-    曾經有第五張「最近一天消費」，2026-08-16 依使用者要求拿掉 ——
-    每天固定跳一段回顧性資訊會稀釋掉推播真正要提醒的事。
-    要看時自己問（LINE 打「最新消費」）。
-
-    kitchen_text 只在真的有食材快過期時才給 —— 沒事就不要佔一個 bubble，
-    每天都跳「沒有要過期的」會讓人開始略過整則推播。
-
-    kitchen_items 有值時走「附按鈕」版本，kitchen_text 這時只放建議菜色那段
-    （快過期清單改由按鈕列呈現）；沒有 items（例如撈不到 page_id）就退回純文字
-    bubble，提醒還是要出現，只是少了按鈕。
+    2026-08-16 依使用者要求拿掉「食材提醒」與「最近一天消費」兩張卡 ——
+    每天固定跳的東西越多，整則推播越容易被整個略過。兩邊的邏輯都留著，
+    改成要看時自己問：
+      食材提醒 → LINE 打「快過期」（含「已用掉」按鈕）
+      最近消費 → LINE 打「最新消費」
     """
     bubbles = []
 
@@ -443,22 +437,6 @@ def daily_report_carousel(extra_text, weather_text, premarket_text, today_str,
             subtitle=today_str,
             body=extra_text,
             header_color=_GREEN,
-        ))
-
-    # 排在天氣前面：這是有時效、要今天動手的事，看得越早越好
-    if kitchen_items:
-        bubbles.append(kitchen_reminder_bubble(
-            kitchen_items,
-            subtitle=today_str,
-            extra_text=kitchen_text or "",
-            more_count=kitchen_more,
-        ))
-    elif kitchen_text:
-        bubbles.append(text_bubble(
-            title="🥬 食材提醒",
-            subtitle=today_str,
-            body=kitchen_text,
-            header_color="#6F9A62",
         ))
 
     if weather_text:

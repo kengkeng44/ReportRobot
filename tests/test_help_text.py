@@ -123,10 +123,22 @@ def test_help_lists_every_daily_bubble():
         assert label in cr.HELP_TEXT, f"每日推播漏寫 {label}"
 
 
-def test_help_says_conditional_bubbles_are_conditional():
-    """食材 bubble 只在有資料時出現，沒寫的話使用者會以為壞了。"""
+def test_help_lists_exactly_the_three_push_cards():
+    """2026-08-16 起推播只有三張。說明多列一張就是在騙人。"""
     daily = cr.HELP_TEXT.split("📅")[1]
-    assert "快過期" in daily
+
+    for card in ("今日一則", "天氣", "盤前"):
+        assert card in daily
+    assert "🥬 食材提醒（" not in daily, "食材卡片已從推播移除"
+
+
+def test_help_points_to_the_replacement_commands():
+    """本來有的東西不見了，要指向替代方案，不然只會覺得功能壞了。"""
+    daily = cr.HELP_TEXT.split("📅")[1]
+
+    assert "快過期" in daily and "最新消費" in daily
+    assert cr.parse("快過期") == ("pantry_expiring", None)
+    assert cr.parse("最新消費") == ("fin_latest_day", None)
 
 
 def test_help_does_not_hardcode_push_clock_time():

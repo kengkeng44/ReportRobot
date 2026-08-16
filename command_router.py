@@ -189,13 +189,12 @@ HELP_TEXT = (
     "🆘 顯示這個說明\n"
     "  • help / 說明 / 指令 / 功能 / 幫助 / 教學 / ?\n"
     "\n"
-    "📅 每天早上自動推送（橫滑卡片，1 則）\n"
+    "📅 每天早上自動推送（橫滑卡片，1 則，只有三張）\n"
     "  • 💫 今日一則（小知識或笑話 + 節日）\n"
-    "  • 🥬 食材提醒（只在有食材快過期時出現）\n"
-    "    ℹ️ 每樣後面有「已用掉」按鈕，按了等同打「用掉 X」；只有本人按有效\n"
     "  • 🌤️ 淡水區天氣 + 近期活動\n"
     "  • 📊 盤前報告（週末略過）\n"
-    "  ℹ️ 消費卡片已拿掉，改成想看時打「最新消費」\n"
+    "  ℹ️ 食材提醒與消費卡片已拿掉，改成想看時自己問：\n"
+    "     打「快過期」看食材（每樣附「已用掉」按鈕），打「最新消費」看花費\n"
     "\n"
     "ℹ️ 一般聊天不會被當指令，家人聊天不會被打擾。"
 )
@@ -682,7 +681,17 @@ def _handle_kitchen(kind, arg):
         return kitchen.format_pantry(notion_db.pantry_load())
 
     if kind == "pantry_expiring":
-        return kitchen.format_expiring(notion_db.pantry_load())
+        # 附「已用掉」按鈕的卡片版。這組按鈕原本掛在每日推播的食材提醒上,
+        # 2026-08-16 那張卡拿掉了,搬來這裡 —— 要看時自己問,看到就能直接處理。
+        pantry = notion_db.pantry_load()
+        items, more = kitchen.expiring_actions(pantry)
+        if items:
+            from flex_builder import kitchen_reminder_bubble
+            from tz_utils import today_tpe
+            return kitchen_reminder_bubble(
+                items, subtitle=today_tpe().strftime("%Y-%m-%d"), more_count=more)
+        # 撈不到 page_id(或根本沒有快過期的)就退回純文字,提醒不會消失
+        return kitchen.format_expiring(pantry)
 
     if kind == "cook_what":
         pantry = notion_db.pantry_load()

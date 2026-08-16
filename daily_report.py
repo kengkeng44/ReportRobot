@@ -36,60 +36,11 @@ def _fetch_market_news(limit=3):
     return "\n".join(lines) if lines else None
 
 
-def _kitchen_payload(threshold_days=3):
-    """食材提醒的素材。沒有快過期的就回 None。
-
-    刻意在沒事時回 None 而不是「沒有要過期的食材」：每天都跳一則
-    無事發生的提醒，人很快就會開始略過整則推播。
-
-    回 dict：
-    - items / more：給按鈕版 bubble 用（沒 page_id 的食材按了也無法定位，
-      expiring_actions 已把它們濾掉）
-    - recipe_text：只有建議菜色那段。有按鈕時快過期清單由按鈕列呈現，
-      文字再列一次會變成同一份資料講兩遍
-    - text：純文字 fallback，清單 + 建議都要在裡面
-    """
-    import kitchen
-    import notion_db
-
-    if not notion_db.is_configured():
-        return None
-
-    pantry = notion_db.pantry_load()
-    if not kitchen.expiring_soon(pantry, threshold_days):
-        return None
-
-    items, more = kitchen.expiring_actions(pantry, threshold_days)
-
-    recipe_text = ""
-    recipes = notion_db.recipes_load(pantry)
-    if recipes:
-        recs = kitchen.recommend(pantry, recipes, threshold_days)
-        if recs:
-            recipe_text = kitchen.format_recommendations(recs)
-
-    parts = [kitchen.format_expiring(pantry, threshold_days)]
-    if recipe_text:
-        parts.append(recipe_text)
-
-    return {
-        "items": items,
-        "more": more,
-        "recipe_text": recipe_text,
-        "text": "\n\n".join(parts),
-    }
-
-
-def _kitchen_reminder(threshold_days=3):
-    """快過期食材 + 建議今天煮什麼的純文字版。沒有快過期的就回 None。"""
-    payload = _kitchen_payload(threshold_days)
-    return payload["text"] if payload else None
-
-
-# 2026-08-16 使用者要求把「最近一天消費」從每日推播拿掉 —— 每天固定跳
-# 一段回顧性資訊會稀釋掉推播真正要提醒的事。改成要看時自己問：
-# LINE 打「最新消費」走 command_router 的 fin_latest_day。
-# 邏輯本身留在 finance_report.format_latest_day_spending()，沒有刪。
+# 2026-08-16 使用者要求把「食材提醒」與「最近一天消費」都從每日推播拿掉，
+# 推播只留三張：今日一則 / 天氣 / 盤前。
+# 兩邊的邏輯都沒有刪，改成要看時自己問：
+#   食材提醒 → LINE 打「快過期」（command_router 的 pantry_expiring，含「已用掉」按鈕）
+#   最近消費 → LINE 打「最新消費」（command_router 的 fin_latest_day）
 
 
 async def run_daily_report(force_premarket=False):
@@ -117,18 +68,8 @@ async def run_daily_report(force_premarket=False):
     # 3. 今日一則（小知識/笑話 + 節日 + 天氣新聞）
     extra_text = _safe("今日一則", humor.get_daily_extra)
 
-    # 4. 食材提醒（沒有快過期的就回 None，不佔 bubble）
-    kitchen = _safe("食材提醒", _kitchen_payload) or {}
-    kitchen_items = kitchen.get("items") or []
-    # 有按鈕時文字只留菜色建議，清單交給按鈕列；撈不到 page_id 就退回完整文字
-    kitchen_text = (kitchen.get("recipe_text") if kitchen_items
-                    else kitchen.get("text")) or None
-
     # 組 carousel 一次推（1 則 push）
-    carousel = daily_report_carousel(extra_text, weather_text, premarket_text, today,
-                                     kitchen_text=kitchen_text,
-                                     kitchen_items=kitchen_items,
-                                     kitchen_more=kitchen.get("more", 0))
+    carousel = daily_report_carousel(extra_text, weather_text, premarket_text, today)
     if carousel is None:
         # 兩段都炸了 → 推一則純文字告知
         await push_message(f"<b>⚠️ 每日情報 {today}</b>\n資料暫時無法取得，已通知維運。")
