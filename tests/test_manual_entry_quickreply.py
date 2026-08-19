@@ -163,3 +163,158 @@ def test_amounts_are_ints_when_whole():
     txns = [_txn("午餐", 120.0)]
 
     assert fr.frequent_amounts(txns, "午餐", pad=False) == [120]
+
+
+# ── 三態分流 ─────────────────────────────────────────────
+
+class FakeNotion:
+    def __init__(self, txns=None, configured=True, write_ok=True):
+        self._txns = txns or []
+        self.added = []
+        self._configured = configured
+        self._write_ok = write_ok
+
+    def is_configured(self):
+        return self._configured
+
+    def transactions_load(self, limit=200):
+        return list(self._txns)
+
+    def transaction_add(self, txn):
+        if not self._write_ok:
+            return None
+        self.added.append(txn)
+        return "page-fake"
+
+
+@pytest.fixture
+def fake_notion(monkeypatch):
+    def _install(**kwargs):
+        import sys
+        fake = FakeNotion(**kwargs)
+        monkeypatch.setitem(sys.modules, "notion_db", fake)
+        return fake
+    return _install
+
+
+def _ctx():
+    return {"source_type": "user", "user_id": "U1"}
+
+
+def test_bare_command_returns_item_buttons(fake_notion):
+    fake_notion(txns=[_txn("午餐", 120), _txn("午餐", 100), _txn("咖啡", 55)])
+
+    reply = cr.handle("記一筆", _ctx())
+
+    labels = [i["action"]["label"] for i in reply["quickReply"]["items"]]
+    assert labels[0] == "午餐"
+
+
+def test_item_buttons_send_parseable_commands(fake_notion):
+    """按鈕送出的字串必須自己 parse 得回來，不然點了沒反應。"""
+    fake_notion(txns=[_txn("午餐", 120)])
+
+    reply = cr.handle("記一筆", _ctx())
+
+    for item in reply["quickReply"]["items"]:
+        sent = item["action"]["text"]
+        assert cr.parse(sent) == ("fin_manual", sent.split(" ", 1)[1])
+
+
+def test_item_only_returns_amount_buttons(fake_notion):
+    fake_notion(txns=[_txn("午餐", 120), _txn("午餐", 120), _txn("午餐", 100)])
+
+    reply = cr.handle("記一筆 午餐", _ctx())
+
+    labels = [i["action"]["label"] for i in reply["quickReply"]["items"]]
+    assert labels[:2] == ["120", "100"]
+
+
+def test_amount_buttons_send_complete_commands(fake_notion):
+    fake_notion(txns=[_txn("午餐", 120)])
+
+    reply = cr.handle("記一筆 午餐", _ctx())
+
+    for item in reply["quickReply"]["items"]:
+        sent = item["action"]["text"]
+        assert sent.startswith("記一筆 午餐 ")
+        assert cr.parse(sent)[0] == "fin_manual"
+
+
+def test_full_flow_actually_writes(fake_notion):
+    """整條線走完：點品項 → 點金額 → 真的進 Notion。"""
+    fake = fake_notion(txns=[_txn("午餐", 120)])
+
+    step1 = cr.handle("記一筆", _ctx())
+    item_cmd = step1["quickReply"]["items"][0]["action"]["text"]
+    step2 = cr.handle(item_cmd, _ctx())
+    amount_cmd = step2["quickReply"]["items"][0]["action"]["text"]
+
+    cr.handle(amount_cmd, _ctx())
+
+    assert len(fake.added) == 1
+    assert fake.added[0]["shop"] == "午餐"
+    assert fake.added[0]["amount"] == 120
+    assert fake.added[0]["category"] == "餐飲"
+
+
+def test_unknown_item_falls_back_to_text(fake_notion):
+    """沒種子金額的品項只給文字提示 —— 空 quickReply 會被 LINE 整則退回。"""
+    fake_notion(txns=[])
+
+    reply = cr.handle("記一筆 搭車", _ctx())
+
+    assert isinstance(reply, str)
+    assert "記一筆 搭車" in reply
+
+
+def test_complete_command_is_unchanged(fake_notion):
+    """有帶完整參數時行為照舊，不要因為加按鈕改掉主要路徑。"""
+    fake = fake_notion()
+
+    reply = cr.handle("記一筆 午餐 120", _ctx())
+
+    assert isinstance(reply, str)
+    assert "已記錄" in reply
+    assert len(fake.added) == 1
+
+
+def test_reply_shows_category(fake_notion):
+    fake_notion()
+
+    reply = cr.handle("記一筆 午餐 120", _ctx())
+
+    assert "餐飲" in reply
+
+
+def test_income_still_detected(fake_notion):
+    fake = fake_notion()
+
+    cr.handle("記一筆 薪水 50000", _ctx())
+
+    assert fake.added[0]["direction"] == "收入"
+
+
+def test_falls_back_to_text_when_notion_down(fake_notion):
+    fake_notion(configured=False)
+
+    reply = cr.handle("記一筆", _ctx())
+
+    assert isinstance(reply, str) and "記一筆" in reply
+
+
+def test_write_failure_is_readable(fake_notion):
+    fake_notion(write_ok=False)
+
+    reply = cr.handle("記一筆 午餐 120", _ctx())
+
+    assert isinstance(reply, str) and "失敗" in reply
+
+
+def test_bare_command_still_explains_typed_form(fake_notion):
+    """按鈕只能點常見的，特殊金額還是要打字 —— 用法不能消失。"""
+    fake_notion(txns=[_txn("午餐", 120)])
+
+    reply = cr.handle("記一筆", _ctx())
+
+    assert "記一筆" in reply["text"]
