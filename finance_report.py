@@ -276,6 +276,57 @@ def frequent_expense_items(txns, limit=6, pad=True):
     return out
 
 
+# 種子金額：該品項還沒有歷史時的按鈕。記過幾次之後就由真實資料接手。
+# 沒列在這裡的品項（使用者自己打的「搭車」）回空 list，呼叫端只給文字提示。
+_SEED_AMOUNTS = {
+    "早餐": [50, 60, 80],
+    "午餐": [100, 120, 150],
+    "晚餐": [120, 150, 200],
+    "咖啡": [55, 65, 85],
+    "飲料": [35, 50, 60],
+    "點心": [40, 50, 80],
+}
+
+
+def frequent_amounts(txns, item, limit=5, pad=True):
+    """某個品項的常用金額，記過越多次的排前面。
+
+    依品項分別統計：共用一份全域金額清單會讓咖啡的按鈕上出現 200 元。
+    與 frequent_expense_items 一樣只看 source == "手動"。
+
+    整數金額回 int，否則按鈕上會出現「120.0」。
+    """
+    key = (item or "").strip()
+    if not key:
+        return []
+
+    counts = {}
+    order = []
+    for t in txns or []:
+        if (t.get("source") or "") != "手動":
+            continue
+        if (t.get("shop") or "").strip() != key:
+            continue
+        amount = t.get("amount")
+        if amount is None:
+            continue
+        amount = int(amount) if float(amount) == int(amount) else amount
+        if amount not in counts:
+            order.append(amount)
+        counts[amount] = counts.get(amount, 0) + 1
+
+    ranked = sorted(order, key=lambda a: (-counts[a], order.index(a)))
+    out = ranked[:limit]
+
+    if pad:
+        for amount in _SEED_AMOUNTS.get(key, []):
+            if len(out) >= limit:
+                break
+            if amount not in counts:
+                out.append(amount)
+    return out
+
+
 # ─────────────────────────────────────────────────────────
 # 最近一天消費（每日推播用）
 # ─────────────────────────────────────────────────────────

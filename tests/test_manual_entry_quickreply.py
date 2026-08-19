@@ -105,3 +105,61 @@ def test_frequent_items_respects_limit():
     txns = [_txn(f"品項{i}", 100) for i in range(20)]
 
     assert len(fr.frequent_expense_items(txns, limit=6)) == 6
+
+
+# ── 常用金額 ─────────────────────────────────────────────
+
+def test_amounts_rank_by_count():
+    txns = [_txn("午餐", 120), _txn("午餐", 120), _txn("午餐", 100)]
+
+    assert fr.frequent_amounts(txns, "午餐", limit=5, pad=False) == [120, 100]
+
+
+def test_amounts_are_per_item():
+    """共用一份全域金額清單會讓咖啡的按鈕上出現 200 元。"""
+    txns = [_txn("午餐", 120), _txn("咖啡", 55)]
+
+    assert fr.frequent_amounts(txns, "咖啡", limit=5, pad=False) == [55]
+
+
+def test_amounts_ignore_auto_synced():
+    txns = [_txn("午餐", 999, source="國泰消費彙整"), _txn("午餐", 120)]
+
+    assert fr.frequent_amounts(txns, "午餐", limit=5, pad=False) == [120]
+
+
+def test_amounts_pad_with_seeds():
+    """第一天沒歷史，金額按鈕不能是空的。"""
+    assert fr.frequent_amounts([], "午餐") == [100, 120, 150]
+
+
+def test_seeds_never_duplicate_history():
+    txns = [_txn("午餐", 120)]
+
+    out = fr.frequent_amounts(txns, "午餐")
+
+    assert out[0] == 120
+    assert out.count(120) == 1
+
+
+def test_unknown_item_has_no_seed_amounts():
+    """使用者自己打的品項沒有種子金額 —— 呼叫端要據此不放 quickReply，
+    空的 quickReply 物件會被 LINE 當格式錯誤整則退回。"""
+    assert fr.frequent_amounts([], "搭車") == []
+
+
+def test_unknown_item_still_learns_from_history():
+    txns = [_txn("搭車", 30), _txn("搭車", 30), _txn("搭車", 45)]
+
+    assert fr.frequent_amounts(txns, "搭車") == [30, 45]
+
+
+def test_blank_item_returns_empty():
+    assert fr.frequent_amounts([_txn("午餐", 120)], "") == []
+
+
+def test_amounts_are_ints_when_whole():
+    """按鈕 label 不要出現 120.0。"""
+    txns = [_txn("午餐", 120.0)]
+
+    assert fr.frequent_amounts(txns, "午餐", pad=False) == [120]
