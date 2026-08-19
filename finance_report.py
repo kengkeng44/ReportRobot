@@ -172,6 +172,22 @@ def format_net_worth(snapshots):
 
 _AMOUNT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:元|塊)?")
 
+# 認得的餐飲品項。用子字串比對而非完全相等：手打時常是「跟同事吃午餐」
+# 這種句子，只認兩個字的話大多數手打紀錄都會落到「其他」。
+# 已知取捨：「咖啡機」會被判成餐飲。發生率遠低於前者，接受。
+_FOOD_HINTS = ("早餐", "午餐", "晚餐", "咖啡", "飲料", "點心", "宵夜", "下午茶")
+
+
+def guess_category(shop):
+    """品項 → 消費類別。認不出來回「其他」，不自創類別。
+
+    類別沿用國泰帳單自帶分類（notion_db._SPEND_CATEGORIES）。國泰沒有
+    「交通」，所以「搭車」記成「其他」—— 增生分類會讓 Notion 長出
+    兩套命名系統，之後兩邊都對不起來。
+    """
+    name = (shop or "").strip()
+    return "餐飲" if any(k in name for k in _FOOD_HINTS) else "其他"
+
 
 def make_manual_fingerprint(day, amount, shop):
     raw = f"手動|{day}|{amount}|{shop}"
@@ -205,7 +221,7 @@ def parse_manual(text, today=None):
         "date": day,
         "amount": amount,
         "shop": shop,
-        "category": "其他",
+        "category": guess_category(shop),
         "direction": direction,
         "status": "已結帳",          # 手動輸入就是最終金額，不需要對帳
         "source": "手動",
