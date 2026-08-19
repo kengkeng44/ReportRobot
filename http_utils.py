@@ -46,7 +46,8 @@ def _on_exhausted(retry_state):
             "module": "http_utils",
             "function": fn,
             "extra": f"url={url_hint} attempts={retry_state.attempt_number}",
-        })
+        }, confirm_first=True)  # 連線逾時多半下一輪就自己好了，抖一下不值得推播
+
     except Exception:
         pass  # 通知失敗也不能讓重試結果被吃掉
     raise exc
