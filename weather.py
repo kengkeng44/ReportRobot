@@ -42,6 +42,19 @@ OWM_API_KEY = _env("OWM_API_KEY")
 ANTHROPIC_API_KEY = _env("ANTHROPIC_API_KEY")
 WEATHER_LOCATIONS = _env_list("WEATHER_LOCATIONS")
 
+
+def _env_list_or(name, default):
+    """有設就用設定值，沒設就用預設。_env_list 在缺 config 屬性時會炸，這裡吞掉。"""
+    try:
+        return _env_list(name) or default
+    except (ImportError, AttributeError):
+        return default
+
+
+# 個人版推播的天氣地點（群組版仍用 WEATHER_LOCATIONS）。
+# 板橋和淡水、金山同屬新北市，共用 F-D0047-071 這支鄉鎮預報，不用換資料集。
+PERSONAL_WEATHER_LOCATIONS = _env_list_or("PERSONAL_WEATHER_LOCATIONS", ["板橋區"])
+
 # 嘗試使用中文字體
 def get_chinese_font():
     """找到可用的中文字體（fallback_to_default=False 才不會被 mpl 偷偷塞 DejaVu Sans）"""
@@ -77,16 +90,21 @@ def _extract_element_value(ev_list):
     return ''
 
 
-def get_cwa_weather():
+def get_cwa_weather(locations=None):
     """
-    主：新北市鄉鎮逐 3 小時預報 F-D0047-071，直接用 LocationName 篩淡水區、金山區。
+    主：新北市鄉鎮逐 3 小時預報 F-D0047-071，直接用 LocationName 篩要的行政區。
     使用 v1 REST API 新版大寫欄位（LocationName / WeatherElement / ElementName / Time / ElementValue）。
+
+    locations 不給就用 WEATHER_LOCATIONS（群組版）；個人版傳 PERSONAL_WEATHER_LOCATIONS。
     """
+    # 用 wanted 而不是沿用 locations：下面 API 回傳的地點清單也叫 locations，
+    # 同名會在中途被蓋掉，變成「傳了板橋卻拿到淡水金山」且不會報錯
+    wanted = locations or WEATHER_LOCATIONS
     try:
         url = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-D0047-071"
         params = {
             "Authorization": CWA_API_KEY,
-            "LocationName": ",".join(WEATHER_LOCATIONS),
+            "LocationName": ",".join(wanted),
             # 省略 ElementName — F-D0047-071 的正確欄位是「平均溫度/最高溫度/最低溫度/
             # 平均相對濕度/最高體感溫度/最低體感溫度/風速/風向/12小時降雨機率/天氣現象/天氣預報綜合描述」等，
             # 不帶參數就一次拿全部，避免名稱不符被 CWA 靜默丟掉。
@@ -105,7 +123,7 @@ def get_cwa_weather():
         results = {}
         for loc in locations:
             name = loc.get('LocationName') or loc.get('locationName', '')
-            if name not in WEATHER_LOCATIONS:
+            if name not in wanted:
                 continue
             elements = {}
             for elem in (loc.get('WeatherElement') or loc.get('weatherElement') or []):
@@ -129,11 +147,12 @@ def get_cwa_weather():
         return {}
 
 
-def get_cwa_weather_fallback():
+def get_cwa_weather_fallback(locations=None):
     """
-    備用：F-C0032-001（36小時預報）— 只有縣市層級，新北市共用給淡水、金山。
+    備用：F-C0032-001（36小時預報）— 只有縣市層級，新北市共用給所有行政區。
     回傳結構跟主方案一致，方便下游共用。
     """
+    wanted = locations or WEATHER_LOCATIONS
     try:
         url = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001"
         params = {"Authorization": CWA_API_KEY, "locationName": "新北市"}
@@ -158,23 +177,25 @@ def get_cwa_weather_fallback():
                 })
             elements[elem_name] = time_data
 
-        # 新北市的預報同時套用到淡水、金山兩個顯示名稱
-        results = {name: elements for name in WEATHER_LOCATIONS}
+        # 新北市的預報同時套用到要顯示的每個行政區
+        results = {name: elements for name in wanted}
         print(f"CWA F-C0032-001 備用成功，共用給 {list(results.keys())}")
         return results
     except Exception as e:
         print(f"CWA F-C0032-001 備用也失敗：{e}")
         return {}
 
-def get_owm_weather():
-    """抓 OpenWeatherMap 天氣"""
+def get_owm_weather(locations=None):
+    """抓 OpenWeatherMap 天氣。座標查不到的地點就只靠中央氣象署那份。"""
+    wanted = locations or WEATHER_LOCATIONS
     coords = {
         "淡水區": {"lat": 25.1692, "lon": 121.4418},
         "金山區": {"lat": 25.2025, "lon": 121.6418},
+        "板橋區": {"lat": 25.0143, "lon": 121.4672},
     }
     results = {}
     for name, coord in coords.items():
-        if name not in WEATHER_LOCATIONS:
+        if name not in wanted:
             continue
         try:
             url = "https://api.openweathermap.org/data/2.5/forecast"
@@ -400,13 +421,18 @@ def get_local_events(locations):
         return ""
 
 
-def get_weather_report():
-    """取得完整天氣報告（文字 + 圖片路徑）"""
-    cwa_data = get_cwa_weather()
+def get_weather_report(locations=None):
+    """取得完整天氣報告（文字 + 圖片路徑）。
+
+    locations 不給就用 WEATHER_LOCATIONS（群組版：淡水、金山）；
+    個人版傳 PERSONAL_WEATHER_LOCATIONS（板橋）。
+    """
+    wanted = locations or WEATHER_LOCATIONS
+    cwa_data = get_cwa_weather(wanted)
     if not cwa_data:
         print("詳細預報（F-D0047-071）沒資料，改用 36 小時備用預報（F-C0032-001）")
-        cwa_data = get_cwa_weather_fallback()
-    owm_data = get_owm_weather()
+        cwa_data = get_cwa_weather_fallback(wanted)
+    owm_data = get_owm_weather(wanted)
 
     # 畫折線圖（只有詳細預報含逐 3 小時溫度才能畫）
     chart_path = None
@@ -428,7 +454,7 @@ def get_weather_report():
         date=today,
         cwa_data=str(cwa_data)[:3000],
         owm_data=str(owm_data)[:1500],
-        locations="、".join(WEATHER_LOCATIONS)
+        locations="、".join(wanted)
     )
 
     try:
@@ -447,7 +473,7 @@ def get_weather_report():
         weather_text = "天氣資料暫時無法取得"
 
     # 接在「今日重點提醒」之後加「📅 近期活動」；AI 回「無」就整段不顯示
-    events = get_local_events(WEATHER_LOCATIONS)
+    events = get_local_events(wanted)
     if events and events.strip() not in ("", "無", "無。", "無.", "無\n"):
         weather_text = f"{weather_text}\n\n📅 近期活動\n{events}"
 
