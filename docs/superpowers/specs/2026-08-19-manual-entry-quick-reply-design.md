@@ -129,7 +129,25 @@ arg 完整          → 現有寫入邏輯(不動)
 
 ⚠️ **改完必須重跑 `POST /admin/setup-richmenu`**,否則線上選單仍是舊行為。
 
-### 4.5 `tests/test_manual_entry_quickreply.py`(新檔)
+### 4.5 `notion_db.transactions_load()` 補讀「來源」欄
+
+**這是實作前才發現的前置缺口,不補的話 4.1 的學習邏輯拿不到資料。**
+
+- 交易明細 schema 有「來源」select,選項含「手動」
+- `transaction_add()` 有寫入 `_prop_select(txn.get("source"))`
+- **但 `transactions_load()` 的 `out.append({...})` 沒有讀回來**
+
+也就是說來源寫得進去、讀不出來。這本身就是個既有缺陷:任何想區分
+「自動同步 vs 手動記帳」的功能都做不到,而且不會報錯,只會安靜地
+拿到 `None`。
+
+補一行:
+
+```python
+"source": _read_select(props, "來源"),
+```
+
+### 4.6 `tests/test_manual_entry_quickreply.py`(新檔)
 
 ## 5. 預設值
 
