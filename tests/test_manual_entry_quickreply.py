@@ -44,3 +44,64 @@ def test_blank_is_other():
 def test_parse_manual_uses_guessed_category():
     assert fr.parse_manual("午餐 120")["category"] == "餐飲"
     assert fr.parse_manual("搭車 30")["category"] == "其他"
+
+
+# ── 常記品項 ─────────────────────────────────────────────
+
+def test_frequent_items_ranks_by_count():
+    txns = [_txn("午餐", 120), _txn("午餐", 100), _txn("午餐", 150),
+            _txn("咖啡", 55), _txn("咖啡", 65),
+            _txn("搭車", 30)]
+
+    assert fr.frequent_expense_items(txns, limit=3, pad=False) == [
+        "午餐", "咖啡", "搭車"]
+
+
+def test_frequent_items_ignores_auto_synced():
+    """信用卡同步的店名放按鈕上沒意義，還會被 LINE 截成半截。"""
+    txns = [_txn("全聯福利中心－板橋板新", 361, source="國泰消費彙整"),
+            _txn("全聯福利中心－板橋板新", 210, source="國泰消費彙整"),
+            _txn("午餐", 120)]
+
+    assert fr.frequent_expense_items(txns, limit=6, pad=False) == ["午餐"]
+
+
+def test_frequent_items_ties_keep_first_seen_order():
+    """同次數時位置要穩定：按鈕每次都在跳比排序不準更難用。"""
+    txns = [_txn("咖啡", 55), _txn("午餐", 120)]
+
+    assert fr.frequent_expense_items(txns, limit=6, pad=False) == ["咖啡", "午餐"]
+
+
+def test_frequent_items_ignores_blank_names():
+    txns = [_txn("", 100), _txn("   ", 100), _txn("午餐", 120)]
+
+    assert fr.frequent_expense_items(txns, limit=6, pad=False) == ["午餐"]
+
+
+def test_frequent_items_pads_with_defaults():
+    """第一天沒歷史，給空按鈕列等於這個功能不存在。"""
+    assert fr.frequent_expense_items([], limit=6) == [
+        "午餐", "晚餐", "早餐", "咖啡", "飲料", "點心"]
+
+
+def test_padding_never_duplicates_history():
+    txns = [_txn("咖啡", 55)]
+
+    out = fr.frequent_expense_items(txns, limit=6)
+
+    assert out[0] == "咖啡"
+    assert out.count("咖啡") == 1
+    assert len(out) == 6
+
+
+def test_history_always_outranks_padding():
+    txns = [_txn("搭車", 30)]
+
+    assert fr.frequent_expense_items(txns, limit=6)[0] == "搭車"
+
+
+def test_frequent_items_respects_limit():
+    txns = [_txn(f"品項{i}", 100) for i in range(20)]
+
+    assert len(fr.frequent_expense_items(txns, limit=6)) == 6

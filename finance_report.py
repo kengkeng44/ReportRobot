@@ -230,6 +230,53 @@ def parse_manual(text, today=None):
 
 
 # ─────────────────────────────────────────────────────────
+# 記帳 Quick Reply 的按鈕內容
+#
+# 兩段式：先跳品項、再跳該品項的金額。純邏輯，不碰 Notion 也不碰 LINE。
+# ─────────────────────────────────────────────────────────
+
+# 沒有記帳歷史時的預設按鈕。用一陣子後會被真實習慣取代。
+_DEFAULT_ITEMS = ["午餐", "晚餐", "早餐", "咖啡", "飲料", "點心"]
+
+
+def frequent_expense_items(txns, limit=6, pad=True):
+    """常記品項：手動記過越多次的排前面。
+
+    只看 source == "手動"。交易明細裡混著信用卡自動同步的資料，商店名
+    長這樣「全聯福利中心－板橋板新」—— 放到按鈕上沒有意義，而且 LINE 的
+    label 上限 20 字會把它截成半截店名。
+
+    同次數保持第一次出現的順序：每次跳出來的按鈕位置都在動，比排序不準
+    更難用。（與 kitchen.frequent_items 同一套理由，過濾條件不同故各自實作。）
+
+    pad=True 時用 _DEFAULT_ITEMS 補到 limit：沒歷史就給空按鈕列，
+    等於這個功能第一天不存在。
+    """
+    counts = {}
+    order = []
+    for t in txns or []:
+        if (t.get("source") or "") != "手動":
+            continue
+        name = (t.get("shop") or "").strip()
+        if not name:
+            continue
+        if name not in counts:
+            order.append(name)
+        counts[name] = counts.get(name, 0) + 1
+
+    ranked = sorted(order, key=lambda n: (-counts[n], order.index(n)))
+    out = ranked[:limit]
+
+    if pad:
+        for name in _DEFAULT_ITEMS:
+            if len(out) >= limit:
+                break
+            if name not in counts:
+                out.append(name)
+    return out
+
+
+# ─────────────────────────────────────────────────────────
 # 最近一天消費（每日推播用）
 # ─────────────────────────────────────────────────────────
 
