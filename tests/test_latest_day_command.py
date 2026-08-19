@@ -117,7 +117,20 @@ def test_carousel_no_longer_accepts_spending_text():
     assert "spending_text" not in params
 
 
-def test_daily_report_no_longer_fetches_spending():
-    import daily_report
+def test_group_push_never_carries_spending():
+    """群組推播看不到財務。
 
-    assert not hasattr(daily_report, "_spending_recent")
+    2026-08-19 之前這裡斷言 daily_report 沒有 _spending_recent 屬性,
+    但個人版(推到本人 1 對 1)把消費加回來了,那個函式又存在了 ——
+    群組依然看不到財務,意圖完全沒被違反,測試卻會紅。
+
+    斷言實作細節(某函式不准存在)擋不住真正的錯誤,卻擋得住合法的改動。
+    改成守真正的那條線:群組版的卡片組裝函式結構上就收不了消費。
+    個人版有沒有正確帶到消費,測在 test_personal_report.py。
+    """
+    import inspect
+
+    import flex_builder
+
+    params = inspect.signature(flex_builder.daily_report_carousel).parameters
+    assert not [p for p in params if "spend" in p.lower()]
