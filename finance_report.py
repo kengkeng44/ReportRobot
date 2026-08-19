@@ -172,6 +172,22 @@ def format_net_worth(snapshots):
 
 _AMOUNT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:元|塊)?")
 
+# 認得的餐飲品項。用子字串比對而非完全相等：手打時常是「跟同事吃午餐」
+# 這種句子，只認兩個字的話大多數手打紀錄都會落到「其他」。
+# 已知取捨：「咖啡機」會被判成餐飲。發生率遠低於前者，接受。
+_FOOD_HINTS = ("早餐", "午餐", "晚餐", "咖啡", "飲料", "點心", "宵夜", "下午茶")
+
+
+def guess_category(shop):
+    """品項 → 消費類別。認不出來回「其他」，不自創類別。
+
+    類別沿用國泰帳單自帶分類（notion_db._SPEND_CATEGORIES）。國泰沒有
+    「交通」，所以「搭車」記成「其他」—— 增生分類會讓 Notion 長出
+    兩套命名系統，之後兩邊都對不起來。
+    """
+    name = (shop or "").strip()
+    return "餐飲" if any(k in name for k in _FOOD_HINTS) else "其他"
+
 
 def make_manual_fingerprint(day, amount, shop):
     raw = f"手動|{day}|{amount}|{shop}"
@@ -205,12 +221,110 @@ def parse_manual(text, today=None):
         "date": day,
         "amount": amount,
         "shop": shop,
-        "category": "其他",
+        "category": guess_category(shop),
         "direction": direction,
         "status": "已結帳",          # 手動輸入就是最終金額，不需要對帳
         "source": "手動",
         "fingerprint": make_manual_fingerprint(day, amount, shop),
     }
+
+
+# ─────────────────────────────────────────────────────────
+# 記帳 Quick Reply 的按鈕內容
+#
+# 兩段式：先跳品項、再跳該品項的金額。純邏輯，不碰 Notion 也不碰 LINE。
+# ─────────────────────────────────────────────────────────
+
+# 沒有記帳歷史時的預設按鈕。用一陣子後會被真實習慣取代。
+_DEFAULT_ITEMS = ["午餐", "晚餐", "早餐", "咖啡", "飲料", "點心"]
+
+
+def frequent_expense_items(txns, limit=6, pad=True):
+    """常記品項：手動記過越多次的排前面。
+
+    只看 source == "手動"。交易明細裡混著信用卡自動同步的資料，商店名
+    長這樣「全聯福利中心－板橋板新」—— 放到按鈕上沒有意義，而且 LINE 的
+    label 上限 20 字會把它截成半截店名。
+
+    同次數保持第一次出現的順序：每次跳出來的按鈕位置都在動，比排序不準
+    更難用。（與 kitchen.frequent_items 同一套理由，過濾條件不同故各自實作。）
+
+    pad=True 時用 _DEFAULT_ITEMS 補到 limit：沒歷史就給空按鈕列，
+    等於這個功能第一天不存在。
+    """
+    counts = {}
+    order = []
+    for t in txns or []:
+        if (t.get("source") or "") != "手動":
+            continue
+        name = (t.get("shop") or "").strip()
+        if not name:
+            continue
+        if name not in counts:
+            order.append(name)
+        counts[name] = counts.get(name, 0) + 1
+
+    ranked = sorted(order, key=lambda n: (-counts[n], order.index(n)))
+    out = ranked[:limit]
+
+    if pad:
+        for name in _DEFAULT_ITEMS:
+            if len(out) >= limit:
+                break
+            if name not in counts:
+                out.append(name)
+    return out
+
+
+# 種子金額：該品項還沒有歷史時的按鈕。記過幾次之後就由真實資料接手。
+# 沒列在這裡的品項（使用者自己打的「搭車」）回空 list，呼叫端只給文字提示。
+_SEED_AMOUNTS = {
+    "早餐": [50, 60, 80],
+    "午餐": [100, 120, 150],
+    "晚餐": [120, 150, 200],
+    "咖啡": [55, 65, 85],
+    "飲料": [35, 50, 60],
+    "點心": [40, 50, 80],
+}
+
+
+def frequent_amounts(txns, item, limit=5, pad=True):
+    """某個品項的常用金額，記過越多次的排前面。
+
+    依品項分別統計：共用一份全域金額清單會讓咖啡的按鈕上出現 200 元。
+    與 frequent_expense_items 一樣只看 source == "手動"。
+
+    整數金額回 int，否則按鈕上會出現「120.0」。
+    """
+    key = (item or "").strip()
+    if not key:
+        return []
+
+    counts = {}
+    order = []
+    for t in txns or []:
+        if (t.get("source") or "") != "手動":
+            continue
+        if (t.get("shop") or "").strip() != key:
+            continue
+        amount = t.get("amount")
+        if amount is None:
+            continue
+        amount = int(amount) if float(amount) == int(amount) else amount
+        if amount not in counts:
+            order.append(amount)
+        counts[amount] = counts.get(amount, 0) + 1
+
+    ranked = sorted(order, key=lambda a: (-counts[a], order.index(a)))
+    out = ranked[:limit]
+
+    if pad:
+        for amount in _SEED_AMOUNTS.get(key, []):
+            if len(out) >= limit:
+                break
+            if amount not in counts:
+                out.append(amount)
+    return out
 
 
 # ─────────────────────────────────────────────────────────

@@ -118,7 +118,8 @@ HELP_TEXT = (
     "💳 財務（1 對 1 才能用）\n"
     "  • 本月支出 / 最近交易 / 卡費 / 淨值\n"
     "  • 最新消費   ← 最新一天的明細 + 本月累計（原本在每日推播，已改成用問的）\n"
-    "  • 記一筆 午餐 120     ← 手動記帳\n"
+    "  • 記一筆        ← 只打三個字會跳常記品項，再點金額，兩下記完\n"
+    "  • 記一筆 午餐 120     ← 直接打也可以\n"
     "  • 記一筆 薪水 50000   ← 含薪水/獎金/退款會記成收入\n"
     "  信用卡消費每天 15:30 自動同步進 Notion\n"
     "\n"
@@ -735,6 +736,62 @@ _MANUAL_USAGE = (
     "金額一定要有。含「薪水、獎金、退款」等字會自動記成收入。"
 )
 
+_MANUAL_QUICK_HINT = (
+    "要記什麼?點下面常記的,或直接打:\n"
+    "記一筆 午餐 120\n\n"
+    "含「薪水、獎金、退款」等字會記成收入。"
+)
+
+
+def _manual_item_quick_reply():
+    """「記一筆」不帶參數 → 常記品項按鈕。Notion 掛掉就退回用法說明。"""
+    import finance_report
+    import notion_db
+    from flex_builder import quick_reply_text
+
+    if not notion_db.is_configured():
+        return _MANUAL_USAGE
+
+    try:
+        txns = notion_db.transactions_load()
+    except Exception as e:
+        print(f"常記品項載入失敗:{e}")
+        return _MANUAL_USAGE
+
+    names = finance_report.frequent_expense_items(txns)
+    if not names:
+        return _MANUAL_USAGE
+    return quick_reply_text(_MANUAL_QUICK_HINT,
+                            [(n, f"記一筆 {n}") for n in names])
+
+
+def _manual_amount_quick_reply(item):
+    """「記一筆 午餐」→ 常用金額按鈕。
+
+    沒有可用金額(使用者自己打的品項且無歷史)就只回文字提示 ——
+    空的 quickReply 物件會被 LINE 當格式錯誤,整則訊息退回。
+    """
+    import finance_report
+    import notion_db
+    from flex_builder import quick_reply_text
+
+    hint = f"{item} 多少錢?點下面的,或直接打:\n記一筆 {item} 95"
+
+    if not notion_db.is_configured():
+        return hint
+
+    try:
+        txns = notion_db.transactions_load()
+    except Exception as e:
+        print(f"常用金額載入失敗:{e}")
+        return hint
+
+    amounts = finance_report.frequent_amounts(txns, item)
+    if not amounts:
+        return hint
+    return quick_reply_text(hint,
+                            [(str(a), f"記一筆 {item} {a}") for a in amounts])
+
 
 def _handle_finance(kind, arg):
     """財務分頁的五個功能。Notion 掛掉時回可讀訊息，不丟例外。"""
@@ -743,14 +800,16 @@ def _handle_finance(kind, arg):
 
     if kind == "fin_manual":
         if not arg:
-            return _MANUAL_USAGE
+            return _manual_item_quick_reply()
         txn = finance_report.parse_manual(arg)
         if not txn:
-            return "看不出金額。" + _MANUAL_USAGE
+            # 有品項沒金額 —— 這是兩段式的第二段，不是錯誤
+            return _manual_amount_quick_reply(arg.strip())
         if not notion_db.transaction_add(txn):
             return "寫入 Notion 失敗,請稍後再試。"
         sign = "+" if txn["direction"] == "收入" else "-"
-        return f"✅ 已記錄:{txn['shop']}　{sign}NT${txn['amount']:,}"
+        return (f"✅ 已記錄:{txn['shop']}　{sign}NT${txn['amount']:,}"
+                f"（{txn['category']}）")
 
     if kind == "fin_spending":
         from tz_utils import today_tpe
