@@ -318,3 +318,27 @@ def test_bare_command_still_explains_typed_form(fake_notion):
     reply = cr.handle("記一筆", _ctx())
 
     assert "記一筆" in reply["text"]
+
+
+# ── Rich Menu ────────────────────────────────────────────
+
+def test_record_cell_sends_bare_command():
+    """選單的「記一筆」要送裸指令才會跳品項按鈕；prompt 只會開鍵盤。"""
+    import setup_richmenu as rm
+
+    cells = rm.MENUS["finance"]["cells"]
+    kind, param = next(c[3] for c in cells if c[0] == "記一筆")
+
+    assert (kind, param) == ("message", "記一筆")
+    assert cr.parse(param) == ("fin_manual", None)
+
+
+def test_record_cell_does_not_fall_through_to_paid_ai():
+    """裸指令沒被 command_router 認得會掉進 free_query —— 按一次付一次
+    Anthropic 的錢，而且不會壞、不會有紅字（HANDOFF 4.4）。"""
+    import setup_richmenu as rm
+
+    cells = rm.MENUS["finance"]["cells"]
+    _, param = next(c[3] for c in cells if c[0] == "記一筆")
+
+    assert cr.parse(param)[0] != "free_query"

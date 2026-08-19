@@ -113,8 +113,12 @@ def test_input_needing_cells_use_prompt_not_message():
 
     「買了」不在這裡：它送出去會回一排常買清單 quick reply，點一下就完成，
     是刻意的 message 而不是 prompt（見 test_buy_cell_sends_bare_command）。
+
+    「記一筆」在 2026-08-19 之後也退出這份名單，理由相同：它現在會回一排
+    常記品項，點完再點金額，兩下記完，中間不必打字
+    （見 test_manual_entry_quickreply.test_record_cell_sends_bare_command）。
     """
-    needs_input = {"記一筆", "查個股"}
+    needs_input = {"查個股"}
     for menu in rm.MENUS.values():
         for label, _s, _c, (kind, _p) in menu["cells"]:
             if label in needs_input:
