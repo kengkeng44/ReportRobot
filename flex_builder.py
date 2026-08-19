@@ -496,6 +496,65 @@ def daily_report_carousel(extra_text, weather_text, premarket_text, today_str,
     )
 
 
+def personal_report_carousel(today_str, weather_text=None, kitchen_text=None,
+                             kitchen_items=None, kitchen_more=0,
+                             spending_text=None):
+    """個人版每日推播（推到本人 1 對 1，不是群組）。
+
+    順序：食材提醒 → 天氣 → 最新消費。全部缺回 None。
+
+    跟群組版 daily_report_carousel 的差別：
+    - 天氣是板橋（群組版是淡水、金山）
+    - 有消費明細 —— 財務只給自己看，不進群組
+    - 沒有今日一則與盤前，那兩段群組版已經有了
+
+    天氣抓不到時整張卡不放，不像群組版會放一張「暫時無法取得」——
+    群組版那張是為了讓推播看起來沒缺角，個人版寧可安靜。
+    """
+    bubbles = []
+
+    # 排最前面：有時效、今天就要動手
+    if kitchen_items:
+        bubbles.append(kitchen_reminder_bubble(
+            kitchen_items,
+            subtitle=today_str,
+            extra_text=kitchen_text or "",
+            more_count=kitchen_more,
+        ))
+    elif kitchen_text:
+        bubbles.append(text_bubble(
+            title="🥬 食材提醒",
+            subtitle=today_str,
+            body=kitchen_text,
+            header_color="#6F9A62",
+        ))
+
+    if weather_text:
+        bubbles.append(text_bubble(
+            title="🌤️ 天氣報告",
+            subtitle=today_str,
+            body=weather_text,
+            header_color=_BROWN,
+        ))
+
+    if spending_text:
+        bubbles.append(text_bubble(
+            title="💳 最新消費",
+            subtitle=today_str,
+            body=spending_text,
+            header_color=_ORANGE,
+        ))
+
+    if not bubbles:
+        return None
+    if len(bubbles) == 1:
+        return _wrap(bubbles[0], alt="📅 我的每日情報")
+    return _wrap(
+        {"type": "carousel", "contents": bubbles},
+        alt=f"📅 我的每日情報（{today_str}）",
+    )
+
+
 # ════════════════════════════════════════
 # 個股報告 carousel（把 stock_news.get_stock_report 字串轉成多 bubble 橫滑）
 # ════════════════════════════════════════
