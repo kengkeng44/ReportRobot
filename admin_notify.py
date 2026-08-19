@@ -17,11 +17,23 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 
-_THROTTLE_WINDOW = timedelta(minutes=5)
+# 第一次失敗後多久內再失敗，才算「真的壞了」而不是網路抖一下。
+# alerts_loop 每 5 分鐘跑一次，所以這個窗口至少要容得下 2-3 輪。
+_CONFIRM_WINDOW = timedelta(minutes=15)
+# 通知過之後安靜多久。務必 > 呼叫端的輪詢間隔，否則等於沒有節流 ——
+# 原本這裡是 5 分鐘、alerts_loop 也是 5 分鐘，CWA 掛一小時就推了 12 則。
+_SILENCE_WINDOW = timedelta(minutes=30)
+
 _LOCK = threading.Lock()
-_LAST_NOTIFIED = {}  # 錯誤 key → 上次通知時間（UTC）
+# 錯誤 key → {"first": 首次發現, "notified": 上次通知時間 or None}
+_STATE = {}
 
 _TPE = timezone(timedelta(hours=8))
+
+
+def _now():
+    """抽成函式是為了讓測試能把時間釘住。"""
+    return datetime.now(timezone.utc)
 
 
 def _env(name):
@@ -39,23 +51,51 @@ def _admin_user_id():
     return _env("ADMIN_LINE_USER_ID")
 
 
-def _should_notify(key):
-    """同一個 key 在 _THROTTLE_WINDOW 內只放行一次。回 True = 應通知。"""
-    now = datetime.now(timezone.utc)
+def _should_notify(key, confirm_first=False):
+    """這次要不要真的推通知。回 True = 應通知。
+
+    confirm_first=True（高頻背景輪詢，例如 http_utils 的連線失敗）：
+        第一次失敗只記錄不吵 —— 連線逾時這種故障通常下一輪就自己好了，
+        為它推一則通知純粹是噪音，而且異常通知本身也吃 LINE 月配額。
+        要在 _CONFIRM_WINDOW 內再失敗一次，才算真的壞掉。
+
+    confirm_first=False（低頻關鍵任務，例如每日推播）：
+        第一次就通知 —— 一天只跑一次的東西，要求「連續兩次」等於明天才告訴你。
+
+    兩者共用 _SILENCE_WINDOW：通知過就安靜一陣子，避免洗版。
+    """
+    now = _now()
     with _LOCK:
-        last = _LAST_NOTIFIED.get(key)
-        if last and (now - last) < _THROTTLE_WINDOW:
+        st = _STATE.get(key)
+
+        if st is None:
+            _STATE[key] = {"first": now, "notified": None if confirm_first else now}
+            return not confirm_first
+
+        if st["notified"] is not None:
+            if now - st["notified"] < _SILENCE_WINDOW:
+                return False
+            st["notified"] = now
+            return True
+
+        # 還在觀察中（只可能是 confirm_first 的路徑）
+        if now - st["first"] > _CONFIRM_WINDOW:
+            # 距離上次抖動已經很久，這是新的一次偶發，重新觀察
+            _STATE[key] = {"first": now, "notified": None}
             return False
-        _LAST_NOTIFIED[key] = now
-    return True
+
+        st["notified"] = now
+        return True
 
 
-def notify_admin(error, context=None):
+def notify_admin(error, context=None, confirm_first=False):
     """
     通知管理員。永不 raise；通知失敗只往 stderr。
 
     error: Exception 物件（或可轉字串的東西）
     context: dict，常見鍵 module / section / function / extra
+    confirm_first: True 表示這是高頻背景輪詢的失敗，要再失敗一次才通知
+                   （見 _should_notify）。一天只跑一次的任務不要開。
     """
     try:
         admin_id = _admin_user_id()
@@ -69,7 +109,7 @@ def notify_admin(error, context=None):
         err_msg = str(error)[:200]
 
         throttle_key = f"{err_type}:{module}:{section}"
-        if not _should_notify(throttle_key):
+        if not _should_notify(throttle_key, confirm_first):
             print(f"[admin_notify] throttled: {throttle_key}", file=sys.stderr)
             return
 
