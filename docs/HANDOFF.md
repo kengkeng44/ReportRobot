@@ -63,7 +63,8 @@
 | 食材提醒的「已用掉」按鈕 | ❌ 沒在 LINE 上按過(23 個單元測試) |
 | 「買了」常買清單 Quick Reply | ❌ 沒在 LINE 上按過(20 個單元測試);選單已於 2026-08-19 重建,按鈕本身生效了 |
 | 「記一筆」兩段式 Quick Reply | ❌ 沒在 LINE 上按過(42 個單元測試);選單已於 2026-08-19 重建,按鈕本身生效了 |
-| 個人版每日報改寄 email | ❌ **沒收到過任何一封**(8 個 mailer 測試 + 流程測試全用假 SMTP);**要先設 `GMAIL_APP_PASSWORD` 才會寄** |
+| 個人版每日報改寄 email | 🟡 `GMAIL_APP_PASSWORD` 已設(env-check `len: 16`),但**還沒收到過任何一封真實信件** —— 測試全用假 SMTP,第一封等 2026-08-25 早上 7 點 |
+| `/admin/env-check` token 保護 | ✅ 生產環境實測:無 token 403、帶 token 200 |
 
 ---
 
@@ -466,9 +467,12 @@ ReportRobot（根頁,NOTION_PARENT_PAGE_ID）
 ## 10. 使用者待辦(需要人工)
 
 - [x] ~~部署後重跑 `POST /admin/setup-richmenu`~~ —— 2026-08-19 已跑,5 張選單全部重建
-- [ ] **申請 Google 應用程式密碼並存進 Infisical `GMAIL_APP_PASSWORD`** —— 個人版每日報
-  已從 LINE 推播改成 email,**沒設這個就是每天早上什麼都收不到**(不會報錯,只印一行 log)。
-  申請:Google 帳號 → 安全性 → 兩步驟驗證 → 應用程式密碼
+- [x] ~~申請 Google 應用程式密碼並存進 Infisical `GMAIL_APP_PASSWORD`~~ —— 2026-08-24 已設,
+  `/admin/env-check` 確認 `len: 16`。**要重拿的話別再照舊路徑找**:
+  App passwords 的入口**已經不在 2-Step Verification 頁面裡**(滑到底也沒有),
+  帳號設定的搜尋框打 `app password` 也只會跑出 Password Manager 跟說明文章。
+  唯一入口是直接貼網址 `https://myaccount.google.com/apppasswords` ——
+  第一次會被踢回首頁要求重新驗證身分,**驗證完再貼一次**就進得去。
 - [ ] 在 LINE 私訊實測「記一筆」→ 點品項 → 點金額
 - [ ] 申請財政部電子發票 AppID(見 4.5,需本人身分驗證,程式端做不到)
 - [ ] 刪除 Notion 持倉裡 `代號=台積電` 的孤兒資料列(程式無權限刪除)
