@@ -10,6 +10,7 @@ import base64
 import hashlib
 import hmac
 import os
+import threading
 from contextlib import asynccontextmanager
 
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
@@ -190,6 +191,20 @@ async def lifespan(app: FastAPI):
         restore_reminders_from_notion(push_to_user_sync)
     except Exception as e:
         print(f"[startup] reminders restore 失敗（非致命）：{e}")
+
+    # Notion schema 收斂：確保 _SCHEMAS 的每個 DB 都存在。
+    # 丟背景 thread 而非同步跑 —— 這會打數十次 Notion API（限流 3 req/s），
+    # 擋在啟動路徑上會拖長 Railway 的健康檢查時間。
+    # 不用 lazy create 是因為它會被上游的提早 return 吃掉（見 notion_db.ensure_all_dbs）。
+    def _ensure_notion_schema():
+        try:
+            import notion_db
+            notion_db.ensure_all_dbs()
+        except Exception as e:
+            print(f"[startup] Notion schema 收斂失敗（非致命）：{e}")
+
+    threading.Thread(target=_ensure_notion_schema,
+                     name="notion-schema-ensure", daemon=True).start()
     yield
     scheduler.shutdown()
 

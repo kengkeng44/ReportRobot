@@ -1,6 +1,6 @@
 # 交接文件 — Notion 財務中心 + 煮飯模板 + 全能大管家
 
-**最後更新:** 2026-08-19
+**最後更新:** 2026-08-25
 **狀態:** 已上線運作,部分功能未經真實使用驗證
 **規格:** `docs/superpowers/specs/2026-08-10-notion-finance-kitchen-design.md`
 
@@ -479,3 +479,99 @@ ReportRobot（根頁,NOTION_PARENT_PAGE_ID）
 - [ ] LINE Official Account Manager 改帳號名稱為「全能大管家」(**無 API 可改**)
 - [ ] 在 LINE 私訊實測煮飯與財務按鈕(這兩塊完全沒被真實使用過)
 - [ ] 考慮把台北富邦設為薪轉戶(目前是郵局,郵局不寄任何電子通知,薪水只能手動記)
+- [ ] **在 Notion 手動刪掉「交易明細」的「帳戶」欄位**(2026-08-25):
+  程式端已移除 relation 定義,但 `_ensure_properties()` 只補不刪,
+  線上那個永遠空的欄位不會自動消失。
+  路徑:交易明細 → 欄位標頭「帳戶」→ 下拉 → Delete property
+- [ ] 部署後確認 Railway log 出現 `[notion] ensure_all_dbs 完成:13/13`,
+  並到 Notion 看「🍳 煮飯模板」底下是否長出食譜 / 本週菜單 / 採購清單
+
+---
+
+## 11. 2026-08-25 Notion 架構健檢
+
+首次比對「程式碼宣稱的架構」與「線上實際存在的架構」。方法是直接用
+Notion API 查每個 DB 的真實筆數,不看程式碼推論。
+
+### 線上實況
+
+| DB | 區塊 | 筆數 | 備註 |
+|---|---|---|---|
+| Todos / Reminders | 根頁 | 0 / 0 | 功能正常,只是沒在用 |
+| LineQuota | 根頁 | 4 | 正常 |
+| 今日一則 | 根頁 | 18 | 正常 |
+| 交易明細 | 財務中心 | 32 | 唯一持續在長的(08-07 ~ 08-22) |
+| 帳戶 | 財務中心 | 0 | 從未寫入 |
+| 持倉 | 財務中心 | 4 | 正常 |
+| 淨值快照 | 財務中心 | 13 | 正常 |
+| 信用卡帳單 | 財務中心 | 0 | 尚未啟用 |
+| 食材庫存 | 煮飯模板 | 0 | 從未使用 |
+| 食譜 / 本週菜單 / 採購清單 | 煮飯模板 | — | **線上根本不存在** |
+
+### 修了什麼
+
+**1. 消費類別 schema drift(最嚴重)**
+`_SPEND_CATEGORIES` 定義 10 個類別,線上實際長出 14 個 ——
+多了「線上付款 / 教育∕學費 / 一般購物 / 家具家飾裝潢」。
+成因:parser 直接採用國泰原字串,而 **Notion 對未定義的 select 值不會報錯,
+會自動擴充選項**。所以沒有任何錯誤訊號,只有報表在安靜漏桶。
+
+修法:白名單補齊成 14 個(顏色對齊線上現況),新增
+`normalize_spend_category()`,**擋在 `transaction_add()` 寫入端**而非
+parser —— 寫入端是唯一 choke point,手動記帳與日後新 parser 一併受保護。
+未知類別歸入「其他」並 print,不再自動長選項。
+
+**2. 帳戶 relation 是空殼**
+`交易明細.帳戶` relation 建了但 `transaction_add()` 從未寫入,32 筆全空;
+`帳戶` DB 本身 0 筆。已從 `_RELATIONS` 移除。
+卡片辨識用既有的「卡末四碼」文字欄即可。
+
+**3. 煮飯模板死鏈(因果鏈值得記住)**
+`食材庫存` 為空 → `daily_report.py` 的 `expiring_soon()` 回空即 `return None`
+→ 永遠走不到 `recipes_load()` → **lazy create 從未被觸發** →
+三個 DB 至今不存在,而且 log 全綠。
+
+注意短路邏輯本身是對的(無庫存本就不該發提醒),病灶在 lazy create。
+修法:新增 `ensure_all_dbs()`,`server.py` 的 lifespan 用背景 thread 跑一次
+(不阻塞啟動,Notion 限流 3 req/s)。
+
+**4. 次要**
+`networth_load()` 未指定 sorts(順序未定義,畫趨勢圖會亂序)已補排序;
+新增 `holdings_load()`(先前只有 `holdings_sync` 能寫,沒有函式能讀)。
+
+### 教訓
+
+- **lazy create + 上游提早 return = 隱形失效**。DB 永遠不會誕生,而且沒有訊號。
+- **Notion 的 select 是開放集合**。寫入未定義值會擴充 schema 而非失敗,
+  所以程式碼裡的常數會慢慢變成謊言。要擋就擋在寫入端。
+- `_ensure_properties()` 只補不刪的設計是對的(保護手動加的欄位,
+  例如「交易明細.月份」formula),但代價是 drift 只會單向累積。
+
+---
+
+## 12. 財務儀表板 `build_dashboard.py`
+
+```bash
+# 產生(需要 Notion 金鑰,金鑰在 Infisical)
+infisical run -- python build_dashboard.py
+
+# 順便留一份原始資料
+infisical run -- python build_dashboard.py --dump-json dashboard_data.json
+
+# 離線重畫,不碰 Notion
+python build_dashboard.py --from-json dashboard_data.json
+```
+
+產出 `dashboard.html` 單檔:資料內嵌成 JSON、圖表手寫 SVG、**無任何外部
+資源請求**,可離線開啟、可直接傳手機。
+
+**`dashboard.html` 與 `dashboard_data.json` 已列入 `.gitignore`** ——
+它們含真實消費紀錄與持倉,而這個 repo 是公開的。
+
+拆成 `collect` / `compute` / `render` 三段:只有 `collect` 碰 Notion,
+後兩段是純函式,所以在沒有金鑰的本機也測得到(`tests/test_build_dashboard.py`)。
+
+頁面明確標註「淨值 = 股票市值」與「狀態全部停在授權中」,
+避免對著不完整的數字做判斷。
+
+不做成 Railway 路由的理由:省掉一整套存取控制,且不替財務資料新增對外入口。

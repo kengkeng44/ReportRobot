@@ -87,12 +87,45 @@ def _select(*names_colors):
     return {"select": {"options": [{"name": n, "color": c} for n, c in names_colors]}}
 
 
-# 消費類別沿用國泰帳單自帶分類，不自創（見 spec 4.1）
+# 消費類別沿用國泰帳單自帶分類，不自創（見 spec 4.1）。
+#
+# 後段四個（線上付款 / 教育∕學費 / 一般購物 / 家具家飾裝潢）是國泰後來
+# 實際送出、被 Notion 自動長出來的選項。2026-08-25 健檢才發現程式碼只認
+# 前九個 —— Notion 遇到未定義的 select 值不會報錯而是擴充 schema，所以
+# 這種偏移完全沒有訊號，只會讓按類別分組的報表安靜地漏桶。
+# 顏色刻意對齊線上現況，避免 _ensure_properties 之後又製造新的差異。
 _SPEND_CATEGORIES = (
     ("餐飲", "orange"), ("超市∕量販", "green"), ("百貨公司", "pink"),
     ("服飾∕鞋∕精品", "purple"), ("家電∕３Ｃ通訊", "blue"), ("旅遊", "yellow"),
-    ("電信服務", "gray"), ("醫療", "red"), ("訂閱服務", "brown"), ("其他", "default"),
+    ("電信服務", "gray"), ("醫療", "red"), ("訂閱服務", "brown"),
+    ("線上付款", "purple"), ("教育∕學費", "gray"), ("一般購物", "orange"),
+    ("家具家飾裝潢", "brown"),
+    ("其他", "default"),
 )
+
+SPEND_CATEGORIES = tuple(name for name, _ in _SPEND_CATEGORIES)
+SPEND_CATEGORY_DEFAULT = "其他"
+
+
+def normalize_spend_category(raw):
+    """把來源給的消費類別收斂到白名單內。認不出來回「其他」並留下訊息。
+
+    擋在寫入端而不是各個 parser 裡：手動記帳與日後新增的資料源都會經過
+    transaction_add，一個關卡就全都保護到。代價是國泰若新增類別會先落入
+    「其他」—— 這是刻意的，看得見的「其他」變多，好過 schema 無聲膨脹。
+    """
+    if not raw:
+        return SPEND_CATEGORY_DEFAULT
+    text = str(raw).strip()
+    if text in SPEND_CATEGORIES:
+        return text
+    # 國泰信件的斜線實測有全形（∕ U+2215）與半形混用，換算後再比一次，
+    # 不要讓一個字元差異把「超市/量販」判成未知類別
+    alt = text.replace("/", "∕")
+    if alt in SPEND_CATEGORIES:
+        return alt
+    print(f"[notion] 未知消費類別「{text}」→ 歸入「{SPEND_CATEGORY_DEFAULT}」")
+    return SPEND_CATEGORY_DEFAULT
 
 _SCHEMAS = {
     "Todos": {
@@ -253,7 +286,10 @@ _SCHEMAS = {
 # relation 必須等目標 DB 存在才能建，所以獨立成第二階段（見 spec 3.1）。
 # 值是「目標 DB 名稱」，會在 _ensure_relations 解析成真實 database_id。
 _RELATIONS = {
-    "交易明細": {"帳戶": "帳戶"},
+    # 「交易明細 → 帳戶」曾經定義在這裡，2026-08-25 移除：transaction_add
+    # 從來沒寫過這欄，帳戶 DB 本身也是 0 筆，等於一個永遠空的欄位。
+    # 卡片辨識已經有「卡末四碼」文字欄可用。
+    # 注意 _ensure_properties 只補不刪 —— 線上那欄要手動移除。
     "信用卡帳單": {"卡片": "帳戶"},
     "食譜": {"所需食材": "食材庫存"},
     "本週菜單": {"食譜": "食譜"},
@@ -451,6 +487,35 @@ def _ensure_relations(db_id, name):
         print(f"[notion] {name} 補上 relation：{list(props)}")
     except Exception as e:
         print(f"[notion] 補 relation 失敗 {name}：{e}")
+
+
+def ensure_all_dbs():
+    """確保 _SCHEMAS 裡每個 DB 都真的存在。回 (成功數, 總數)。
+
+    為什麼需要這支：get_or_create_db 是 lazy 的，只有真的有人要讀寫某個
+    DB 時才會建。這在上游有提早 return 時會失效 —— 2026-08-25 健檢發現
+    食譜 / 本週菜單 / 採購清單 從上線起就不存在，因為食材庫存是空的，
+    daily_report 的 expiring_soon() 一回空就 return，永遠走不到 recipes_load()。
+    整條鏈的 log 全綠，沒有任何人會發現。
+
+    呼叫端負責放到背景執行：這裡會打數十次 Notion API（每個 DB 至少
+    search + retrieve），而 Notion 限流 3 req/s，同步跑會拖慢啟動。
+    """
+    if not is_configured():
+        print("[notion] 未設定，跳過 ensure_all_dbs")
+        return 0, 0
+    ok = 0
+    for name in _SCHEMAS:
+        try:
+            if get_or_create_db(name):
+                ok += 1
+            else:
+                print(f"[notion] ensure_all_dbs：{name} 建立失敗")
+        except Exception as e:
+            # 單一 DB 失敗不該讓其餘的都不建
+            print(f"[notion] ensure_all_dbs：{name} 例外 {e}")
+    print(f"[notion] ensure_all_dbs 完成：{ok}/{len(_SCHEMAS)}")
+    return ok, len(_SCHEMAS)
 
 
 # ─────────────────────────────────────────────────────────
@@ -967,7 +1032,10 @@ def transaction_add(txn):
         "卡末四碼": ({"rich_text": [{"text": {"content": txn["card_last4"]}}]}
                      if txn.get("card_last4") else None),
         "方向": _prop_select(txn.get("direction")),
-        "類別": _prop_select(txn.get("category")),
+        # 正規化擋在這裡，所有來源（國泰、手動記帳、日後新 parser）一併受保護。
+        # 沒帶類別就維持不寫這欄 —— 硬填「其他」會把「不知道」偽裝成「已分類」。
+        "類別": (_prop_select(normalize_spend_category(txn["category"]))
+                 if txn.get("category") else None),
         "商店": {"rich_text": [{"text": {"content": txn.get("shop") or ""}}]},
         "狀態": _prop_select(txn.get("status")),
         "來源": _prop_select(txn.get("source")),
@@ -1062,12 +1130,22 @@ def card_statements_load():
 
 
 def networth_load(limit=30):
+    """撈淨值快照，舊到新。
+
+    必須指定排序：Notion 不給 sorts 時的順序未定義，畫成折線圖會是
+    一團亂麻，而且看起來只像「淨值波動很大」，不像程式有問題。
+    「日期」是 title（YYYY-MM-DD 字串），字典序剛好等於時間序。
+    """
     db_id = get_or_create_db("淨值快照")
     client = _get_client()
     if not db_id or not client:
         return []
     try:
-        res = client.databases.query(database_id=db_id, page_size=limit)
+        res = client.databases.query(
+            database_id=db_id,
+            sorts=[{"property": "日期", "direction": "ascending"}],
+            page_size=limit,
+        )
         out = []
         for r in res.get("results", []):
             props = r.get("properties", {}) or {}
@@ -1144,6 +1222,44 @@ def holdings_sync(rows):
             print(f"[notion] 持倉寫入失敗 {code}：{e}")
 
     return updated, created
+
+
+def holdings_load(limit=100):
+    """讀回持倉。回 list of dict，欄位名對齊 holdings_sync 的輸入。
+
+    原本只有 holdings_sync 能寫、沒有東西讀得回來 —— 每日推播是直接從
+    Gmail 重算的，所以一直沒人發現這個缺口。Dashboard 需要它。
+
+    報酬率在 Notion 存成 percent 格式（1 = 100%），這裡乘回 100 還原成
+    人看的數字，跟 holdings_sync 寫入時除以 100 對稱。
+    """
+    db_id = get_or_create_db("持倉")
+    client = _get_client()
+    if not db_id or not client:
+        return []
+    try:
+        res = client.databases.query(database_id=db_id, page_size=limit)
+        out = []
+        for r in res.get("results", []):
+            props = r.get("properties", {}) or {}
+            pct = _read_number(props, "報酬率")
+            out.append({
+                "ticker": _read_title(props, "代號"),
+                "display": _read_rich_text(props, "名稱"),
+                "market": _read_select(props, "市場"),
+                "shares": _read_number(props, "股數"),
+                "avg": _read_number(props, "平均成本"),
+                "current": _read_number(props, "現價"),
+                "value": _read_number(props, "市值"),
+                "pnl": _read_number(props, "未實現損益"),
+                "pnl_pct": pct * 100 if pct is not None else None,
+            })
+        # 市值大的排前面；沒市值的沉到最後而不是被當成 0 混在中間
+        out.sort(key=lambda r: (r["value"] is None, -(r["value"] or 0)))
+        return out
+    except Exception as e:
+        print(f"[notion] holdings_load 失敗：{e}")
+        return []
 
 
 def networth_upsert(day, cash=None, stock=None, card_due=None, net=None):

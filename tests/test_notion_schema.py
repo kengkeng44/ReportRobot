@@ -126,28 +126,28 @@ def _title_block(name):
 
 def test_create_skips_relation_props_on_first_pass(notion):
     """建立時 properties 不能含 relation —— 目標 DB 當下可能還不存在。"""
-    notion_db.get_or_create_db("交易明細")
+    notion_db.get_or_create_db("信用卡帳單")
 
     created = dict(notion.databases.create_calls)
-    props = created["交易明細"]
-    assert "帳戶" not in props, "relation 欄位不該出現在第一階段 create"
-    assert "金額" in props
+    props = created["信用卡帳單"]
+    assert "卡片" not in props, "relation 欄位不該出現在第一階段 create"
+    assert "應繳總額" in props
 
 
 def test_relation_added_in_second_pass_with_real_db_id(notion):
-    """第二階段用 databases.update 補 relation，且 @帳戶 要被解析成真實 db_id。"""
-    notion_db.get_or_create_db("交易明細")
+    """第二階段用 databases.update 補 relation，且目標要被解析成真實 db_id。"""
+    notion_db.get_or_create_db("信用卡帳單")
 
-    updates = [u for u in notion.databases.update_calls if "帳戶" in u[1]]
-    assert updates, "應該有一次 update 補上『帳戶』relation"
+    updates = [u for u in notion.databases.update_calls if "卡片" in u[1]]
+    assert updates, "應該有一次 update 補上『卡片』relation"
 
     _, props = updates[0]
-    assert props["帳戶"]["relation"]["database_id"] == "db_帳戶"
+    assert props["卡片"]["relation"]["database_id"] == "db_帳戶"
 
 
 def test_relation_target_db_gets_created(notion):
     """relation 指向的 DB 若不存在，要一併建出來。"""
-    notion_db.get_or_create_db("交易明細")
+    notion_db.get_or_create_db("信用卡帳單")
 
     created_titles = [t for t, _ in notion.databases.create_calls]
     assert "帳戶" in created_titles
@@ -157,10 +157,25 @@ def test_relation_target_failure_does_not_raise(notion):
     """目標 DB 建立失敗時，主 DB 仍要能用，只是少了 relation。"""
     notion.databases.fail_create_for.add("帳戶")
 
-    db_id = notion_db.get_or_create_db("交易明細")
+    db_id = notion_db.get_or_create_db("信用卡帳單")
 
-    assert db_id == "db_交易明細"
+    assert db_id == "db_信用卡帳單"
+    assert not [u for u in notion.databases.update_calls if "卡片" in u[1]]
+
+
+def test_transactions_have_no_account_relation(notion):
+    """交易明細不該再有『帳戶』relation。
+
+    2026-08-25 移除：transaction_add 從來沒寫過這欄，帳戶 DB 也是 0 筆，
+    留著只是一個永遠空的欄位。卡片辨識用「卡末四碼」文字欄就夠。
+    """
+    assert "交易明細" not in notion_db._RELATIONS
+
+    notion_db.get_or_create_db("交易明細")
+
     assert not [u for u in notion.databases.update_calls if "帳戶" in u[1]]
+    created_titles = [t for t, _ in notion.databases.create_calls]
+    assert "帳戶" not in created_titles, "不該再為了 relation 順手建出帳戶 DB"
 
 
 # ── schema 遷移（既有 DB 補欄位）──────────────────────────
@@ -353,3 +368,96 @@ def test_read_select_tolerates_missing_property():
     assert notion_db._read_select({}, "分類") == ""
     assert notion_db._read_select({"分類": {"select": None}}, "分類") == ""
     assert notion_db._read_select({"分類": {"select": {"name": "工作"}}}, "分類") == "工作"
+
+
+# ── 消費類別白名單 ────────────────────────────────────────
+#
+# 背景：Notion 對未定義的 select 值不會報錯，而是自動新增選項。國泰因此
+# 在 2026-08 悄悄把線上 schema 從 10 個類別撐到 14 個，程式碼卻毫不知情，
+# 任何按類別分組的報表都在漏桶。這組測試守住兩件事：白名單與線上一致、
+# 未知值收斂成「其他」而不是長出新選項。
+
+def test_spend_categories_cover_what_notion_actually_has():
+    """線上實測（2026-08-25）存在的 14 個類別都要在白名單裡。"""
+    expected = {
+        "餐飲", "超市∕量販", "百貨公司", "服飾∕鞋∕精品", "家電∕３Ｃ通訊",
+        "旅遊", "電信服務", "醫療", "訂閱服務", "其他",
+        "線上付款", "教育∕學費", "一般購物", "家具家飾裝潢",
+    }
+    assert set(notion_db.SPEND_CATEGORIES) == expected
+
+
+def test_transaction_category_options_match_whitelist():
+    """schema 的 select 選項要跟白名單同源，不能各寫各的。"""
+    options = notion_db._SCHEMAS["交易明細"]["類別"]["select"]["options"]
+    assert [o["name"] for o in options] == list(notion_db.SPEND_CATEGORIES)
+
+
+@pytest.mark.parametrize("raw", ["餐飲", "  餐飲  ", "線上付款", "家具家飾裝潢"])
+def test_normalize_spend_category_keeps_known(raw):
+    assert notion_db.normalize_spend_category(raw) == raw.strip()
+
+
+def test_normalize_spend_category_tolerates_ascii_slash():
+    """國泰信件的斜線全形半形混用，不該因此判成未知類別。"""
+    assert notion_db.normalize_spend_category("超市/量販") == "超市∕量販"
+
+
+@pytest.mark.parametrize("raw", ["寵物用品", "", None, "   "])
+def test_normalize_spend_category_falls_back(raw):
+    assert notion_db.normalize_spend_category(raw) == "其他"
+
+
+def test_transaction_add_normalizes_unknown_category(notion):
+    """未知類別必須在寫入前收斂，否則 Notion 會直接長出新選項。"""
+    notion_db.transaction_add({
+        "date": "2026-08-25", "amount": 100, "category": "寵物用品",
+        "shop": "某店", "fingerprint": "fp1",
+    })
+
+    props = notion.pages.created[-1]["properties"]
+    assert props["類別"]["select"]["name"] == "其他"
+
+
+def test_transaction_add_omits_category_when_absent(notion):
+    """沒帶類別就不要寫這欄 —— 硬填「其他」會把「不知道」偽裝成「已分類」。"""
+    notion_db.transaction_add({
+        "date": "2026-08-25", "amount": 100, "shop": "某店", "fingerprint": "fp2",
+    })
+
+    assert "類別" not in notion.pages.created[-1]["properties"]
+
+
+# ── ensure_all_dbs ────────────────────────────────────────
+
+def test_ensure_all_dbs_creates_every_schema(notion):
+    """不能再靠 lazy create：上游一個提早 return 就會讓整個 DB 永遠不存在。
+
+    2026-08-25 健檢實證：食材庫存為空 → daily_report 的 expiring_soon()
+    回空即 return → 走不到 recipes_load() → 食譜 / 本週菜單 / 採購清單
+    從上線起就不存在，而且 log 全綠。
+    """
+    ok, total = notion_db.ensure_all_dbs()
+
+    assert total == len(notion_db._SCHEMAS)
+    assert ok == total
+
+    created = {t for t, _ in notion.databases.create_calls}
+    for name in ("食譜", "本週菜單", "採購清單"):
+        assert name in created, f"{name} 應該被建出來"
+
+
+def test_ensure_all_dbs_survives_one_failure(notion):
+    """單一 DB 失敗不該讓其餘的都不建。"""
+    notion.databases.fail_create_for.add("食譜")
+
+    ok, total = notion_db.ensure_all_dbs()
+
+    assert ok == total - 1
+    created = {t for t, _ in notion.databases.create_calls}
+    assert "採購清單" in created
+
+
+def test_ensure_all_dbs_noop_without_config(monkeypatch):
+    monkeypatch.setattr(notion_db, "_TOKEN", "")
+    assert notion_db.ensure_all_dbs() == (0, 0)
