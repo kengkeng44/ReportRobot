@@ -25,6 +25,7 @@ class PagedDatabases:
                 "類別": {"select": {"name": "餐飲"}},
                 "方向": {"select": {"name": "支出"}},
                 "狀態": {"select": {"name": "授權中"}},
+                "來源": {"select": {"name": "手動" if i % 2 else "國泰消費彙整"}},
             }
         }
 
@@ -127,3 +128,17 @@ def test_partial_result_survives_midway_failure(monkeypatch):
     rows = notion_db.transactions_load(limit=300)
 
     assert len(rows) == 100
+
+
+def test_load_reads_source(monkeypatch):
+    """來源寫得進去就要讀得回來，否則分不出手動記帳與自動同步。
+
+    transaction_add 一直有送「來源」，但這裡沒讀回來 —— 不會報錯，
+    只是每一筆的 source 都是 None，任何想區分兩者的功能都會安靜地失效。
+    """
+    _install(monkeypatch, 4)
+
+    rows = notion_db.transactions_load(limit=4)
+
+    assert [r["source"] for r in rows] == [
+        "國泰消費彙整", "手動", "國泰消費彙整", "手動"]

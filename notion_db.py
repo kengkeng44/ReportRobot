@@ -1021,6 +1021,9 @@ def transactions_load(limit=200):
                     "shop": _read_rich_text(props, "商店"),
                     "direction": _read_select(props, "方向") or "支出",
                     "status": _read_select(props, "狀態"),
+                    # 沒讀這欄就分不出手動記帳與自動同步 —— transaction_add
+                    # 一直有寫進去，讀不回來只會安靜地得到 None。
+                    "source": _read_select(props, "來源"),
                 })
             if not res.get("has_more"):
                 break

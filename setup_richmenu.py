@@ -71,7 +71,9 @@ MENUS = {
             ("最近交易", "RECENT",   "#B08D6D", ("message", "/最近交易")),
             ("卡費",     "CARD",     "#C09A7A", ("message", "/卡費")),
             ("淨值",     "NETWORTH", "#8A6F5A", ("message", "/淨值")),
-            ("記一筆",   "ADD",      "#9A7B63", ("prompt",  "記一筆 ")),
+            # 送裸指令：「記一筆」不帶東西會回一排常記品項，再點金額，
+            # 兩下記完。prompt 只會開鍵盤，送不出裸指令（HANDOFF 231）。
+            ("記一筆",   "ADD",      "#9A7B63", ("message", "記一筆")),
             _BACK,
         ],
     },
@@ -250,7 +252,8 @@ def build_areas(cells):
                 "data": f"switch={param}",
             }
         elif kind == "prompt":
-            # 需要接著打字的功能（買了什麼、記多少錢、查哪支股票）。
+            # 需要接著打字的功能（查哪支股票）。「買了」與「記一筆」都改
+            # 送裸指令了 —— 它們會回 quick reply，點兩下完成，不必打字。
             # 按下去會打開鍵盤並預先填好開頭，使用者只要補後半段。
             # 不帶 displayText，避免聊天室多出一則沒意義的回音。
             line_action = {
