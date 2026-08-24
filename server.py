@@ -215,8 +215,17 @@ async def root():
 
 
 @app.get("/admin/env-check")
-async def env_check():
-    """Server 看到的環境變數狀態（只回 set/len，不洩漏值）。Debug 用。"""
+async def env_check(request: Request):
+    """Server 看到的環境變數狀態（只回 set/len，不洩漏值）。Debug 用。
+    要 X-Admin-Token header。
+
+    只回 set/len 所以密鑰本身不會外流，但會告訴外人這台掛了哪些服務 ——
+    其他 admin 端點都擋了，這支當初漏掉。"""
+    admin_token = os.environ.get("ADMIN_TOKEN", "")
+    if not admin_token:
+        raise HTTPException(status_code=503, detail="Admin disabled")
+    if request.headers.get("X-Admin-Token") != admin_token:
+        raise HTTPException(status_code=403, detail="Forbidden")
     keys = [
         "ADMIN_TOKEN",
         "LINE_CHANNEL_TOKEN",
