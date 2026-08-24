@@ -223,6 +223,9 @@ async def env_check():
         "LINE_CHANNEL_SECRET",
         "LINE_GROUP_ID",
         "GMAIL_USER",
+        # 個人版每日報寄信用；去掉空白後應該正好 16 碼，len 不對就是貼錯了
+        "GMAIL_APP_PASSWORD",
+        "REPORT_EMAIL_TO",
         "TOKEN_PICKLE_B64",
         "ANTHROPIC_API_KEY",
         "CWA_API_KEY",
