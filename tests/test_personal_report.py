@@ -1,7 +1,12 @@
-"""個人版每日推播(食材 + 板橋天氣 + 最新消費,推到本人 1 對 1)。
+"""個人版每日報(食材 + 板橋天氣 + 最新消費,寄給自己)。
 
 群組版與個人版的分工是刻意的:群組不該看到別人的冰箱和帳單,
 但自己每天要看是另一回事。
+
+2026-08-20 個人版從 LINE 1 對 1 推播改成 Gmail(見 mailer.py)——
+push 每月只有 200 則,不該有一半花在自己身上。
+下面「卡片組裝」那段測的 flex_builder.personal_report_carousel 目前
+沒有呼叫端,刻意留著:要改回 LINE 推播時直接接回去就好。
 """
 
 import json
@@ -10,6 +15,7 @@ import pytest
 
 import daily_report
 import flex_builder
+import mailer
 import weather
 
 
@@ -72,14 +78,14 @@ def test_group_carousel_cannot_carry_private_stuff():
     assert not [p for p in params if "spend" in p.lower() or "kitchen" in p.lower()]
 
 
-# ── 推播流程 ──────────────────────────────────────────────
+# ── 寄信流程 ──────────────────────────────────────────────
 
 @pytest.fixture
-def _sent(monkeypatch):
+def _mailed(monkeypatch):
     box = []
-    monkeypatch.setattr(daily_report, "push_to_user_sync",
-                        lambda uid, msg: box.append((uid, msg)))
-    monkeypatch.setenv("ADMIN_LINE_USER_ID", "U-me")
+    monkeypatch.setattr(mailer, "is_configured", lambda: True)
+    monkeypatch.setattr(mailer, "send_email",
+                        lambda subject, body: box.append((subject, body)) or True)
     monkeypatch.setattr(daily_report, "get_weather_report",
                         lambda locations=None: ("板橋天氣", None))
     monkeypatch.setattr(daily_report, "_spending_recent", lambda: "最新消費內容")
@@ -89,70 +95,83 @@ def _sent(monkeypatch):
     return box
 
 
-def test_personal_push_goes_to_admin(_sent):
-    daily_report._push_personal_report("2026-08-19")
-    assert len(_sent) == 1
-    uid, msg = _sent[0]
-    assert uid == "U-me"
-    text = _dump(msg)
-    assert "板橋天氣" in text
-    assert "最新消費內容" in text
-    assert "高麗菜快過期" in text
+def test_personal_report_is_emailed(_mailed):
+    daily_report._email_personal_report("2026-08-19")
+    assert len(_mailed) == 1
+    subject, body = _mailed[0]
+    assert "2026-08-19" in subject
+    assert "板橋天氣" in body
+    assert "最新消費內容" in body
+    assert "高麗菜快過期" in body
 
 
-def test_personal_push_uses_banqiao_locations(monkeypatch, _sent):
+def test_personal_report_never_touches_push_quota():
+    """改成 email 的理由就是這個 —— 個人版不能再吃 LINE push 配額。
+
+    群組版照舊走 push_message;這裡守的是「不要哪天又被接回 1 對 1 推播」。
+    """
+    assert not hasattr(daily_report, "_push_personal_report")
+    assert not hasattr(daily_report, "push_to_user_sync")
+
+
+def test_personal_report_uses_banqiao_locations(monkeypatch, _mailed):
     """個人版天氣必須用板橋,不能沿用群組版的淡水金山。"""
     got = {}
     monkeypatch.setattr(daily_report, "get_weather_report",
                         lambda locations=None: got.update(loc=locations) or ("天氣", None))
 
-    daily_report._push_personal_report("2026-08-19")
+    daily_report._email_personal_report("2026-08-19")
     assert got["loc"] == weather.PERSONAL_WEATHER_LOCATIONS
     assert "板橋區" in got["loc"]
 
 
-def test_personal_push_skipped_without_admin_id(monkeypatch, _sent):
-    monkeypatch.delenv("ADMIN_LINE_USER_ID", raising=False)
-    daily_report._push_personal_report("2026-08-19")
-    assert _sent == []
+def test_personal_report_skipped_without_app_password(monkeypatch, _mailed):
+    """少一個 env var 就安靜跳過,不要讓整個排程 job 進 error listener。"""
+    monkeypatch.setattr(mailer, "is_configured", lambda: False)
+    daily_report._email_personal_report("2026-08-19")
+    assert _mailed == []
 
 
-def test_personal_push_skipped_when_nothing_to_say(monkeypatch, _sent):
-    """三段都沒內容就不要推一則空卡浪費配額。"""
+def test_personal_report_skipped_when_nothing_to_say(monkeypatch, _mailed):
+    """三段都沒內容就不要寄一封空信。"""
     monkeypatch.setattr(daily_report, "get_weather_report",
                         lambda locations=None: (None, None))
     monkeypatch.setattr(daily_report, "_spending_recent", lambda: None)
     monkeypatch.setattr(daily_report, "_kitchen_for_personal", lambda: None)
-    daily_report._push_personal_report("2026-08-19")
-    assert _sent == []
+    daily_report._email_personal_report("2026-08-19")
+    assert _mailed == []
 
 
-def test_personal_weather_failure_does_not_kill_the_rest(monkeypatch, _sent):
-    """天氣炸了還是要把食材和消費推出去。"""
+def test_personal_weather_failure_does_not_kill_the_rest(monkeypatch, _mailed):
+    """天氣炸了還是要把食材和消費寄出去。"""
     def boom(locations=None):
         raise RuntimeError("CWA 掛了")
     monkeypatch.setattr(daily_report, "get_weather_report", boom)
     monkeypatch.setattr(daily_report, "notify_admin", lambda *a, **k: None)
 
-    daily_report._push_personal_report("2026-08-19")
+    daily_report._email_personal_report("2026-08-19")
 
-    assert len(_sent) == 1
-    assert "最新消費內容" in _dump(_sent[0][1])
+    assert len(_mailed) == 1
+    assert "最新消費內容" in _mailed[0][1]
 
 
-def test_kitchen_buttons_used_when_available(monkeypatch, _sent):
-    """有 page_id 就走按鈕版,文字只留菜色建議(清單交給按鈕列)。"""
+def test_kitchen_full_text_used_because_email_has_no_buttons(monkeypatch, _mailed):
+    """LINE 推播版有 page_id 時清單交給「已用掉」按鈕、文字只留菜色建議。
+
+    email 沒有 quick reply —— 清單必須留在文字裡,不然快過期的東西
+    整個看不到,只剩一句沒頭沒尾的菜色建議。
+    """
     monkeypatch.setattr(daily_report, "_kitchen_for_personal",
                         lambda: {"items": [{"name": "高麗菜", "page_id": "p1",
                                             "days": 2}],
                                  "more": 0, "recipe_text": "建議煮高麗菜炒肉",
                                  "text": "高麗菜 2 天\n\n建議煮高麗菜炒肉"})
 
-    daily_report._push_personal_report("2026-08-19")
+    daily_report._email_personal_report("2026-08-19")
 
-    text = _dump(_sent[0][1])
-    assert "建議煮高麗菜炒肉" in text
-    assert "已用掉" in text, "有 page_id 時應該要有按鈕"
+    body = _mailed[0][1]
+    assert "高麗菜 2 天" in body
+    assert "建議煮高麗菜炒肉" in body
 
 
 # ── 食材:沒事就不出現 ────────────────────────────────────

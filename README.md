@@ -224,9 +224,21 @@ LINE
 Gmail / 對帳單
 | 變數 | 用途 |
 |---|---|
-| `GMAIL_USER` | Gmail 帳號 email |
+| `GMAIL_USER` | Gmail 帳號 email（也是每日個人報的寄件者）|
 | `TOKEN_PICKLE_B64` | Gmail OAuth token base64（雲端必填）|
 | `PDF_PASSWORD_PREFIX` | 富邦對帳單 PDF 解密密碼前 4 碼 |
+
+每日個人報寄信(SMTP)
+
+個人版每日報 2026-08-20 起改寄 email，不再吃 LINE push 配額（`mailer.py`）。
+寄信走「應用程式密碼」而不是上面那顆 OAuth token —— 那顆只有 `gmail.readonly`，
+換 scope 要重跑授權並替換線上 token，財務同步 / 發票 / Gmail 警示全靠它，
+換壞了是連鎖故障。
+
+| 變數 | 用途 |
+|---|---|
+| `GMAIL_APP_PASSWORD` | 16 碼應用程式密碼（Google 帳號 → 安全性 → 兩步驟驗證 → 應用程式密碼）；貼上時中間的空白會自動去掉 |
+| `REPORT_EMAIL_TO` | 收件者，沒設就寄給 `GMAIL_USER` 自己 |
 
 外部 API
 | 變數 | 用途 |

@@ -63,6 +63,7 @@
 | 食材提醒的「已用掉」按鈕 | ❌ 沒在 LINE 上按過(23 個單元測試) |
 | 「買了」常買清單 Quick Reply | ❌ 沒在 LINE 上按過(20 個單元測試);選單已於 2026-08-19 重建,按鈕本身生效了 |
 | 「記一筆」兩段式 Quick Reply | ❌ 沒在 LINE 上按過(42 個單元測試);選單已於 2026-08-19 重建,按鈕本身生效了 |
+| 個人版每日報改寄 email | ❌ **沒收到過任何一封**(8 個 mailer 測試 + 流程測試全用假 SMTP);**要先設 `GMAIL_APP_PASSWORD` 才會寄** |
 
 ---
 
@@ -323,8 +324,13 @@ Invoke-RestMethod -Uri "$base/admin/portfolio-debug" -Headers $h
 
 | 工作 | 台灣時間 | env |
 |---|---|---|
-| 每日推播 | 07:00 | `DAILY_CRON` |
+| 每日推播(群組,LINE) | 07:00 | `DAILY_CRON` |
+| 每日個人報(email) | 07:00 | 同上,跟在群組版後面跑 |
 | 財務同步 | 15:30 | `FINANCE_CRON`(預設 `30 7 * * *` UTC) |
+
+個人版 2026-08-20 起改寄 Gmail(`mailer.py`),不再吃 LINE push 配額 ——
+push 每月 200 則,群組版每天已佔一則,個人版再佔一則等於一半花在自己身上。
+群組版維持 LINE 不動(家人不會去收信)。
 
 15:30 的依據:實測國泰「消費彙整通知」每天 14:2x–14:5x 送達,富邦成交回報盤後約 14:25,
 且台股 13:30 已收盤。**一天一次即足夠**,這些信一天只來一封。
@@ -394,8 +400,9 @@ token 弄壞。用 `Read-Host` 並存成 User 層級環境變數。
 
 ```
 server.py              FastAPI + APScheduler + LINE webhook + admin 端點
-├─ daily_report.py     每日推播(天氣/盤前/今日一則/食材提醒)
-│   └─ humor.py            今日一則;主題輪替(humor_topics.py)+ 歷史去重
+├─ daily_report.py     每日報:群組版走 LINE push、個人版走 email
+│   ├─ humor.py            今日一則;主題輪替(humor_topics.py)+ 歷史去重
+│   └─ mailer.py           個人版寄信(Gmail SMTP + 應用程式密碼)
 ├─ command_router.py   文字指令解析與分派(parse / handle / handle_postback)
 │   ├─ _handle_kitchen()   煮飯 8 個指令
 │   └─ _handle_finance()   財務 5 個指令
@@ -440,9 +447,16 @@ ReportRobot（根頁,NOTION_PARENT_PAGE_ID）
 | 變數 | 用途 | 預設 |
 |---|---|---|
 | `FINANCE_CRON` | 財務同步排程(UTC crontab) | `30 7 * * *` |
+| `GMAIL_APP_PASSWORD` | 個人報寄信用的 16 碼應用程式密碼(空白自動去掉) | 無 —— **沒設就整個不寄** |
+| `REPORT_EMAIL_TO` | 個人報收件者 | 沒設就寄給 `GMAIL_USER` 自己 |
 
 `NOTION_TOKEN` / `NOTION_PARENT_PAGE_ID` / `TOKEN_PICKLE_B64` / `PDF_PASSWORD_PREFIX` /
 `ADMIN_TOKEN` 皆已存在 Infisical,自動 sync 到 Railway。
+
+> ⚠️ `GMAIL_APP_PASSWORD` 是**應用程式密碼**,不是那顆 OAuth token。刻意分開:
+> `token.pickle` 只有 `gmail.readonly`(`gmail_reader.SCOPES`),要寄信得加 scope、
+> 重跑授權、換掉線上那顆 token —— 財務同步 / 發票 / Gmail 警示全靠它,
+> 換壞了是連鎖故障。多一個 env var 的爆炸半徑小得多。
 
 > 註:`TOKEN_PICKLE_B64` 優先於本機 `token.pickle`,所以本機 token 失效
 > **不影響 Railway**。曾誤判過這點。
@@ -452,6 +466,9 @@ ReportRobot（根頁,NOTION_PARENT_PAGE_ID）
 ## 10. 使用者待辦(需要人工)
 
 - [x] ~~部署後重跑 `POST /admin/setup-richmenu`~~ —— 2026-08-19 已跑,5 張選單全部重建
+- [ ] **申請 Google 應用程式密碼並存進 Infisical `GMAIL_APP_PASSWORD`** —— 個人版每日報
+  已從 LINE 推播改成 email,**沒設這個就是每天早上什麼都收不到**(不會報錯,只印一行 log)。
+  申請:Google 帳號 → 安全性 → 兩步驟驗證 → 應用程式密碼
 - [ ] 在 LINE 私訊實測「記一筆」→ 點品項 → 點金額
 - [ ] 申請財政部電子發票 AppID(見 4.5,需本人身分驗證,程式端做不到)
 - [ ] 刪除 Notion 持倉裡 `代號=台積電` 的孤兒資料列(程式無權限刪除)

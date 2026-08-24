@@ -5,19 +5,18 @@
 任一段失敗就在對應 bubble 顯示降級文案；兩段都失敗才 fallback 純文字。
 比過去切 2-3 chunk 多次 push 節省 30-60 則配額/月。
 
-推兩個目標，內容刻意不同（共 2 則 push/天，約 60 則/月）：
-- 群組（LINE_GROUP_ID）：今日一則 + 天氣（淡水、金山）+ 盤前
-- 本人 1 對 1（ADMIN_LINE_USER_ID）：食材 + 天氣（板橋）+ 最新消費
+推兩個目標，內容刻意不同，但只有群組吃 push 配額（1 則/天，約 30 則/月）：
+- 群組（LINE_GROUP_ID）：今日一則 + 天氣（淡水、金山）+ 盤前 —— LINE push
+- 本人：食材 + 天氣（板橋）+ 最新消費 —— 2026-08-20 改寄 Gmail（見 mailer.py）
   財務只走個人版，不進群組。
 """
 
-import os
 import traceback
 
 import humor
 from admin_notify import notify_admin
-from flex_builder import daily_report_carousel, personal_report_carousel
-from line_sender import push_message, push_to_user_sync
+from flex_builder import daily_report_carousel
+from line_sender import push_message
 from premarket import build_premarket_report
 from stock_news import get_cnyes_news
 from tz_utils import today_tpe
@@ -109,17 +108,26 @@ def _spending_recent():
     return finance_report.format_latest_day_spending(txns, today_tpe())
 
 
-def _push_personal_report(today):
-    """個人版推播：食材 + 板橋天氣 + 最新消費，推到本人 1 對 1。
+def _email_personal_report(today):
+    """個人版：食材 + 板橋天氣 + 最新消費，寄 Gmail 給自己。
+
+    2026-08-20 從 LINE 1 對 1 推播改成 email。push 每月只有 200 則，
+    群組版每天已經佔掉一則，個人版再佔一則等於一半配額花在自己身上；
+    email 免費。群組版維持 LINE 不動 —— 家人不會去收信。
 
     天氣得重抓（地點跟群組版不同，見 weather.PERSONAL_WEATHER_LOCATIONS），
     食材也得自己抓 —— 群組版 2026-08-16 之後就不碰食材了。
 
+    食材用完整文字版（kitchen["text"]）而不是推播那套按鈕版：email 沒有
+    quick reply，「已用掉」還是得回 LINE 打，所以清單不能只靠按鈕呈現。
+    要改回 LINE 推播的話，flex_builder.personal_report_carousel 還留著。
+
     整段包在呼叫端的 try 裡：個人版炸掉不能影響已經推出去的群組版。
     """
-    admin_id = os.environ.get("ADMIN_LINE_USER_ID", "")
-    if not admin_id:
-        print("[個人版] 沒設 ADMIN_LINE_USER_ID，跳過")
+    import mailer
+
+    if not mailer.is_configured():
+        print("[個人版] 沒設 GMAIL_USER / GMAIL_APP_PASSWORD，跳過")
         return
 
     def _personal_weather():
@@ -130,25 +138,19 @@ def _push_personal_report(today):
     kitchen = _safe("個人版食材", _kitchen_for_personal) or {}
     spending_text = _safe("個人版消費", _spending_recent)
 
-    kitchen_items = kitchen.get("items") or []
-    kitchen_text = (kitchen.get("recipe_text") if kitchen_items
-                    else kitchen.get("text")) or None
-
-    carousel = personal_report_carousel(
-        today,
-        weather_text=weather_text,
-        kitchen_text=kitchen_text,
-        kitchen_items=kitchen_items,
-        kitchen_more=kitchen.get("more", 0),
-        spending_text=spending_text,
-    )
-    if carousel is None:
-        # 三段都沒東西（沒食材要過期 + 天氣掛了 + 沒消費資料）→ 不推空卡
-        print("[個人版] 沒有任何內容，這次不推")
+    # 順序沿用原本的 carousel：有時效的排最前面
+    sections = [
+        ("🥬 食材提醒", kitchen.get("text")),
+        ("🌤️ 天氣報告", weather_text),
+        ("💳 最新消費", spending_text),
+    ]
+    body = "\n\n".join(f"<b>{title}</b>\n{text}" for title, text in sections if text)
+    if not body:
+        # 三段都沒東西（沒食材要過期 + 天氣掛了 + 沒消費資料）→ 不寄空信
+        print("[個人版] 沒有任何內容，這次不寄")
         return
 
-    push_to_user_sync(admin_id, carousel)
-    print("個人版情報傳送完成！")
+    mailer.send_email(f"📮 每日個人報 {today}", body)
 
 
 async def run_daily_report(force_premarket=False):
@@ -185,10 +187,10 @@ async def run_daily_report(force_premarket=False):
         await push_message(carousel)
         print("每日情報傳送完成！")
 
-    # 個人版另外推一則。放在群組版之後、且整段包 try ——
+    # 個人版另外寄一封信。放在群組版之後、且整段包 try ——
     # 這是附加功能，壞掉不該影響主推播（群組版這時已經送出去了）
     try:
-        _push_personal_report(today)
+        _email_personal_report(today)
     except Exception as e:
         print(f"[個人版] 失敗：{e}")
         traceback.print_exc()
