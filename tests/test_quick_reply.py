@@ -198,13 +198,15 @@ def test_quick_reply_button_actually_adds_to_pantry(fake_notion):
     assert [i["name"] for i in fake.added] == ["高麗菜"]
 
 
-def test_bare_buy_still_explains_the_typed_form(fake_notion):
-    """按鈕只能一樣一顆，要買 5 樣還是打字快 —— 用法不能消失。"""
+def test_bare_buy_hint_is_one_short_line(fake_notion):
+    """使用者要的是「只跳按鈕」。quick reply 一定要掛在一則訊息上，
+    所以說明砍到一行，完整用法退到 Notion 掛掉時的 fallback。"""
     fake_notion(rows=[_row("高麗菜")])
 
     reply = cr.handle("買了", _ctx())
 
-    assert "買了" in reply["text"] and "數量" in reply["text"]
+    assert "\n" not in reply["text"] and len(reply["text"]) <= 12
+    assert reply["quickReply"]["items"]
 
 
 def test_bare_buy_falls_back_to_text_when_notion_down(fake_notion):
