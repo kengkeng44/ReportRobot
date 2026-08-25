@@ -63,7 +63,7 @@
 | 食材提醒的「已用掉」按鈕 | ❌ 沒在 LINE 上按過(23 個單元測試) |
 | 「買了」常買清單 Quick Reply | ❌ 沒在 LINE 上按過(20 個單元測試);選單已於 2026-08-19 重建,按鈕本身生效了 |
 | 「記一筆」兩段式 Quick Reply | ❌ 沒在 LINE 上按過(42 個單元測試);選單已於 2026-08-19 重建,按鈕本身生效了 |
-| 個人版每日報改寄 email | 🟡 `GMAIL_APP_PASSWORD` 已設(env-check `len: 16`),但**還沒收到過任何一封真實信件** —— 測試全用假 SMTP,第一封等 2026-08-25 早上 7 點 |
+| 個人版每日報改寄 email | ❌ **2026-08-25 首跑就炸** —— `GMAIL_APP_PASSWORD` 沒問題(env-check `len: 16`),是 Railway 擋 SMTP 對外埠。見 4.6 |
 | `/admin/env-check` token 保護 | ✅ 生產環境實測:無 token 403、帶 token 200 |
 | 黃金改抓現貨(修少報 8%) | 🟡 本機實測 Gold-API 通、量級正確(4,611 vs 舊邏輯 ~4,254);**Railway 對外能不能連 gold-api.com 還沒驗** —— 連不到會 fallback `GLD × 10.84`,不開天窗但會回到有偏差的數字。看 2026-08-26 盤前報的黃金即可確認 |
 
@@ -181,6 +181,36 @@ Invoke-RestMethod -Uri "https://chengreportbot-production.up.railway.app/admin/s
 **刻意沒做:** 酷澎 email parser。使用者買菜主要在全聯與超商,網購那條
 涵蓋不到主要場景;而且那封信的 HTML 表格結構沒實際看過,
 照 markdown 轉換版猜格式正是第 7 節警告的事。
+
+### 4.6 Railway 擋 SMTP 對外埠〔已量測完,修法待定〕
+
+個人版每日報 2026-08-25 06:01 首跑就炸 `OSError [Errno 101] Network is unreachable`,
+同一秒 `admin_notify` 的 LINE push(HTTPS 443)是通的。
+
+`/admin/net-check`(commit `a7a9fc8`)實測結果:
+
+| 目標 | IPv4 | IPv6 |
+|---|---|---|
+| `smtp.gmail.com:465` | ❌ **TimeoutError** | ❌ Errno 101 |
+| `smtp.gmail.com:587` | ❌ **TimeoutError** | ❌ Errno 101 |
+| `api.line.me:443`(控制組) | ✅ ok | — |
+
+**結論:平台擋 SMTP 埠,不是 IPv6 沒路由。**
+
+判準在「IPv4 是 timeout 而不是 connection refused」—— 被拒絕代表對方明確回應,
+timeout 代表封包被靜默丟棄,這是防火牆的特徵(雲平台普遍擋 SMTP 防垃圾信)。
+控制組 443 通過,證明容器有外網也有 IPv4 路由,問題精準隔離在這兩個埠。
+
+**因此「強制走 IPv4」這條修法出局** —— 465 / 587 的 IPv4 都不通。
+**任何用 `smtplib` 的寫法都不可能通**,得換成走 443 的方式。
+
+修法方向(尚未決定):
+- HTTPS 寄信服務(Resend / SendGrid 等)—— `mailer.send_email` 換實作、介面不變,測試不用重寫
+- 改回 LINE 推播 —— `flex_builder.personal_report_carousel` 還留著,接回去即可
+- Gmail API 走 443 —— 要 `gmail.send` scope,**得換掉線上那顆 token,是連鎖故障風險**(見第 9 節)
+
+`mailer.py` 本身沒有錯,是選錯傳輸方式。`is_configured()` 那套 gate 與
+「沒設定就跳過不丟例外」的設計可以原樣沿用。
 
 ### 4.3 消費類別會自然增生
 
