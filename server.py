@@ -10,6 +10,7 @@ import base64
 import hashlib
 import hmac
 import os
+import socket
 import threading
 from contextlib import asynccontextmanager
 
@@ -497,3 +498,68 @@ async def statement_dump(request: Request):
             "text": text[:20000],
         })
     return {"latest": {k: list(v) for k, v in latest.items()}, "statements": out}
+
+
+@app.get("/admin/net-check")
+def net_check(request: Request):
+    """從容器內部逐一實測對外連線，判斷 SMTP 到底卡在哪一層。
+
+    為什麼需要這支：2026-08-25 06:01 個人版寄信炸 OSError [Errno 101]
+    Network is unreachable，但同一分鐘 LINE push（HTTPS 443）是通的。
+    smtplib 只會把「最後一個位址」的錯誤丟出來，看不出是 IPv6 沒路由、
+    還是 465 這個 port 被平台整個擋掉 —— 兩者的修法完全不同，
+    所以先量再改，不要用猜的去部署。
+
+    每個 host 的 A / AAAA 位址都分開連，回報各自結果。
+    api.line.me:443 是控制組：這條每天都在用，它一定要是 ok，
+    否則代表量測本身有問題而不是 SMTP 有問題。
+
+    刻意寫成 def 而不是 async def —— socket.connect 是阻塞的，
+    寫成 async 會把整個 event loop 卡住最久 30 秒（webhook 一起被卡）。
+    FastAPI 看到同步函式會自動丟到 threadpool。
+
+    要 X-Admin-Token header。用完可以整段刪掉，沒有其他程式依賴它。
+    """
+    admin_token = os.environ.get("ADMIN_TOKEN", "")
+    if not admin_token:
+        raise HTTPException(status_code=503, detail="Admin disabled")
+    if request.headers.get("X-Admin-Token") != admin_token:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    targets = [
+        ("smtp.gmail.com", 465),   # 現在在用的（SSL）
+        ("smtp.gmail.com", 587),   # 備案（STARTTLS），很多平台只擋其中一個
+        ("api.line.me", 443),      # 控制組：這條一定通
+    ]
+
+    out = []
+    for host, port in targets:
+        try:
+            addrs = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+        except OSError as e:
+            # DNS 就掛了 —— 跟連不出去是完全不同的故障
+            out.append({"target": f"{host}:{port}", "dns": f"FAIL {type(e).__name__}: {e}"})
+            continue
+
+        for fam, socktype, proto, _canon, sa in addrs:
+            entry = {
+                "target": f"{host}:{port}",
+                "family": "IPv6" if fam == socket.AF_INET6 else "IPv4",
+                "addr": sa[0],
+            }
+            sock = None
+            try:
+                sock = socket.socket(fam, socktype, proto)
+                sock.settimeout(5)
+                sock.connect(sa)
+                entry["result"] = "ok"
+            except OSError as e:
+                entry["result"] = "fail"
+                entry["errno"] = getattr(e, "errno", None)
+                entry["error"] = f"{type(e).__name__}: {e}"
+            finally:
+                if sock is not None:
+                    sock.close()
+            out.append(entry)
+
+    return {"probes": out}
