@@ -63,7 +63,7 @@
 | 食材提醒的「已用掉」按鈕 | ❌ 沒在 LINE 上按過(23 個單元測試) |
 | 「買了」常買清單 Quick Reply | ❌ 沒在 LINE 上按過(20 個單元測試);選單已於 2026-08-19 重建,按鈕本身生效了 |
 | 「記一筆」兩段式 Quick Reply | ❌ 沒在 LINE 上按過(42 個單元測試);選單已於 2026-08-19 重建,按鈕本身生效了 |
-| 個人版每日報改寄 email | ❌ **2026-08-25 首跑就炸** —— `GMAIL_APP_PASSWORD` 沒問題(env-check `len: 16`),是 Railway 擋 SMTP 對外埠。見 4.6 |
+| 個人版每日報改寄 email | ⏳ **已改走 Gmail API**(2026-08-25) —— SMTP 埠被 Railway 擋死,見 4.6。**等使用者跑 `setup_send_token.py` 產 token** 才會真的開始寄 |
 | `/admin/env-check` token 保護 | ✅ 生產環境實測:無 token 403、帶 token 200 |
 | 黃金改抓現貨(修少報 8%) | 🟡 本機實測 Gold-API 通、量級正確(4,611 vs 舊邏輯 ~4,254);**Railway 對外能不能連 gold-api.com 還沒驗** —— 連不到會 fallback `GLD × 10.84`,不開天窗但會回到有偏差的數字。看 2026-08-26 盤前報的黃金即可確認 |
 
@@ -182,7 +182,7 @@ Invoke-RestMethod -Uri "https://chengreportbot-production.up.railway.app/admin/s
 涵蓋不到主要場景;而且那封信的 HTML 表格結構沒實際看過,
 照 markdown 轉換版猜格式正是第 7 節警告的事。
 
-### 4.6 Railway 擋 SMTP 對外埠〔已量測完,修法待定〕
+### 4.6 Railway 擋 SMTP 對外埠〔已量測完,已改走 Gmail API〕
 
 個人版每日報 2026-08-25 06:01 首跑就炸 `OSError [Errno 101] Network is unreachable`,
 同一秒 `admin_notify` 的 LINE push(HTTPS 443)是通的。
@@ -505,16 +505,21 @@ ReportRobot（根頁,NOTION_PARENT_PAGE_ID）
 | 變數 | 用途 | 預設 |
 |---|---|---|
 | `FINANCE_CRON` | 財務同步排程(UTC crontab) | `30 7 * * *` |
-| `GMAIL_APP_PASSWORD` | 個人報寄信用的 16 碼應用程式密碼(空白自動去掉) | 無 —— **沒設就整個不寄** |
+| `SEND_TOKEN_PICKLE_B64` | 個人報寄信用的 OAuth token base64,**只有 `gmail.send`** | 無 —— **沒設就整個不寄** |
 | `REPORT_EMAIL_TO` | 個人報收件者 | 沒設就寄給 `GMAIL_USER` 自己 |
 
 `NOTION_TOKEN` / `NOTION_PARENT_PAGE_ID` / `TOKEN_PICKLE_B64` / `PDF_PASSWORD_PREFIX` /
 `ADMIN_TOKEN` 皆已存在 Infisical,自動 sync 到 Railway。
 
-> ⚠️ `GMAIL_APP_PASSWORD` 是**應用程式密碼**,不是那顆 OAuth token。刻意分開:
+> ⚠️ `SEND_TOKEN_PICKLE_B64` 是**第二顆獨立 token**,不是 `TOKEN_PICKLE_B64`。刻意分開:
 > `token.pickle` 只有 `gmail.readonly`(`gmail_reader.SCOPES`),要寄信得加 scope、
 > 重跑授權、換掉線上那顆 token —— 財務同步 / 發票 / Gmail 警示全靠它,
-> 換壞了是連鎖故障。多一個 env var 的爆炸半徑小得多。
+> 換壞了是連鎖故障。兩顆各管各的,爆炸半徑從三個功能縮到一個。
+>
+> 產生方式:真終端機跑 `python setup_send_token.py`(會開瀏覽器),
+> 產出 `token_send_b64.txt` 貼進 Infisical。**這支不會動到 `token.pickle`。**
+>
+> 原本的 `GMAIL_APP_PASSWORD` 已無用(SMTP 埠被擋),可從 Infisical 刪除。
 
 > 註:`TOKEN_PICKLE_B64` 優先於本機 `token.pickle`,所以本機 token 失效
 > **不影響 Railway**。曾誤判過這點。

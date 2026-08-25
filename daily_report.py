@@ -127,7 +127,7 @@ def _email_personal_report(today):
     import mailer
 
     if not mailer.is_configured():
-        print("[個人版] 沒設 GMAIL_USER / GMAIL_APP_PASSWORD，跳過")
+        print("[個人版] 沒設 GMAIL_USER / SEND_TOKEN_PICKLE_B64，跳過")
         return
 
     def _personal_weather():

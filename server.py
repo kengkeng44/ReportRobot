@@ -248,8 +248,10 @@ async def env_check(request: Request):
         "LINE_CHANNEL_SECRET",
         "LINE_GROUP_ID",
         "GMAIL_USER",
-        # 個人版每日報寄信用；去掉空白後應該正好 16 碼，len 不對就是貼錯了
-        "GMAIL_APP_PASSWORD",
+        # 個人版每日報寄信用。2026-08-25 從 SMTP 應用程式密碼改成
+        # Gmail API（Railway 擋 SMTP 埠，見 HANDOFF 4.6），所以這裡看的是
+        # 只有 gmail.send 權限的獨立 token，不是既有那顆 readonly 的。
+        "SEND_TOKEN_PICKLE_B64",
         "REPORT_EMAIL_TO",
         "TOKEN_PICKLE_B64",
         "ANTHROPIC_API_KEY",

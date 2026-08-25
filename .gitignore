@@ -7,6 +7,7 @@ token.pickle
 .env.local
 railway_env.txt
 token_b64.txt
+token_send_b64.txt
 
 # 儀表板產出 —— 含真實消費紀錄與持倉，repo 是公開的，絕不可進 git
 dashboard.html

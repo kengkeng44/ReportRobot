@@ -1,37 +1,44 @@
-"""每日個人報走 Gmail SMTP 寄信。
+"""每日個人報寄信 —— 走 Gmail API (HTTPS)。
 
-為什麼不繼續用 LINE push：push 每月只有 200 則（line_quota.py），
-群組版每天已經吃掉一則。自己一個人要看的東西不該再吃掉家人的份 ——
-email 免費、沒有則數上限，而 LINE 的 reply 本來就免費，
-想即時看照樣在 LINE 問「快過期」「最新消費」。
+為什麼不是 SMTP：2026-08-25 06:01 首跑就炸 `OSError [Errno 101]`。
+`/admin/net-check` 從容器內實測（commit a7a9fc8）：
 
-為什麼是應用程式密碼而不是 OAuth：現有 token.pickle 只有 gmail.readonly
-（gmail_reader.SCOPES），要寄信得加 scope、重跑授權、換掉線上那顆 token。
-財務同步、發票、Gmail 警示全都靠它，換壞了是連鎖故障。
-多一個 env var 的爆炸半徑小得多。
+    smtp.gmail.com:465  IPv4 → TimeoutError    IPv6 → Errno 101
+    smtp.gmail.com:587  IPv4 → TimeoutError    IPv6 → Errno 101
+    api.line.me:443     IPv4 → ok（控制組）
+
+IPv4 是 timeout 而不是 refused，代表封包被防火牆靜默丟棄 ——
+**Railway 擋 SMTP 對外埠**，不是 IPv6 沒路由。所以 smtplib 在這個
+平台上怎麼寫都不會通：換埠、換 timeout、強制 IPv4 全部無效。
+Gmail API 走 443，跟 LINE push 同一條路，而那條路每天都在用。
+
+為什麼另開一顆 token 而不是共用：現有 `TOKEN_PICKLE_B64` 只有
+gmail.readonly（gmail_reader.SCOPES），財務同步、發票、Gmail 警示
+三個功能全靠它。要在那顆上面加 send scope 就得重跑授權、換掉線上
+那顆，換壞了是三個功能一起倒。兩顆各管各的，爆炸半徑縮到一個。
 
 設定：
 - GMAIL_USER：寄件者（既有 env，對帳單那側也在用）
-- GMAIL_APP_PASSWORD：Google 帳號 → 安全性 → 兩步驟驗證 → 應用程式密碼
+- SEND_TOKEN_PICKLE_B64：只有 gmail.send 的 token，跑 setup_send_token.py 產生
 - REPORT_EMAIL_TO：收件者，沒設就寄給自己
 """
 
+import base64
 import os
-import smtplib
+import pickle
 from email.message import EmailMessage
 from html import escape
 
 # 跟 LINE 共用同一份 strip 規則 —— 各寫一份遲早會漂移
 from line_sender import _strip_html as strip_html
 
-SMTP_HOST = "smtp.gmail.com"
-SMTP_PORT = 465
-TIMEOUT = 20
+SEND_SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
+# 本機備援；雲端一律走 env。刻意跟 gmail_reader 的檔名分開。
+SEND_TOKEN_FILE = "token_send.pickle"
 
 
-def _app_password():
-    """從 Google 複製過來長這樣：'abcd efgh ijkl mnop' —— 空白要去掉。"""
-    return os.environ.get("GMAIL_APP_PASSWORD", "").replace(" ", "").strip()
+def _send_token_b64():
+    return os.environ.get("SEND_TOKEN_PICKLE_B64", "").strip()
 
 
 def sender():
@@ -43,7 +50,40 @@ def recipient():
 
 
 def is_configured():
-    return bool(sender() and _app_password())
+    """只檢查「有沒有」，不檢查「能不能用」。
+
+    要真的驗授權得打一次 API，那是網路往返 —— 放在每日排程的
+    gate 上等於每天多一次可能逾時的呼叫。授權壞掉的話 send 會
+    丟例外，由呼叫端的 try 接住並進 admin 通知，該吵的時候會吵。
+    """
+    return bool(sender()) and bool(
+        _send_token_b64() or os.path.exists(SEND_TOKEN_FILE)
+    )
+
+
+def _load_creds():
+    """env 優先；沒有才退回本機檔案（本機測試用）。"""
+    b64 = _send_token_b64()
+    if b64:
+        return pickle.loads(base64.b64decode(b64))
+    with open(SEND_TOKEN_FILE, "rb") as f:
+        return pickle.load(f)
+
+
+def _service():
+    """建 Gmail API client。抽成函式是為了讓測試能整個換掉。
+
+    刻意不把 refresh 後的 creds 寫回檔案：Railway 檔案系統每次
+    部署就重置，寫了也留不住；refresh token 本身不會過期，每次
+    多一次 refresh 呼叫的成本遠低於維護一份寫不回去的快取。
+    """
+    from google.auth.transport.requests import Request
+    from googleapiclient.discovery import build
+
+    creds = _load_creds()
+    if creds and creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+    return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
 
 def to_html(text):
@@ -58,16 +98,7 @@ def to_html(text):
     return out.replace("\n", "<br>")
 
 
-def send_email(subject, body):
-    """寄一封信，成功回 True。
-
-    沒設定就回 False 而不是丟例外 —— 呼叫端（每日排程）當作沒這功能，
-    不該因為少一個 env var 就讓整個 job 進 error listener。
-    """
-    if not is_configured():
-        print("[mailer] 沒設 GMAIL_USER / GMAIL_APP_PASSWORD，跳過寄信")
-        return False
-
+def _build_message(subject, body):
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = sender()
@@ -77,9 +108,22 @@ def send_email(subject, body):
         f'<div style="font-family:sans-serif;line-height:1.7">{to_html(body)}</div>',
         subtype="html",
     )
+    return msg
 
-    with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=TIMEOUT) as smtp:
-        smtp.login(sender(), _app_password())
-        smtp.send_message(msg)
+
+def send_email(subject, body):
+    """寄一封信，成功回 True。
+
+    沒設定就回 False 而不是丟例外 —— 呼叫端（每日排程）當作沒這功能，
+    不該因為少一個 env var 就讓整個 job 進 error listener。
+    """
+    if not is_configured():
+        print("[mailer] 沒設 GMAIL_USER / SEND_TOKEN_PICKLE_B64，跳過寄信")
+        return False
+
+    msg = _build_message(subject, body)
+    # Gmail API 收的是 RFC822 全文的 urlsafe base64，不是 MIME 物件
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+    _service().users().messages().send(userId="me", body={"raw": raw}).execute()
     print(f"[mailer] 已寄出：{subject} → {recipient()}")
     return True

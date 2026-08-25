@@ -228,16 +228,25 @@ Gmail / 對帳單
 | `TOKEN_PICKLE_B64` | Gmail OAuth token base64（雲端必填）|
 | `PDF_PASSWORD_PREFIX` | 富邦對帳單 PDF 解密密碼前 4 碼 |
 
-每日個人報寄信(SMTP)
+每日個人報寄信（Gmail API）
 
 個人版每日報 2026-08-20 起改寄 email，不再吃 LINE push 配額（`mailer.py`）。
-寄信走「應用程式密碼」而不是上面那顆 OAuth token —— 那顆只有 `gmail.readonly`，
-換 scope 要重跑授權並替換線上 token，財務同步 / 發票 / Gmail 警示全靠它，
-換壞了是連鎖故障。
+
+⚠️ **不要改回 SMTP。** 2026-08-25 實測 Railway 擋掉對外 SMTP 埠：`smtp.gmail.com`
+的 465 / 587 兩個埠 IPv4 都是 timeout（封包被靜默丟棄），所以 `smtplib` 怎麼寫都
+不會通 —— 換埠、強制 IPv4 全部無效。改走 Gmail API（HTTPS 443），路徑跟 LINE push
+相同。診斷端點 `/admin/net-check` 留著，之後懷疑出口問題可以直接再量一次。
+
+授權用**另一顆只有 `gmail.send` 的獨立 token**，不是上面那顆 `TOKEN_PICKLE_B64`
+—— 那顆只有 `gmail.readonly`，在它上面加 scope 得重跑授權並替換線上 token，
+而財務同步 / 發票 / Gmail 警示全靠它，換壞了是連鎖故障。兩顆各管各的。
+
+產 token：在真的終端機（要開瀏覽器）跑 `python setup_send_token.py`，
+它會產出 `token_send_b64.txt`，把內容貼進 Infisical。**不會動到 `token.pickle`。**
 
 | 變數 | 用途 |
 |---|---|
-| `GMAIL_APP_PASSWORD` | 16 碼應用程式密碼（Google 帳號 → 安全性 → 兩步驟驗證 → 應用程式密碼）；貼上時中間的空白會自動去掉 |
+| `SEND_TOKEN_PICKLE_B64` | 只有 `gmail.send` 權限的 OAuth token base64（雲端必填）|
 | `REPORT_EMAIL_TO` | 收件者，沒設就寄給 `GMAIL_USER` 自己 |
 
 外部 API
