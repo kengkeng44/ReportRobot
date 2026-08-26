@@ -21,6 +21,8 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
+import holdings
+
 
 def _env(name):
     val = os.environ.get(name)
@@ -618,6 +620,50 @@ def _is_tw_monthly_text(subject, body_text):
 # 主入口
 # ════════════════════════════════════════════════════════════
 
+def _build_snapshots(statements, env=None):
+    """[(主旨, 對帳單文字)] + 環境變數 → build_portfolio 吃的庫存快照。
+
+    兩個市場的來源不一樣（2026-08-25 /admin/statement-dump 實測）：
+      美股 → 複委託月對帳單有「股票庫存明細表」，直接 parse
+      台股 → 月對帳單整份**沒有**庫存表（富邦要你自己登入 e01 看），
+              只能靠 TW_HOLDINGS / TW_HOLDINGS_ASOF 手動給
+
+    每個市場只取最新一期：兩邊的出帳進度不同步（實測複委託到 7 月、
+    有價證券只到 6 月），混用會讓 cutoff 算錯。
+
+    解析為空不當成快照 —— 空快照會被 build_portfolio 當成「基準日時真的
+    沒持股」，反而把基準日以前的成交全部跳過，比沒有快照還糟。
+    """
+    env = os.environ if env is None else env
+    statements = statements or []
+    snapshots = []
+
+    latest = holdings.pick_latest_monthly([subject for subject, _ in statements])
+    us_period = latest.get("US")
+    if us_period:
+        for subject, text in statements:
+            if holdings.statement_market(subject) != "US":
+                continue
+            if holdings.monthly_statement_period(subject) != us_period:
+                continue
+            inventory = holdings.parse_us_inventory(text)
+            if inventory:
+                snapshots.append({
+                    "market": "US",
+                    "period": us_period,
+                    "holdings": inventory,
+                })
+                break
+
+    tw = holdings.manual_snapshot(
+        "TW", env.get("TW_HOLDINGS"), env.get("TW_HOLDINGS_ASOF")
+    )
+    if tw:
+        snapshots.append(tw)
+
+    return snapshots
+
+
 def get_portfolio_from_gmail():
     """
     雙 pass 策略：
@@ -626,9 +672,9 @@ def get_portfolio_from_gmail():
     回傳 {ticker: {shares, avg_cost}}。
     """
     try:
-        items = _download_email_items()
-        if not items:
-            return {}
+        # 抓不到信不代表沒持股 —— 手動快照 / 上期庫存仍然成立。
+        # 這裡原本直接 return {}，Gmail 一有閃失持倉就顯示成全部歸零。
+        items = _download_email_items() or []
 
         all_trades = []
         tw_code_to_name = {}
@@ -657,6 +703,9 @@ def get_portfolio_from_gmail():
             except Exception as e:
                 print(f"  名稱對照注入失敗（忽略）：{e}")
 
+        # 對帳單原始文字，Pass 2 收集，最後用來抽庫存快照
+        statements = []
+
         # ── Pass 2：PDF 對帳單（複委託 / 台股月）+ 內文型月對帳單 ──
         for idx, it in enumerate(items):
             if _is_tw_daily(it['subject']):
@@ -669,6 +718,12 @@ def get_portfolio_from_gmail():
                 )
                 print(f"  [PDF] {it['subject'][:50]} → {len(trades)} 筆")
                 all_trades.extend(trades)
+                # 同一份文字還要拿去抽庫存表（成交是「這期發生什麼」，
+                # 庫存是「期末剩下什麼」—— 少了後者就是 HANDOFF 4.1 的少算）
+                try:
+                    statements.append((it['subject'], pdf_text(path)))
+                except Exception as e:
+                    print(f"  [庫存] {it['subject'][:40]} 文字抽取失敗：{e}")
 
             # 2b. 內文型月對帳單（沒 PDF 但內文有交易表）
             if not it['pdf_paths'] and _is_tw_monthly_text(it['subject'], it['body_text']):
@@ -680,6 +735,7 @@ def get_portfolio_from_gmail():
                 )
                 print(f"  [內文月報] {it['subject'][:50]} → {len(trades)} 筆")
                 all_trades.extend(trades)
+                statements.append((it['subject'], it['body_text']))
 
         # ── 詳細 trade dump，方便對照月對帳單 debug parser bug ──
         print("===== Raw trades（去重前） =====")
@@ -700,7 +756,12 @@ def get_portfolio_from_gmail():
         if len(deduped) != len(all_trades):
             print(f"  去重後 {len(all_trades)} → {len(deduped)} 筆交易")
 
-        portfolio = _aggregate_portfolio(deduped)
+        # 庫存快照優先於成交累加：從近 3 個月信件重建持倉，會漏掉買很久
+        # 之後就沒再交易的部位（HANDOFF 4.1）。有快照就用快照當起點，
+        # 只套用快照日之後的成交。沒快照才退回原本的成交累加。
+        snapshots = _build_snapshots(statements)
+        portfolio, sources = holdings.build_portfolio(deduped, snapshots)
+        print(holdings.describe_sources(sources))
 
         print("===== 持倉累計結果 =====")
         if not portfolio:

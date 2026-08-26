@@ -98,16 +98,26 @@ def aggregate_trades(trades, book=None):
         p = book.setdefault(t["ticker"], {"shares": 0, "cost_basis": 0.0})
         if t["action"] == "buy":
             p["shares"] += t["shares"]
-            p["cost_basis"] += t["shares"] * t["price"]
+            # cost_basis 是 None 代表「成本未知」（快照沒帶成本），不是 0。
+            # 未知加上已知還是未知 —— 補一段已知成本不會讓整體變成已知。
+            if p["cost_basis"] is not None:
+                p["cost_basis"] += t["shares"] * t["price"]
         else:  # sell
             if p["shares"] > 0:
-                avg = p["cost_basis"] / p["shares"]
                 sold = min(t["shares"], p["shares"])
+                # 成本未知時只扣股數。拿 0 當均價去扣會扣出一個假成本，
+                # 之後的損益率看起來正常但完全是編的。
+                if p["cost_basis"] is not None:
+                    avg = p["cost_basis"] / p["shares"]
+                    p["cost_basis"] -= avg * sold
                 p["shares"] -= sold
-                p["cost_basis"] -= avg * sold
 
     return {
-        ticker: {"shares": p["shares"], "avg_cost": p["cost_basis"] / p["shares"]}
+        ticker: {
+            "shares": p["shares"],
+            "avg_cost": (None if p["cost_basis"] is None
+                         else p["cost_basis"] / p["shares"]),
+        }
         for ticker, p in book.items()
         if p["shares"] > 0
     }
@@ -184,14 +194,22 @@ def build_portfolio(trades, snapshots=None):
             else:
                 before += 1
 
+        # 庫存表沒有成本欄（實測），avg_cost 是 None —— cost_basis 也保持 None，
+        # 一路傳到顯示端標「成本未知」，不要用收盤價或 0 充數。
         book = {
-            ticker: {"shares": h["shares"],
-                     "cost_basis": h["shares"] * h["avg_cost"]}
+            ticker: {
+                "shares": h["shares"],
+                "cost_basis": (None if h.get("avg_cost") is None
+                               else h["shares"] * h["avg_cost"]),
+            }
             for ticker, h in holdings.items()
         }
         portfolio.update(aggregate_trades(after, book=book))
         sources[market] = {
             "source": "snapshot",
+            # 快照哪來的要講實話：台股沒有月對帳單庫存表，說成月對帳單
+            # 會害下一個人去查一份不存在的東西
+            "origin": snap.get("origin", "statement"),
             "reason": "",
             "period": snap["period"],
             "trades_applied": len(after),
@@ -212,7 +230,9 @@ def describe_sources(sources):
         s = sources[market]
         if s["source"] == "snapshot":
             year, month = s["period"]
-            line = f"{market}：{year}/{month:02d} 月對帳單庫存為起點"
+            origin = ("手動設定的持倉" if s.get("origin") == "manual"
+                      else "月對帳單庫存")
+            line = f"{market}：{year}/{month:02d} {origin}為起點"
             if s["trades_applied"]:
                 line += f"，加上之後 {s['trades_applied']} 筆成交"
         else:
@@ -221,3 +241,101 @@ def describe_sources(sources):
             line += f"（{s['trades_undated']} 筆成交無日期已跳過）"
         lines.append(line)
     return "\n".join(lines)
+
+
+# ── 複委託月對帳單「股票庫存明細表」 ──────────────────────
+# 真實版面 2026-08-25 由 /admin/statement-dump 撈出（見 tests/test_holdings_inventory.py）。
+# pdfplumber 把表格攤平後欄位位置會飄：證券名稱可能留在行內、被推到上一行、
+# 或拆成上下兩行。所以不靠欄位序號，改拿幣別欄 `USD TWD USD` 當錨點回推 ——
+# 那三個 token 在所有實測變形裡都緊跟在「庫存股數 圈存股數」後面。
+_INVENTORY_HEADING = "股票庫存明細表"
+_CURRENCY_ANCHOR = ("USD", "TWD", "USD")
+
+
+def _to_int(token):
+    try:
+        return int(token.replace(",", ""))
+    except (ValueError, AttributeError):
+        return None
+
+
+def parse_us_inventory(text):
+    """複委託月對帳單文字 → {ticker: {"shares": int, "avg_cost": None}}。
+
+    庫存表只有參考收盤價與參考市值，**沒有成本均價**，所以 avg_cost 一律 None。
+    拿收盤價充數會讓未實現損益永遠是 0 —— 看起來正常的假數字最難發現。
+
+    沒有庫存表（台股月對帳單實測就沒有）回 {}，不猜也不炸。
+    """
+    if not text or _INVENTORY_HEADING not in text:
+        return {}
+
+    inventory = {}
+    for line in text.splitlines():
+        tokens = line.split()
+        if len(tokens) < 5:
+            continue
+        for i in range(2, len(tokens) - 2):
+            if tuple(tokens[i:i + 3]) != _CURRENCY_ANCHOR:
+                continue
+            shares = _to_int(tokens[i - 2])
+            earmarked = _to_int(tokens[i - 1])
+            ticker = tokens[1]
+            if shares is None or earmarked is None or shares <= 0:
+                break
+            inventory[ticker] = {"shares": shares, "avg_cost": None}
+            break
+    return inventory
+
+
+# ── 手動持倉快照（台股用） ────────────────────────────────
+# 台股月對帳單沒有庫存表（2026-08-25 /admin/statement-dump 實測），
+# 所以起始庫存只能由使用者從富邦 e01 查一次填進來。持倉數字走環境變數，
+# 不進 repo —— repo 是公開的。
+_MANUAL_ENTRY_RE = re.compile(r"^([A-Za-z0-9]+)\s*:\s*([\d,]+)\s*(?:@\s*([\d.]+))?$")
+
+
+def manual_snapshot(market, spec, asof):
+    """把 "2317:1000@95.5, 0050:500" + "2026-06-30" 轉成 build_portfolio 吃的快照。
+
+    asof 是必填。build_portfolio 會跳過基準日以前的成交（已含在庫存裡），
+    基準日猜錯就會少算或雙重計算 —— 而且錯得無聲無息。所以寧可回 None
+    讓系統退回成交累加，也不要拿今天當預設。
+
+    全部解析失敗時也回 None，不回空持倉 —— 空快照會被當成
+    「基準日時真的沒持股」，反而把之前的成交全部跳過。
+    """
+    if not spec or not asof:
+        return None
+    try:
+        year, month, _ = (int(p) for p in str(asof).split("-"))
+    except (ValueError, TypeError):
+        return None
+
+    positions, skipped = {}, []
+    for raw in str(spec).split(","):
+        entry = raw.strip()
+        if not entry:
+            continue
+        m = _MANUAL_ENTRY_RE.match(entry)
+        if not m:
+            skipped.append(entry)
+            continue
+        shares = _to_int(m.group(2))
+        if not shares or shares <= 0:
+            skipped.append(entry)
+            continue
+        positions[m.group(1)] = {
+            "shares": shares,
+            "avg_cost": float(m.group(3)) if m.group(3) else None,
+        }
+
+    if not positions:
+        return None
+    return {
+        "market": market,
+        "period": (year, month),
+        "holdings": positions,
+        "skipped": skipped,
+        "origin": "manual",
+    }

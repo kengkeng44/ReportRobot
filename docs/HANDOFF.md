@@ -54,7 +54,7 @@
 | 財務同步 + 去重 | ✅ 生產環境跑過 2 次,第二次 `written=0 skipped=7` |
 | Notion 區塊子頁 + relation | ✅ 真實 API 建立成功,relation 已確認 |
 | Rich Menu 分頁 + 字型 | ✅ 5 張選單建立成功,使用者確認有字 |
-| 持倉 / 淨值快照 | 🟡 寫入成功,但**資料正確性有疑慮**(見未解問題) |
+| 持倉 / 淨值快照 | 🟡 2026-08-26 已接上庫存快照(見 4.1),**Railway 端還沒實跑驗證**。台銀金那筆待補 |
 | 煮飯全部功能 | ❌ **完全沒有真實使用過** |
 | 財務查詢 5 個按鈕 | ❌ **只用假資料跑過,沒在 LINE 上按過** |
 | 採購清單 | ❌ 沒用過 |
@@ -63,7 +63,7 @@
 | 食材提醒的「已用掉」按鈕 | ❌ 沒在 LINE 上按過(23 個單元測試) |
 | 「買了」常買清單 Quick Reply | ❌ 沒在 LINE 上按過(20 個單元測試);選單已於 2026-08-19 重建,按鈕本身生效了 |
 | 「記一筆」兩段式 Quick Reply | ❌ 沒在 LINE 上按過(42 個單元測試);選單已於 2026-08-19 重建,按鈕本身生效了 |
-| 個人版每日報改寄 email | ⏳ **已改走 Gmail API**(2026-08-25) —— SMTP 埠被 Railway 擋死,見 4.6。**等使用者跑 `setup_send_token.py` 產 token** 才會真的開始寄 |
+| 個人版每日報改寄 email | ✅ **2026-08-26 使用者實測收到**。走 Gmail API(443),SMTP 埠被 Railway 擋死的問題見 4.6 |
 | `/admin/env-check` token 保護 | ✅ 生產環境實測:無 token 403、帶 token 200 |
 | 黃金改抓現貨(修少報 8%) | 🟡 本機實測 Gold-API 通、量級正確(4,611 vs 舊邏輯 ~4,254);**Railway 對外能不能連 gold-api.com 還沒驗** —— 連不到會 fallback `GLD × 10.84`,不開天窗但會回到有偏差的數字。看 2026-08-26 盤前報的黃金即可確認 |
 
@@ -99,10 +99,45 @@
 - `describe_sources()` 在沒快照時講明為什麼可能少算
 - **沒有任何刪除邏輯**(見上面那條紅線)
 
-**還缺的那一塊:** 月對帳單裡「庫存」區塊的文字格式沒人看過,
-`gmail_reader` 目前只抽成交列。已加 `GET /admin/statement-dump`(唯讀,
-要 `X-Admin-Token`)把每個市場最新一期對帳單的原始文字撈出來 ——
-**先看到真實格式再寫 parser,不要照 snippet 猜**(第 7 節)。
+#### 2026-08-26:已接上真實資料並接進生產路徑
+
+用 `/admin/statement-dump` 撈到真實格式後才動手(第 7 節)。撈出來發現
+**兩個市場的情況完全不同**,原本規格寫的「從月對帳單庫存欄位初始化」
+只有一半成立:
+
+| 市場 | 庫存表 | 做法 |
+|---|---|---|
+| 美股(複委託) | ✅ 有「股票庫存明細表」 | `holdings.parse_us_inventory()` 直接 parse |
+| 台股(有價證券) | ❌ **整份沒有** | 手動填 `TW_HOLDINGS` 環境變數 |
+
+台股月對帳單只有交易明細、應收付、集保「異動」,富邦自己在信裡寫
+「個人即時庫存餘額明細⋯⋯請登入網路交易系統或富邦e01查詢」。
+**不要再花時間找台股的庫存表,它不在那份信裡。**
+
+**美股版面的坑:** pdfplumber 攤平表格後欄位位置會飄,同一份對帳單裡就有
+三種變形(名稱留在行內 / 被推到上一行 / 拆成上下兩行)。所以不能靠欄位序號,
+`parse_us_inventory` 拿幣別欄 `USD TWD USD` 當錨點回推股數。
+
+**庫存表沒有成本均價**,只有參考收盤價與參考市值。所以 `avg_cost` 一律 None
+並一路傳到顯示端標「未知」——拿收盤價充數會讓未實現損益永遠是 0,
+拿 0 充數會讓損益率變成爆賺。兩種都是「看起來正常的假數字」。
+
+因此 `_compute_portfolio_data` 與 `build_portfolio_summary` 都把
+**淨值**與**損益小計**拆成兩組累加器:成本未知的部位計入淨值(股票是真的持有,
+漏掉就是本節要修的少算)但不計入損益(有市值沒成本會把整筆市值當成獲利)。
+
+**接線(這才是原本真正缺的一塊):** `holdings.build_portfolio` 在此之前是
+**孤兒程式碼** —— 22 個測試全綠,但沒有任何生產路徑會執行到它,
+三個消費端全部還在走 `_aggregate_portfolio`。現在
+`gmail_reader.get_portfolio_from_gmail` 改用 `_build_snapshots()` + `build_portfolio()`。
+
+順帶修掉一個獨立的坑:原本 `if not items: return {}` —— Gmail 一有閃失
+持倉就顯示成全部歸零,而不是退回已知庫存。
+
+**真實資料實測**(2026-08-26,不進 repo):美股快照抽出 3 檔,其中一檔
+是「買很久之後就沒再交易」那種,舊路徑完全抓不到 —— 正是本節描述的失效。
+
+**還缺的:** Railway 端還沒實跑;台股 `TW_HOLDINGS` 只填了一筆,另一筆待確認。
 
 ```powershell
 $t = [Environment]::GetEnvironmentVariable('ADMIN_TOKEN','User')
@@ -204,10 +239,17 @@ timeout 代表封包被靜默丟棄,這是防火牆的特徵(雲平台普遍擋 
 **因此「強制走 IPv4」這條修法出局** —— 465 / 587 的 IPv4 都不通。
 **任何用 `smtplib` 的寫法都不可能通**,得換成走 443 的方式。
 
-修法方向(尚未決定):
-- HTTPS 寄信服務(Resend / SendGrid 等)—— `mailer.send_email` 換實作、介面不變,測試不用重寫
+**已定案並上線:走 Gmail API(443)**,commit `d15bffb`。
+2026-08-26 使用者實測收到每日信 —— 這條管線通了,4.6 到此結案。
+
+關鍵是**另開一顆只有 `gmail.send` 的 token**(`SEND_TOKEN_PICKLE_B64`,
+由 `setup_send_token.py` 產),不碰既有那顆 readonly 的。在既有 token 上加
+scope 得重跑授權換掉線上那顆,而財務同步 / 發票 / Gmail 警示全靠它 ——
+爆炸半徑從三個功能縮到一個。
+
+當時評估過但沒選的兩條,留著備查:
+- HTTPS 寄信服務(Resend / SendGrid 等)—— `mailer.send_email` 換實作、介面不變
 - 改回 LINE 推播 —— `flex_builder.personal_report_carousel` 還留著,接回去即可
-- Gmail API 走 443 —— 要 `gmail.send` scope,**得換掉線上那顆 token,是連鎖故障風險**(見第 9 節)
 
 `mailer.py` 本身沒有錯,是選錯傳輸方式。`is_configured()` 那套 gate 與
 「沒設定就跳過不丟例外」的設計可以原樣沿用。
@@ -507,6 +549,13 @@ ReportRobot（根頁,NOTION_PARENT_PAGE_ID）
 | `FINANCE_CRON` | 財務同步排程(UTC crontab) | `30 7 * * *` |
 | `SEND_TOKEN_PICKLE_B64` | 個人報寄信用的 OAuth token base64,**只有 `gmail.send`** | 無 —— **沒設就整個不寄** |
 | `REPORT_EMAIL_TO` | 個人報收件者 | 沒設就寄給 `GMAIL_USER` 自己 |
+| `TW_HOLDINGS` | 台股起始庫存 `代號:股數@均價`,逗號分隔(均價可省) | 無 —— 沒設就退回成交累加(會漏掉舊部位) |
+| `TW_HOLDINGS_ASOF` | 上面那份庫存的基準日 `YYYY-MM-DD` | 無 —— **沒設則整份 TW_HOLDINGS 失效** |
+
+> ⚠️ `TW_HOLDINGS_ASOF` 是必填不是選填。`build_portfolio` 會跳過基準日以前的成交
+> (已含在庫存裡),基準日錯了就是少算或雙重計算,而且錯得無聲無息。
+> 所以缺基準日時 `manual_snapshot()` 直接回 None,寧可沒有快照也不要算錯。
+> 台股需要手動填的原因見 4.1:**富邦台股月對帳單整份沒有庫存表**。
 
 `NOTION_TOKEN` / `NOTION_PARENT_PAGE_ID` / `TOKEN_PICKLE_B64` / `PDF_PASSWORD_PREFIX` /
 `ADMIN_TOKEN` 皆已存在 Infisical,自動 sync 到 Railway。
@@ -545,6 +594,14 @@ ReportRobot（根頁,NOTION_PARENT_PAGE_ID）
   程式端已移除 relation 定義,但 `_ensure_properties()` 只補不刪,
   線上那個永遠空的欄位不會自動消失。
   路徑:交易明細 → 欄位標頭「帳戶」→ 下拉 → Delete property
+- [ ] **在 Infisical 設 `TW_HOLDINGS` / `TW_HOLDINGS_ASOF`**(2026-08-26):
+  台股月對帳單沒有庫存表(見 4.1),起始庫存只能手動給。已知一筆
+  `2330:10@2249.6`;另一筆使用者口述「台銀金 17410 一股」——
+  **台股沒有股價 17,410 的個股**(最高的大立光在 2,000 上下),
+  所以 17410 比較可能是總金額而不是每股價,**代號與股數待使用者確認後才填**。
+  填錯會讓淨值差一個量級,寧可先只填台積電那筆。
+- [ ] 部署後確認 Railway log 出現 `[holdings]` 那段來源說明,
+  確認美股走「月對帳單庫存」、台股走「手動設定的持倉」
 - [ ] 部署後確認 Railway log 出現 `[notion] ensure_all_dbs 完成:13/13`,
   並到 Notion 看「🍳 煮飯模板」底下是否長出食譜 / 本週菜單 / 採購清單
 

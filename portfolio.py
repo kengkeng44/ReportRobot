@@ -160,12 +160,20 @@ def _format_pnl_amount(value, is_us):
     return f"{sign}{prefix}{abs(value):,.0f}"
 
 
+def _avg_display(avg_cost, is_us):
+    """成本未知就寫「未知」。顯示 0 會被讀成零成本取得，是假資訊。"""
+    return _format_price(avg_cost, is_us) if avg_cost is not None else "未知"
+
+
 def _compute_portfolio_data(portfolio):
     """共用計算：跑 portfolio dict 算出每檔現價 / 損益 / 台美分區小計 / 淨值。
     給 build_portfolio_summary（文字版）與 build_portfolio_flex（Flex 版）共用。"""
     rows = []
     tw_cost = tw_value = 0.0
     us_cost = us_value = 0.0
+    # 損益小計專用：只累加成本已知的部位，跟淨值用的 *_value 分開
+    tw_priced_value = us_priced_value = 0.0
+    unknown_cost_tickers = []
 
     for ticker, p in portfolio.items():
         is_us = not _is_tw_ticker(ticker)
@@ -174,7 +182,11 @@ def _compute_portfolio_data(portfolio):
         current = get_live_price(ticker)
         name = get_stock_name(ticker)
         display = ticker if is_us else (name or ticker)
-        avg_str = _format_price(avg_cost, is_us)
+        # 成本未知（庫存快照沒有成本欄）不能顯示成 0 —— 那看起來像零成本取得
+        cost_known = avg_cost is not None
+        avg_str = _format_price(avg_cost, is_us) if cost_known else "未知"
+        if not cost_known:
+            unknown_cost_tickers.append(ticker)
 
         if current is None:
             note = "（黃金存摺 / 興櫃）" if _is_special_security(ticker) else ""
@@ -183,21 +195,28 @@ def _compute_portfolio_data(portfolio):
                 "shares": shares, "avg": avg_cost, "avg_str": avg_str,
                 "current": None, "current_str": f"N/A{note}",
                 "pnl": None, "pnl_pct": None,
-                "sort_key": shares * avg_cost,
+                "sort_key": shares * avg_cost if cost_known else 0,
             })
             continue
 
-        cost_value = shares * avg_cost
         market_value = shares * current
-        pnl = market_value - cost_value
-        pnl_pct = (current - avg_cost) / avg_cost * 100 if avg_cost > 0 else 0
+        cost_value = shares * avg_cost if cost_known else None
+        pnl = market_value - cost_value if cost_known else None
+        pnl_pct = ((current - avg_cost) / avg_cost * 100
+                   if cost_known and avg_cost > 0 else None)
 
+        # 淨值算全部（股票是真的持有），損益只算成本已知的 ——
+        # 有市值沒成本會把整筆市值當成獲利。
         if is_us:
-            us_cost += cost_value
             us_value += market_value
+            if cost_known:
+                us_cost += cost_value
+                us_priced_value += market_value
         else:
-            tw_cost += cost_value
             tw_value += market_value
+            if cost_known:
+                tw_cost += cost_value
+                tw_priced_value += market_value
 
         rows.append({
             "ticker": ticker, "display": display, "is_us": is_us,
@@ -212,15 +231,15 @@ def _compute_portfolio_data(portfolio):
     tw_summary = None
     us_summary = None
     if tw_cost > 0:
-        tw_pnl = tw_value - tw_cost
+        tw_pnl = tw_priced_value - tw_cost
         tw_summary = {
-            "cost": tw_cost, "value": tw_value, "pnl": tw_pnl,
+            "cost": tw_cost, "value": tw_priced_value, "pnl": tw_pnl,
             "pct": tw_pnl / tw_cost * 100, "is_us": False,
         }
     if us_cost > 0:
-        us_pnl = us_value - us_cost
+        us_pnl = us_priced_value - us_cost
         us_summary = {
-            "cost": us_cost, "value": us_value, "pnl": us_pnl,
+            "cost": us_cost, "value": us_priced_value, "pnl": us_pnl,
             "pct": us_pnl / us_cost * 100, "is_us": True,
         }
 
@@ -242,6 +261,8 @@ def _compute_portfolio_data(portfolio):
         "usd_twd_rate": rate,
         "tw_value_only_ntd": tw_value if tw_value > 0 else None,
         "us_value_only_usd": us_value if us_value > 0 else None,
+        # 哪幾檔沒被算進損益 —— 少算要說得出是哪些，不能靜靜少算
+        "unknown_cost_tickers": unknown_cost_tickers,
     }
 
 
@@ -267,6 +288,9 @@ def build_portfolio_summary(portfolio):
     rows = []
     tw_cost = tw_value = 0.0
     us_cost = us_value = 0.0
+    # 淨值要含成本未知的部位（股票是真的持有），總報酬不能含 —— 兩組分開累加
+    tw_net = us_net = 0.0
+    unknown_cost = []
 
     for ticker, p in portfolio.items():
         is_us = not _is_tw_ticker(ticker)
@@ -280,16 +304,33 @@ def build_portfolio_summary(portfolio):
         if current is None:
             note = "（黃金存摺/興櫃，現價需手動）" if _is_special_security(ticker) else ""
             rows.append({
-                'sort_key': shares * avg_cost,
+                'sort_key': shares * avg_cost if avg_cost is not None else 0,
                 'line': (
-                    f"{display}｜{shares}股｜均價{_format_price(avg_cost, is_us)}"
+                    f"{display}｜{shares}股｜均價{_avg_display(avg_cost, is_us)}"
                     f"｜現價N/A{note}"
                 ),
             })
             continue
 
-        cost_value = shares * avg_cost
         market_value = shares * current
+        cost_known = avg_cost is not None
+        if not cost_known:
+            unknown_cost.append(display)
+            if is_us:
+                us_net += market_value
+            else:
+                tw_net += market_value
+            # 成本未知的部位不進總報酬 —— 有市值沒成本會把整筆市值當成獲利
+            line = (
+                f"{display}｜{shares}股"
+                f"｜均價未知"
+                f"｜現價{_format_price(current, is_us)}"
+                f"｜損益未知"
+            )
+            rows.append({'sort_key': market_value, 'line': line})
+            continue
+
+        cost_value = shares * avg_cost
         pnl = market_value - cost_value
         pnl_pct = (current - avg_cost) / avg_cost * 100 if avg_cost > 0 else 0
         sign = "+" if pnl_pct >= 0 else ""
@@ -297,9 +338,11 @@ def build_portfolio_summary(portfolio):
         if is_us:
             us_cost += cost_value
             us_value += market_value
+            us_net += market_value
         else:
             tw_cost += cost_value
             tw_value += market_value
+            tw_net += market_value
 
         line = (
             f"{display}｜{shares}股"
@@ -335,22 +378,28 @@ def build_portfolio_summary(portfolio):
         lines.append("<b>💰 總報酬</b>")
         lines.extend(summary_parts)
 
+    if unknown_cost:
+        lines.append(
+            f"⚠️ {'、'.join(unknown_cost)} 成本未知（庫存快照沒有成本欄），"
+            "已計入淨值但未計入總報酬"
+        )
+
     # 淨值合計（按即時 USD/TWD 折算成 NTD 一個總數）
-    if tw_value > 0 or us_value > 0:
+    if tw_net > 0 or us_net > 0:
         lines.append("")
         rate = _get_usd_twd()
-        if rate and us_value > 0:
-            net_ntd = tw_value + us_value * rate
+        if rate and us_net > 0:
+            net_ntd = tw_net + us_net * rate
             lines.append(
                 f"<b>💎 淨值合計</b>：NTD {net_ntd:,.0f}"
                 f"（USD/TWD={rate:.2f}）"
             )
-        elif rate is None and us_value > 0:
+        elif rate is None and us_net > 0:
             lines.append(
-                f"<b>💎 淨值</b>：台股 NTD {tw_value:,.0f}"
-                f" + 美股 USD {us_value:,.0f}（匯率抓取失敗無法合計）"
+                f"<b>💎 淨值</b>：台股 NTD {tw_net:,.0f}"
+                f" + 美股 USD {us_net:,.0f}（匯率抓取失敗無法合計）"
             )
         else:
-            lines.append(f"<b>💎 淨值</b>：NTD {tw_value:,.0f}")
+            lines.append(f"<b>💎 淨值</b>：NTD {tw_net:,.0f}")
 
     return "\n".join(lines)
