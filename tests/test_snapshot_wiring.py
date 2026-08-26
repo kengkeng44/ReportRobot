@@ -117,3 +117,100 @@ def test_no_snapshot_still_falls_back_to_trade_accumulation(monkeypatch):
     monkeypatch.delenv("TW_HOLDINGS_ASOF", raising=False)
 
     assert gr.get_portfolio_from_gmail() == {}
+
+
+# ── 起始庫存改由 Notion 提供（2026-08-26）──────────────────
+# 使用者要能用 Notion App 直接改持倉,不用為了改一筆股數登入 Infisical。
+# 環境變數保留當備援：Notion 掛掉時還有東西可用。
+
+def _notion(monkeypatch, rows):
+    import notion_db
+    monkeypatch.setattr(notion_db, "starting_holdings_load", lambda: rows)
+
+
+def _pos(ticker, market="TW", shares=10, cost=None, asof="2026-08-26"):
+    return {"ticker": ticker, "market": market, "shares": shares,
+            "avg_cost": cost, "asof": asof}
+
+
+def test_notion_rows_become_snapshot(monkeypatch):
+    _notion(monkeypatch, [_pos("2330", shares=10, cost=2249.6)])
+
+    snaps = gr._build_snapshots([], {})
+    tw = [s for s in snaps if s["market"] == "TW"][0]
+
+    assert tw["holdings"]["2330"]["shares"] == 10
+    assert tw["cutoff"] == (2026, 8, 26)
+
+
+def test_notion_wins_over_env(monkeypatch):
+    """兩邊都有時以 Notion 為準 —— 使用者改的是 Notion,那才是他的意圖。"""
+    _notion(monkeypatch, [_pos("2330", shares=99)])
+
+    snaps = gr._build_snapshots([], {
+        "TW_HOLDINGS": "2330:10", "TW_HOLDINGS_ASOF": "2026-06-30",
+    })
+    tw = [s for s in snaps if s["market"] == "TW"][0]
+
+    assert tw["holdings"]["2330"]["shares"] == 99
+
+
+def test_env_used_when_notion_empty(monkeypatch):
+    _notion(monkeypatch, [])
+
+    snaps = gr._build_snapshots([], {
+        "TW_HOLDINGS": "2330:10", "TW_HOLDINGS_ASOF": "2026-06-30",
+    })
+
+    assert [s["market"] for s in snaps] == ["TW"]
+
+
+def test_markets_are_grouped_separately(monkeypatch):
+    _notion(monkeypatch, [_pos("2330"), _pos("AAPL", market="US")])
+
+    snaps = gr._build_snapshots([], {})
+
+    assert {s["market"] for s in snaps} == {"TW", "US"}
+
+
+def test_gold_grouped_with_tw(monkeypatch):
+    _notion(monkeypatch, [_pos("2330"), _pos("AU9901")])
+
+    snaps = gr._build_snapshots([], {})
+    tw = [s for s in snaps if s["market"] == "TW"][0]
+
+    assert set(tw["holdings"]) == {"2330", "AU9901"}
+
+
+def test_mixed_asof_uses_latest(monkeypatch):
+    """同市場混用不同基準日本身是設定錯誤。取最晚的（最接近現況）,
+    不要猜 —— 取最早會讓晚的那份重複計算。"""
+    _notion(monkeypatch, [
+        _pos("2330", asof="2026-06-30"),
+        _pos("0050", asof="2026-08-26"),
+    ])
+
+    snaps = gr._build_snapshots([], {})
+    tw = [s for s in snaps if s["market"] == "TW"][0]
+
+    assert tw["cutoff"] == (2026, 8, 26)
+
+
+def test_notion_snapshot_labelled_notion(monkeypatch):
+    """來源要說得出是哪來的 —— 數字不對時才知道去哪改。"""
+    _notion(monkeypatch, [_pos("2330")])
+
+    snaps = gr._build_snapshots([], {})
+    tw = [s for s in snaps if s["market"] == "TW"][0]
+
+    assert tw["origin"] == "notion"
+
+
+def test_us_statement_still_wins_for_us(monkeypatch):
+    """美股有月對帳單庫存（真實資料）,不該被手動設定蓋掉。"""
+    _notion(monkeypatch, [_pos("AAPL", market="US", shares=99)])
+
+    snaps = gr._build_snapshots([(US_MONTHLY, US_INVENTORY)], {})
+    us = [s for s in snaps if s["market"] == "US"][0]
+
+    assert us["holdings"]["AAPL"]["shares"] == 3

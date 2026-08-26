@@ -99,3 +99,44 @@ def test_describe_sources_says_manual_not_statement():
 
     assert "手動" in text
     assert "月對帳單" not in text
+
+
+# ── 手動基準日可能是月中,cutoff 不能無條件進位到月底 ──────────
+
+def test_mid_month_asof_does_not_skip_later_trades():
+    """基準日 8/26,8/28 的成交必須算進去。
+
+    build_portfolio 原本用 month_end(period) 當 cutoff（月對帳單庫存本來
+    就是月底狀態）,手動基準日沿用那套會把 8/27~8/31 的成交當成「已含在
+    庫存裡」而跳過 —— 今天填今天看不出來,過幾天才開始悄悄漏算。
+    """
+    snap = holdings.manual_snapshot("TW", "2330:10", "2026-08-26")
+    trade = {"ticker": "2330", "action": "buy", "shares": 5,
+             "price": 1000.0, "date": (2026, 8, 28), "market": "TW"}
+
+    portfolio, _ = holdings.build_portfolio([trade], [snap])
+
+    assert portfolio["2330"]["shares"] == 15
+
+
+def test_trade_on_asof_day_is_treated_as_already_included():
+    """基準日當天的成交已經反映在那份庫存裡,再加一次就是雙重計算。"""
+    snap = holdings.manual_snapshot("TW", "2330:10", "2026-08-26")
+    trade = {"ticker": "2330", "action": "buy", "shares": 5,
+             "price": 1000.0, "date": (2026, 8, 26), "market": "TW"}
+
+    portfolio, _ = holdings.build_portfolio([trade], [snap])
+
+    assert portfolio["2330"]["shares"] == 10
+
+
+def test_statement_snapshot_still_uses_month_end():
+    """月對帳單庫存沒有 cutoff 欄位,要維持原本的月底行為。"""
+    snap = {"market": "US", "period": (2026, 7),
+            "holdings": {"AAPL": {"shares": 3, "avg_cost": None}}}
+    trade = {"ticker": "AAPL", "action": "buy", "shares": 2,
+             "price": 300.0, "date": (2026, 7, 20), "market": "US"}
+
+    portfolio, _ = holdings.build_portfolio([trade], [snap])
+
+    assert portfolio["AAPL"]["shares"] == 3

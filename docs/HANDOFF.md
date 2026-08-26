@@ -550,8 +550,8 @@ ReportRobot（根頁,NOTION_PARENT_PAGE_ID）
 | `FINANCE_CRON` | 財務同步排程(UTC crontab) | `30 7 * * *` |
 | `SEND_TOKEN_PICKLE_B64` | 個人報寄信用的 OAuth token base64,**只有 `gmail.send`** | 無 —— **沒設就整個不寄** |
 | `REPORT_EMAIL_TO` | 個人報收件者 | 沒設就寄給 `GMAIL_USER` 自己 |
-| `TW_HOLDINGS` | 台股起始庫存 `代號:股數@均價`,逗號分隔(均價可省) | 無 —— 沒設就退回成交累加(會漏掉舊部位) |
-| `TW_HOLDINGS_ASOF` | 上面那份庫存的基準日 `YYYY-MM-DD` | 無 —— **沒設則整份 TW_HOLDINGS 失效** |
+| `TW_HOLDINGS` | 台股起始庫存**備援** `代號:股數@均價`,逗號分隔 | 無 —— 正常走 Notion「起始庫存」表,這個只在 Notion 讀不到時生效 |
+| `TW_HOLDINGS_ASOF` | 上面那份備援庫存的基準日 `YYYY-MM-DD` | 無 —— **沒設則整份 TW_HOLDINGS 失效** |
 | `PERSONAL_USER_ID` | 個人版每日信要放誰的待辦 / 提醒(LINE user id) | 無 —— 沒設就跳過這兩個區塊,其他照寄 |
 
 > ⚠️ `TW_HOLDINGS_ASOF` 是必填不是選填。`build_portfolio` 會跳過基準日以前的成交
@@ -596,7 +596,14 @@ ReportRobot（根頁,NOTION_PARENT_PAGE_ID）
   程式端已移除 relation 定義,但 `_ensure_properties()` 只補不刪,
   線上那個永遠空的欄位不會自動消失。
   路徑:交易明細 → 欄位標頭「帳戶」→ 下拉 → Delete property
-- [ ] **在 Infisical 設 `TW_HOLDINGS` / `TW_HOLDINGS_ASOF`**(2026-08-26):
+- [ ] **在 Notion「💰 財務中心 → 起始庫存」表填持倉**(2026-08-26):
+  部署後 `ensure_all_dbs()` 會自動建這張表。欄位:代號 / 市場 / 股數 /
+  平均成本 / 基準日 / 備註。**基準日必填**,沒填的列會被跳過。
+  已知:`2330` 10 股 @2249.6、`AU9901`(臺銀金,1 台錢) 1 股 @17410。
+  這張表**只讀不寫**,跟每天被覆寫的「持倉」輸出表刻意分開 ——
+  混在一起會讓算錯的結果被寫回去、下次當成起點讀回來,錯誤固化成事實。
+- [ ] ~~在 Infisical 設 `TW_HOLDINGS` / `TW_HOLDINGS_ASOF`~~ —— 改走 Notion,
+  環境變數只留作備援。原本的說明:
   台股月對帳單沒有庫存表(見 4.1),起始庫存只能手動給。已知一筆
   `2330:10@2249.6`;另一筆使用者口述「台銀金 17410 一股」——
   **台股沒有股價 17,410 的個股**(最高的大立光在 2,000 上下),

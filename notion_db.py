@@ -18,6 +18,8 @@ Notion 持久化基礎設施。
 
 import os
 import threading
+
+import holdings
 from datetime import datetime
 
 
@@ -35,7 +37,7 @@ _lock = threading.Lock()
 _SECTIONS = {
     "財務中心": {
         "icon": "💰",
-        "dbs": ("帳戶", "交易明細", "信用卡帳單", "持倉", "淨值快照"),
+        "dbs": ("帳戶", "交易明細", "信用卡帳單", "起始庫存", "持倉", "淨值快照"),
     },
     "煮飯模板": {
         "icon": "🍳",
@@ -222,6 +224,17 @@ _SCHEMAS = {
         "未實現損益": {"number": {"format": "number"}},
         "報酬率": {"number": {"format": "percent"}},
         "更新時間": {"date": {}},
+    },
+    # 持倉計算的**輸入**,跟「持倉」那張輸出表刻意分開:那張每天被
+    # finance_sync 覆寫,把起始庫存填進去會讓算錯的結果寫回 Notion、
+    # 下次當成起點讀回來,錯誤固化成「事實」而且查不出源頭。這張只讀不寫。
+    "起始庫存": {
+        "代號": {"title": {}},
+        "市場": _select(("TW", "blue"), ("US", "purple")),
+        "股數": {"number": {"format": "number"}},
+        "平均成本": {"number": {"format": "number"}},
+        "基準日": {"date": {}},
+        "備註": {"rich_text": {}},
     },
     "淨值快照": {
         "日期": {"title": {}},                                   # YYYY-MM-DD
@@ -1051,6 +1064,47 @@ def transaction_add(txn):
     except Exception as e:
         print(f"[notion] transaction_add 失敗 {txn.get('fingerprint')}：{e}")
         return None
+
+
+def starting_holdings_load():
+    """讀「起始庫存」表 —— 持倉計算的輸入。只讀不寫。
+
+    基準日缺的列直接跳過:基準日決定哪些成交要跳過(快照日以前的已經含在
+    庫存裡),猜一個日期就是少算或雙重計算,而且錯得無聲無息。
+    寧可少一列,也不要生一個看起來正常的錯數字。
+
+    Notion 掛掉回 [] 不丟例外 —— 每日排程不該因為讀不到設定就整個進
+    error listener,退回成交累加就好。
+    """
+    db_id = get_or_create_db("起始庫存")
+    client = _get_client()
+    if not db_id or not client:
+        return []
+
+    try:
+        res = client.databases.query(database_id=db_id, page_size=100)
+    except Exception as e:
+        print(f"[notion] 起始庫存讀取失敗：{e}")
+        return []
+
+    out = []
+    for row in res.get("results", []):
+        props = row.get("properties", {}) or {}
+        ticker = _read_title(props, "代號").strip()
+        shares = _read_number(props, "股數")
+        asof = ((props.get("基準日", {}) or {}).get("date") or {}).get("start")
+        if not ticker or not shares or shares <= 0 or not asof:
+            continue
+        # 市場沒填就用代號推 —— 手打漏一欄很正常,不要整列丟掉。
+        # guess_market 認得 AU9901(臺銀金)是台幣計價。
+        out.append({
+            "ticker": ticker,
+            "market": _read_select(props, "市場") or holdings.guess_market(ticker),
+            "shares": int(shares),
+            "avg_cost": _read_number(props, "平均成本"),
+            "asof": asof[:10],
+        })
+    return out
 
 
 def transactions_load(limit=200):

@@ -655,13 +655,66 @@ def _build_snapshots(statements, env=None):
                 })
                 break
 
-    tw = holdings.manual_snapshot(
-        "TW", env.get("TW_HOLDINGS"), env.get("TW_HOLDINGS_ASOF")
-    )
-    if tw:
-        snapshots.append(tw)
+    # 起始庫存以 Notion「起始庫存」表為主（使用者可以用 App 直接改），
+    # 環境變數留著當備援 —— Notion 掛掉時還有東西可用。
+    # 月對帳單庫存優先於兩者：那是券商給的真實資料，不是人填的。
+    have = {snap["market"] for snap in snapshots}
+    for market, positions in _group_starting_holdings().items():
+        if market in have:
+            continue
+        snapshots.append(positions)
+        have.add(market)
+
+    if "TW" not in have:
+        tw = holdings.manual_snapshot(
+            "TW", env.get("TW_HOLDINGS"), env.get("TW_HOLDINGS_ASOF")
+        )
+        if tw:
+            snapshots.append(tw)
 
     return snapshots
+
+
+def _group_starting_holdings():
+    """Notion 起始庫存 → {市場: 快照}。讀不到就回 {}。
+
+    同市場混用不同基準日本身是設定錯誤（一份庫存應該是同一時點的完整
+    狀態）。這裡取最晚的那個 —— 最接近現況；取最早會讓比較晚的那幾列
+    的成交被重算一次。
+    """
+    try:
+        import notion_db
+        rows = notion_db.starting_holdings_load()
+    except Exception as e:
+        print(f"[holdings] Notion 起始庫存讀取失敗，改用環境變數：{e}")
+        return {}
+
+    grouped = {}
+    for row in rows or []:
+        market = row.get("market") or holdings.guess_market(row.get("ticker"))
+        snap = grouped.setdefault(market, {
+            "market": market,
+            "holdings": {},
+            "origin": "notion",
+            "cutoff": None,
+            "period": None,
+        })
+        snap["holdings"][row["ticker"]] = {
+            "shares": row["shares"],
+            "avg_cost": row.get("avg_cost"),
+        }
+        try:
+            year, month, day = (int(p) for p in str(row["asof"]).split("-"))
+        except (ValueError, TypeError, KeyError):
+            continue
+        if snap["cutoff"] is None or (year, month, day) > snap["cutoff"]:
+            snap["cutoff"] = (year, month, day)
+            snap["period"] = (year, month)
+
+    # 基準日全都解析不出來的市場丟掉：沒有 cutoff 就無法決定哪些成交
+    # 要跳過，硬用會少算或雙重計算
+    return {m: snap for m, snap in grouped.items()
+            if snap["cutoff"] and snap["holdings"]}
 
 
 def get_portfolio_from_gmail():

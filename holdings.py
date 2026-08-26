@@ -187,7 +187,8 @@ def build_portfolio(trades, snapshots=None):
             }
             continue
 
-        cutoff = month_end(*snap["period"])
+        # 月對帳單庫存是月底狀態,沒帶 cutoff 就用月底;手動快照帶精確日期
+        cutoff = snap.get("cutoff") or month_end(*snap["period"])
         after, before, undated = [], 0, 0
         for t in market_trades:
             day = t.get("date")
@@ -235,8 +236,10 @@ def describe_sources(sources):
         s = sources[market]
         if s["source"] == "snapshot":
             year, month = s["period"]
-            origin = ("手動設定的持倉" if s.get("origin") == "manual"
-                      else "月對帳單庫存")
+            origin = {
+                "manual": "手動設定的持倉",
+                "notion": "Notion 起始庫存",
+            }.get(s.get("origin"), "月對帳單庫存")
             line = f"{market}：{year}/{month:02d} {origin}為起點"
             if s["trades_applied"]:
                 line += f"，加上之後 {s['trades_applied']} 筆成交"
@@ -313,7 +316,7 @@ def manual_snapshot(market, spec, asof):
     if not spec or not asof:
         return None
     try:
-        year, month, _ = (int(p) for p in str(asof).split("-"))
+        year, month, day = (int(p) for p in str(asof).split("-"))
     except (ValueError, TypeError):
         return None
 
@@ -343,4 +346,8 @@ def manual_snapshot(market, spec, asof):
         "holdings": positions,
         "skipped": skipped,
         "origin": "manual",
+        # 精確到日。手動基準日常常是月中,沿用 month_end 會把基準日之後、
+        # 月底之前的成交當成「已含在庫存裡」而跳過 —— 今天填今天看不出來,
+        # 過幾天才開始悄悄漏算。
+        "cutoff": (year, month, day),
     }
