@@ -42,15 +42,20 @@ _TROY_OZ_TO_GRAM = 31.1034768
 _TW_TICKER_RE = re.compile(r'^\d{4,6}[A-Z]?$')
 
 
-def _is_tw_ticker(ticker):
-    return bool(_TW_TICKER_RE.fullmatch(ticker or ''))
-
-
 def _is_special_security(ticker):
     """興櫃 / 黃金存摺等 yfinance 抓不到的特殊代號。
     AU9901 = 臺灣銀行黃金存摺，需用台銀牌告，這裡先 skip 顯 N/A。"""
     t = (ticker or "").upper()
     return t.startswith("AU")  # AU9901 黃金存摺
+
+
+def _is_tw_ticker(ticker):
+    # AU9901（臺銀金／黃金現貨）在證交所掛牌、以台幣計價，但代號帶字母，
+    # 四碼數字的規則抓不到它。漏掉的後果是台幣金額被當成美元再乘匯率，
+    # 一筆一萬七會膨脹成五十幾萬 —— 而且看起來就是個正常數字。
+    if _is_special_security(ticker):
+        return True
+    return bool(_TW_TICKER_RE.fullmatch(ticker or ''))
 
 
 def _to_yahoo_symbol(ticker):

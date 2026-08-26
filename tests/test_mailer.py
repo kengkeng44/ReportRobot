@@ -152,3 +152,30 @@ def test_no_smtp_fallback():
     「試 SMTP 失敗再走 API」這種寫法會讓每日報固定慢 20 秒起跳。
     """
     assert not hasattr(mailer, "smtplib")
+
+
+# ── 卡片版型要能原樣寄出（2026-08-26）──────────────────────
+# _build_message 原本一律 to_html(body) 再包一層 div，那會把 digest.py
+# 產的完整 HTML 版型包壞。給了 html 就原樣用，沒給維持原行為。
+
+def test_prebuilt_html_is_used_verbatim():
+    msg = mailer._build_message("主旨", "純文字備援", html="<div id='card'>卡片</div>")
+
+    payload = msg.get_payload()[1].get_payload(decode=True).decode()
+    assert "<div id='card'>卡片</div>" in payload
+
+
+def test_plain_text_alternative_still_present():
+    """收信端不吃 HTML 時要有純文字版 —— 不能只寄 HTML。"""
+    msg = mailer._build_message("主旨", "純文字備援", html="<div>卡片</div>")
+
+    plain = msg.get_payload()[0].get_payload(decode=True).decode()
+    assert "純文字備援" in plain
+
+
+def test_without_html_behaviour_unchanged():
+    """沒給 html 時維持原本行為，既有每日信不受影響。"""
+    msg = mailer._build_message("主旨", "一般內容")
+
+    payload = msg.get_payload()[1].get_payload(decode=True).decode()
+    assert "一般內容" in payload

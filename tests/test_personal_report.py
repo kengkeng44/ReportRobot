@@ -85,7 +85,8 @@ def _mailed(monkeypatch):
     box = []
     monkeypatch.setattr(mailer, "is_configured", lambda: True)
     monkeypatch.setattr(mailer, "send_email",
-                        lambda subject, body: box.append((subject, body)) or True)
+                        lambda subject, body, html=None:
+                            box.append((subject, body)) or True)
     monkeypatch.setattr(daily_report, "get_weather_report",
                         lambda locations=None: ("板橋天氣", None))
     monkeypatch.setattr(daily_report, "_spending_recent", lambda: "最新消費內容")

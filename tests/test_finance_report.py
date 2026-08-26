@@ -250,3 +250,90 @@ def test_manual_entries_same_day_same_amount_differ_by_shop():
     a = fr.parse_manual("午餐 120")
     b = fr.parse_manual("晚餐 120")
     assert a["fingerprint"] != b["fingerprint"]
+
+
+# ── 當月逐筆明細（2026-08-26，每日信件用）──────────────────
+# 使用者要「一整個月的花銷都列出來」。既有的 format_monthly_spending
+# 只給分類統計，看不到單筆花在哪。
+
+def _mtxn(date, shop, amount, category="餐飲", currency="TWD", direction="支出"):
+    """包既有的 _txn（它帶著 _is_spending 需要的 direction / status），
+    只補上這組測試要驗的 currency —— 不要另外造一份會漂移的假資料。
+
+    排除收入 / 還款靠的是 direction 欄位，不是 category。"""
+    t = _txn(date, amount, category=category, shop=shop, direction=direction)
+    t["currency"] = currency
+    return t
+
+
+def test_monthly_detail_lists_every_transaction():
+    text = fr.format_monthly_detail([
+        _mtxn("2026-08-01", "全家", 85),
+        _mtxn("2026-08-15", "星巴克", 160),
+    ], "2026-08")
+
+    assert "全家" in text
+    assert "星巴克" in text
+
+
+def test_monthly_detail_groups_by_day_newest_first():
+    """最近的花費先看到 —— 信件是每天早上看的，舊的往下捲。"""
+    text = fr.format_monthly_detail([
+        _mtxn("2026-08-01", "舊的", 100),
+        _mtxn("2026-08-20", "新的", 200),
+    ], "2026-08")
+
+    assert text.index("新的") < text.index("舊的")
+
+
+def test_monthly_detail_has_month_total():
+    text = fr.format_monthly_detail([
+        _mtxn("2026-08-01", "全家", 85),
+        _mtxn("2026-08-15", "星巴克", 160),
+    ], "2026-08")
+
+    assert "245" in text
+
+
+def test_monthly_detail_excludes_other_months():
+    text = fr.format_monthly_detail([
+        _mtxn("2026-07-31", "上個月", 999),
+        _mtxn("2026-08-01", "這個月", 85),
+    ], "2026-08")
+
+    assert "上個月" not in text
+    assert "這個月" in text
+
+
+def test_monthly_detail_excludes_income_and_repayment():
+    """只列花銷。把還款算成支出會讓月總額變兩倍。"""
+    rows = [_mtxn("2026-08-01", "全家", 85),
+            _mtxn("2026-08-02", "信用卡還款", 5000, direction="還款")]
+
+    text = fr.format_monthly_detail(rows, "2026-08")
+
+    assert "全家" in text
+    assert "信用卡還款" not in text
+
+
+def test_monthly_detail_empty_month():
+    assert fr.format_monthly_detail([], "2026-08") == fr._EMPTY_MONTH
+
+
+def test_monthly_detail_shows_daily_subtotal():
+    text = fr.format_monthly_detail([
+        _mtxn("2026-08-01", "全家", 85),
+        _mtxn("2026-08-01", "星巴克", 160),
+    ], "2026-08")
+
+    assert "245" in text
+
+
+def test_monthly_detail_keeps_foreign_currency_separate():
+    """外幣不能跟台幣相加 —— 加起來是個沒有意義的數字。"""
+    text = fr.format_monthly_detail([
+        _mtxn("2026-08-01", "全家", 85),
+        _mtxn("2026-08-02", "Netflix", 15, currency="USD"),
+    ], "2026-08")
+
+    assert "USD" in text

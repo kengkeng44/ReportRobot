@@ -108,6 +108,32 @@ def _spending_recent():
     return finance_report.format_latest_day_spending(txns, today_tpe())
 
 
+NL = chr(10)
+SEP = NL * 2
+
+
+def _build_personal_sections(todos, reminders, monthly_detail,
+                             spending, kitchen, weather):
+    """個人版每日信的區塊與順序：**待辦 → 財務 → 買菜**（使用者指定，
+    2026-08-26），跟 digest_preview.html 範本原本的順序不同。
+
+    本月明細排在最新消費前面 —— 使用者要的是「整個月的花銷」，
+    那是主角，最新消費只是補充。
+
+    天氣範本裡沒有但現有信件有，保留並排最後（移除功能不在這次要求裡）。
+    空的區塊直接不放：留一張空卡片比沒有還糟。
+    """
+    candidates = [
+        ("📋 今日待辦", todos),
+        ("⏰ 進行中提醒", reminders),
+        ("💳 本月消費明細", monthly_detail),
+        ("🧾 最新消費", spending),
+        ("🍳 冰箱快過期・煮什麼", kitchen),
+        ("🌤️ 天氣", weather),
+    ]
+    return [(title, text) for title, text in candidates if text]
+
+
 def _email_personal_report(today):
     """個人版：食材 + 板橋天氣 + 最新消費，寄 Gmail 給自己。
 
@@ -138,19 +164,57 @@ def _email_personal_report(today):
     kitchen = _safe("個人版食材", _kitchen_for_personal) or {}
     spending_text = _safe("個人版消費", _spending_recent)
 
-    # 順序沿用原本的 carousel：有時效的排最前面
-    sections = [
-        ("🥬 食材提醒", kitchen.get("text")),
-        ("🌤️ 天氣報告", weather_text),
-        ("💳 最新消費", spending_text),
-    ]
-    body = "\n\n".join(f"<b>{title}</b>\n{text}" for title, text in sections if text)
-    if not body:
-        # 三段都沒東西（沒食材要過期 + 天氣掛了 + 沒消費資料）→ 不寄空信
+    def _personal_todos():
+        user_id = os.environ.get("PERSONAL_USER_ID", "").strip()
+        if not user_id:
+            return None          # 沒設就跳過這區塊，跟 mailer 的 gate 同一套
+        import personal
+        return personal.format_todos(user_id)
+
+    def _personal_reminders():
+        user_id = os.environ.get("PERSONAL_USER_ID", "").strip()
+        if not user_id:
+            return None
+        import personal
+        return personal.format_reminders(user_id)
+
+    def _monthly_detail():
+        # 使用者要「一整個月的花銷都列出來」（2026-08-26）。
+        # limit 抓 400 是因為當月筆數可能超過 transactions_load 的預設 200，
+        # 抓不夠會安靜地少列幾筆 —— 那正是這個專案一直在防的錯。
+        import notion_db
+        from finance_report import format_monthly_detail, _EMPTY_MONTH
+        txns = notion_db.transactions_load(limit=400)
+        text = format_monthly_detail(txns, today_tpe().strftime("%Y-%m"))
+        # 月初還沒有任何消費時 format_monthly_detail 回的是一段說明文字，
+        # 不是空值。那段對「/財務」這種指令查詢有用（你問了就該回答），
+        # 但對每日信只是雜訊 —— 其他區塊也空的話整封信就不該寄。
+        # 判斷放在這裡而不是改 format_monthly_detail，改它會弄壞指令查詢。
+        return None if text == _EMPTY_MONTH else text
+
+    todos_text = _safe("個人版待辦", _personal_todos)
+    reminders_text = _safe("個人版提醒", _personal_reminders)
+    monthly_text = _safe("個人版本月明細", _monthly_detail)
+
+    sections = _build_personal_sections(
+        todos=todos_text,
+        reminders=reminders_text,
+        monthly_detail=monthly_text,
+        spending=spending_text,
+        kitchen=kitchen.get("text"),
+        weather=weather_text,
+    )
+    if not sections:
+        # 全部區塊都沒東西 → 不寄空信
         print("[個人版] 沒有任何內容，這次不寄")
         return
 
-    mailer.send_email(f"📮 每日個人報 {today}", body)
+    import digest
+    html = digest.build_digest_html(today, sections)
+    # 純文字版是給不吃 HTML 的收信端看的，內容一樣、沒有版型
+    plain = SEP.join(f"{title}{NL}{text}" for title, text in sections)
+
+    mailer.send_email(f"📮 每日個人報 {today}", plain, html=html)
 
 
 async def run_daily_report(force_premarket=False):

@@ -98,20 +98,25 @@ def to_html(text):
     return out.replace("\n", "<br>")
 
 
-def _build_message(subject, body):
+def _build_message(subject, body, html=None):
+    """html 給了就原樣寄（digest.py 產的卡片版型已經是完整 HTML，
+    再包一層 div 會把版面弄壞）；沒給就維持原本的簡易轉換。
+
+    純文字版一律保留 —— 收信端不吃 HTML 時還有東西可看。
+    """
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = sender()
     msg["To"] = recipient()
     msg.set_content(strip_html(body))
     msg.add_alternative(
-        f'<div style="font-family:sans-serif;line-height:1.7">{to_html(body)}</div>',
+        html or f'<div style="font-family:sans-serif;line-height:1.7">{to_html(body)}</div>',
         subtype="html",
     )
     return msg
 
 
-def send_email(subject, body):
+def send_email(subject, body, html=None):
     """寄一封信，成功回 True。
 
     沒設定就回 False 而不是丟例外 —— 呼叫端（每日排程）當作沒這功能，
@@ -121,7 +126,7 @@ def send_email(subject, body):
         print("[mailer] 沒設 GMAIL_USER / SEND_TOKEN_PICKLE_B64，跳過寄信")
         return False
 
-    msg = _build_message(subject, body)
+    msg = _build_message(subject, body, html=html)
     # Gmail API 收的是 RFC822 全文的 urlsafe base64，不是 MIME 物件
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
     _service().users().messages().send(userId="me", body={"raw": raw}).execute()

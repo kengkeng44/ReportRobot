@@ -65,6 +65,7 @@
 | 「記一筆」兩段式 Quick Reply | ❌ 沒在 LINE 上按過(42 個單元測試);選單已於 2026-08-19 重建,按鈕本身生效了 |
 | 個人版每日報改寄 email | ✅ **2026-08-26 使用者實測收到**。走 Gmail API(443),SMTP 埠被 Railway 擋死的問題見 4.6 |
 | `/admin/env-check` token 保護 | ✅ 生產環境實測:無 token 403、帶 token 200 |
+| 每日信卡片版型 + 本月消費明細 | 🟡 759 個測試綠、本機產過預覽,**Railway 端還沒實跑**。持股 / LINE 餘額 / 載具品項刻意沒接(見下) |
 | 黃金改抓現貨(修少報 8%) | 🟡 本機實測 Gold-API 通、量級正確(4,611 vs 舊邏輯 ~4,254);**Railway 對外能不能連 gold-api.com 還沒驗** —— 連不到會 fallback `GLD × 10.84`,不開天窗但會回到有偏差的數字。看 2026-08-26 盤前報的黃金即可確認 |
 
 ---
@@ -551,6 +552,7 @@ ReportRobot（根頁,NOTION_PARENT_PAGE_ID）
 | `REPORT_EMAIL_TO` | 個人報收件者 | 沒設就寄給 `GMAIL_USER` 自己 |
 | `TW_HOLDINGS` | 台股起始庫存 `代號:股數@均價`,逗號分隔(均價可省) | 無 —— 沒設就退回成交累加(會漏掉舊部位) |
 | `TW_HOLDINGS_ASOF` | 上面那份庫存的基準日 `YYYY-MM-DD` | 無 —— **沒設則整份 TW_HOLDINGS 失效** |
+| `PERSONAL_USER_ID` | 個人版每日信要放誰的待辦 / 提醒(LINE user id) | 無 —— 沒設就跳過這兩個區塊,其他照寄 |
 
 > ⚠️ `TW_HOLDINGS_ASOF` 是必填不是選填。`build_portfolio` 會跳過基準日以前的成交
 > (已含在庫存裡),基準日錯了就是少算或雙重計算,而且錯得無聲無息。

@@ -81,7 +81,12 @@ def month_end(year, month):
 
 def guess_market(ticker):
     """沒標 market 的舊資料用代號形狀猜。"""
-    return "TW" if _TW_TICKER_RE.match(str(ticker or "").strip()) else "US"
+    t = str(ticker or "").strip()
+    # AU9901（臺銀金／黃金現貨）在證交所掛牌、台幣計價，但代號帶字母。
+    # 分錯市場會讓它的成交套到美股快照的 cutoff 上。
+    if t.upper().startswith("AU"):
+        return "TW"
+    return "TW" if _TW_TICKER_RE.match(t) else "US"
 
 
 def aggregate_trades(trades, book=None):

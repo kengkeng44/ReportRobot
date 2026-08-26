@@ -98,6 +98,52 @@ def format_monthly_spending(txns, month):
     return "\n".join(lines)
 
 
+def format_monthly_detail(txns, month):
+    """month 格式 YYYY-MM。當月每一筆花銷逐日列出。
+
+    既有的 format_monthly_spending 只給分類統計，看不到單筆花在哪 ——
+    使用者要在每日信裡看到整個月的明細（2026-08-26）。
+
+    日期由新到舊：信是每天早上看的，最近的花費要先看到，舊的往下捲。
+    外幣不併進台幣總計 —— 把 US$15 加進台幣會得到一個沒有意義的數字，
+    而且畫面上看不出來哪裡怪。
+    """
+    rows = [t for t in txns
+            if (t.get("date") or "").startswith(month) and _is_spending(t)]
+    if not rows:
+        return _EMPTY_MONTH
+
+    by_day = defaultdict(list)
+    for t in rows:
+        by_day[t.get("date")].append(t)
+
+    lines = []
+    twd_total = 0.0
+    other_total = defaultdict(float)
+    for day in sorted(by_day, reverse=True):
+        lines.append(f"■ {day[5:].replace('-', '/')}")
+        day_total = 0.0
+        for t in by_day[day]:
+            amount = t.get("amount") or 0
+            currency = _currency(t)
+            shop = t.get("shop") or "（未填商家）"
+            if currency == "TWD":
+                lines.append(f"　・{shop}　NT${_money(amount)}")
+                day_total += amount
+                twd_total += amount
+            else:
+                lines.append(f"　・{shop}　{currency} {_money(amount)}")
+                other_total[currency] += amount
+        if day_total:
+            lines.append(f"　小計 NT${_money(day_total)}")
+        lines.append("")
+
+    lines.append(f"本月合計：NT${_money(twd_total)}（共 {len(rows)} 筆）")
+    for currency, amount in sorted(other_total.items()):
+        lines.append(f"　＋ {currency} {_money(amount)}（外幣另計）")
+    return "\n".join(lines)
+
+
 # ─────────────────────────────────────────────────────────
 # 最近交易
 # ─────────────────────────────────────────────────────────
