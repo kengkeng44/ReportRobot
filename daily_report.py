@@ -11,6 +11,7 @@
   財務只走個人版，不進群組。
 """
 
+import os
 import traceback
 
 import humor
