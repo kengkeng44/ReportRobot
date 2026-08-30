@@ -178,3 +178,11 @@ def test_help_does_not_document_unsupported_commands():
         if token in ignore:
             continue
         assert cr.parse("/" + token) is not None, f"說明寫了 /{token} 但程式不認得"
+
+
+def test_help_mentions_the_split_step():
+    """/help 教的流程必須跟實際流程一致，否則使用者會照著一個
+    已經不成立的說明操作。"""
+    import command_router as cr
+
+    assert "共同" in cr.HELP_TEXT
