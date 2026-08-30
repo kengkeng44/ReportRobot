@@ -79,6 +79,18 @@ def format_monthly_spending(txns, month):
     total = sum(by_cat.values())
 
     lines = [f"💳 {month} 支出　NT${_money(total)}", f"　共 {len(twd_rows)} 筆", ""]
+
+    # 「金額」欄已經是我實際負擔，這行是為了看得到整桌花多少。
+    # 沒有共同消費的月份不印 —— 常態是零的欄位每個月都佔一行，
+    # 會讓人不再讀它。
+    shared = [t for t in twd_rows if (t.get("split_type") or "個人") == "共同"]
+    if shared:
+        mine = sum(t.get("amount") or 0 for t in shared)
+        gross = sum((t.get("total") if t.get("total") is not None
+                     else t.get("amount")) or 0 for t in shared)
+        lines.insert(2, f"　其中共同分攤 NT${_money(mine)}"
+                        f"（原始 NT${_money(gross)}）")
+
     for cat, amt in sorted(by_cat.items(), key=lambda kv: -kv[1]):
         pct = round(amt / total * 100) if total else 0
         lines.append(f"・{cat}　NT${_money(amt)}　{pct}%")
@@ -224,6 +236,22 @@ _AMOUNT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:元|塊)?")
 _FOOD_HINTS = ("早餐", "午餐", "晚餐", "咖啡", "飲料", "點心", "宵夜", "下午茶")
 
 
+# ── 共同消費分攤 ─────────────────────────────────────────
+# 共同消費裡我負擔的比例。寫成常數而不是散落各處的 / 2 ——
+# 這是一個政策決定，不是數學。散落的 / 2 讀起來像數學，改的時候會漏。
+MY_SHARE = 0.5
+
+
+def my_share_of(total):
+    """共同消費裡我負擔多少。四捨五入到整數 —— 台幣沒有小數。
+
+    不用內建 round()：那是 banker's rounding，round(302.5) 得 302 而
+    round(303.5) 得 304，同樣是 .5 卻一個往下一個往上。共同消費除以 2
+    在金額為奇數時大量產生 .5，忽上忽下對帳時查不出規律。
+    """
+    return int((total or 0) * MY_SHARE + 0.5)
+
+
 def guess_category(shop):
     """品項 → 消費類別。認不出來回「其他」，不自創類別。
 
@@ -235,25 +263,57 @@ def guess_category(shop):
     return "餐飲" if any(k in name for k in _FOOD_HINTS) else "其他"
 
 
-def make_manual_fingerprint(day, amount, shop):
+# 分攤類型只認這兩個詞。不加「一起」「共用」這類同義詞 ——
+# 「一起吃飯 300」會被誤判成共同消費，而使用者是用按鈕選的，
+# 同義詞只擴大誤判面不增加可用性。
+_SPLIT_TYPES = ("個人", "共同")
+
+
+def _strip_split_type(text):
+    """從尾端剝離「個人」/「共同」。回 (剩下的文字, split_type or None)。
+
+    只認尾端：「共同基金 3000」的共同在開頭，那是商店名不是分攤類型。
+    """
+    cleaned = (text or "").strip()
+    for name in _SPLIT_TYPES:
+        if cleaned.endswith(name):
+            return cleaned[: -len(name)].strip(), name
+    return cleaned, None
+
+
+def make_manual_fingerprint(day, amount, shop, split_type=None):
+    """個人維持既有四段格式，共同才加後綴。
+
+    個人 300 與共同 600（分攤 300）的「金額」欄都是 300，不加區別就會
+    算出相同 fingerprint。個人不動格式是為了不改變既有資料的比對基準。
+    """
     raw = f"手動|{day}|{amount}|{shop}"
+    if split_type == "共同":
+        raw += "|共同"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 
 def parse_manual(text, today=None):
-    """「午餐 120」或「120 午餐」→ 交易 dict。沒有金額就回 None。
+    """「午餐 120」或「晚餐 600 共同」→ 交易 dict。沒有金額就回 None。
 
     沒金額不猜 —— 記一筆金額錯的帳，比沒記更難發現也更難修。
+
+    split_type 的三態約定，呼叫端靠它決定下一步：
+      沒有金額        → 回 None，呼叫端跳金額按鈕
+      「晚餐 600」    → split_type=None，呼叫端跳個人/共同按鈕
+      「晚餐 600 共同」→ split_type="共同"，呼叫端寫入 Notion
+    split_type=None 時 amount 先等於 total，但那是還沒決定分攤前的暫定值，
+    呼叫端不該拿去寫入。
     """
     if not text:
         return None
-    cleaned = text.strip()
+    cleaned, split_type = _strip_split_type(text)
 
     m = _AMOUNT_RE.search(cleaned)
     if not m:
         return None
-    amount = float(m.group(1))
-    amount = int(amount) if amount == int(amount) else amount
+    total = float(m.group(1))
+    total = int(total) if total == int(total) else total
 
     shop = (cleaned[:m.start()] + " " + cleaned[m.end():]).strip()
     shop = re.sub(r"\s+", " ", shop)
@@ -263,15 +323,23 @@ def parse_manual(text, today=None):
     day = (today or date.today()).isoformat()
     direction = "收入" if any(k in shop for k in _INCOME_HINTS) else "支出"
 
+    # 收入不跟人分攤。留成 None 的話「薪水 50000」也會跳出個人/共同那一段。
+    if direction == "收入" and split_type is None:
+        split_type = "個人"
+
+    amount = my_share_of(total) if split_type == "共同" else total
+
     return {
         "date": day,
-        "amount": amount,
+        "amount": amount,               # 我實際負擔 —— 六處報表都讀這個
+        "total": total,                 # 掏出去的全額
+        "split_type": split_type,
         "shop": shop,
         "category": guess_category(shop),
         "direction": direction,
-        "status": "已結帳",          # 手動輸入就是最終金額，不需要對帳
+        "status": "已結帳",              # 手動輸入就是最終金額，不需要對帳
         "source": "手動",
-        "fingerprint": make_manual_fingerprint(day, amount, shop),
+        "fingerprint": make_manual_fingerprint(day, total, shop, split_type),
     }
 
 
@@ -284,9 +352,32 @@ def parse_manual(text, today=None):
 # 沒有記帳歷史時的預設按鈕。用一陣子後會被真實習慣取代。
 _DEFAULT_ITEMS = ["午餐", "晚餐", "早餐", "咖啡", "飲料", "點心"]
 
+# 距今多久算幾次。近期的算比較多次，物價漲了按鈕會自己跟上，
+# 不必手動維護一份「現在午餐多少錢」的清單。
+_WEIGHT_WINDOWS = ((30, 3), (60, 2), (90, 1))
 
-def frequent_expense_items(txns, limit=6, pad=True):
-    """常記品項：手動記過越多次的排前面。
+
+def _recency_weight(day, today):
+    """這筆記錄在統計裡算幾次。超過 90 天回 0（不計）。
+
+    日期壞掉的列回 0 而不是丟例外 —— Notion 上手改過的列會長出各種
+    格式，一列壞掉不該讓整排按鈕消失。
+    """
+    if not day:
+        return 0
+    try:
+        d = date.fromisoformat(str(day)[:10])
+    except ValueError:
+        return 0
+    delta = max((today - d).days, 0)
+    for limit, weight in _WEIGHT_WINDOWS:
+        if delta <= limit:
+            return weight
+    return 0
+
+
+def frequent_expense_items(txns, limit=6, pad=True, today=None):
+    """常記品項：手動記過越多次的排前面，近期的算比較多次。
 
     只看 source == "手動"。交易明細裡混著信用卡自動同步的資料，商店名
     長這樣「全聯福利中心－板橋板新」—— 放到按鈕上沒有意義，而且 LINE 的
@@ -297,7 +388,10 @@ def frequent_expense_items(txns, limit=6, pad=True):
 
     pad=True 時用 _DEFAULT_ITEMS 補到 limit：沒歷史就給空按鈕列，
     等於這個功能第一天不存在。
+
+    today 可注入：沒有這個參數，測試就得依賴系統時鐘，跑起來時好時壞。
     """
+    today = today or date.today()
     counts = {}
     order = []
     for t in txns or []:
@@ -306,9 +400,12 @@ def frequent_expense_items(txns, limit=6, pad=True):
         name = (t.get("shop") or "").strip()
         if not name:
             continue
+        weight = _recency_weight(t.get("date"), today)
+        if not weight:
+            continue
         if name not in counts:
             order.append(name)
-        counts[name] = counts.get(name, 0) + 1
+        counts[name] = counts.get(name, 0) + weight
 
     ranked = sorted(order, key=lambda n: (-counts[n], order.index(n)))
     out = ranked[:limit]
@@ -334,32 +431,75 @@ _SEED_AMOUNTS = {
 }
 
 
-def frequent_amounts(txns, item, limit=5, pad=True):
-    """某個品項的常用金額，記過越多次的排前面。
+# 樣本少於這個數就不做型態推斷：一兩筆推不出習慣，硬推還會讓按鈕
+# 少到不夠用。
+_SPLIT_INFERENCE_MIN = 2
+
+
+def _prefer_usual_split(rows):
+    """只留這個品項慣用的分攤型態。rows 是 [(txn, weight)]。
+
+    「個人 / 共同」問在最後一段，跳金額按鈕的當下還不知道這筆屬於哪種，
+    個人的午餐 120 會跟共同的晚餐 600 混在同一排。用品項自己的歷史推斷：
+    晚餐九成是共同的就跳共同價位，咖啡都是個人的就跳個人價位。
+
+    篩完不足 _SPLIT_INFERENCE_MIN 筆就整組退回，寧可混也不要沒得按。
+    """
+    weights = defaultdict(int)
+    for t, w in rows:
+        weights[t.get("split_type") or "個人"] += w
+    if not weights:
+        return rows
+    usual = max(weights, key=lambda k: weights[k])
+    picked = [(t, w) for t, w in rows
+              if (t.get("split_type") or "個人") == usual]
+    return picked if len(picked) >= _SPLIT_INFERENCE_MIN else rows
+
+
+def frequent_amounts(txns, item, limit=5, pad=True, today=None):
+    """某個品項的常用金額，記過越多次的排前面，近期的算比較多次。
 
     依品項分別統計：共用一份全域金額清單會讓咖啡的按鈕上出現 200 元。
     與 frequent_expense_items 一樣只看 source == "手動"。
+
+    統計對象是「原始總額」而不是「金額」：按鈕上的數字是使用者要打進去
+    的錢（整桌 600），不是分攤額（300）。用金額欄統計的話，共同消費的
+    按鈕每次砍半，愈跳愈小，最後每筆都得手打。
 
     整數金額回 int，否則按鈕上會出現「120.0」。
     """
     key = (item or "").strip()
     if not key:
         return []
+    today = today or date.today()
 
-    counts = {}
-    order = []
+    rows = []
     for t in txns or []:
         if (t.get("source") or "") != "手動":
             continue
         if (t.get("shop") or "").strip() != key:
             continue
-        amount = t.get("amount")
+        weight = _recency_weight(t.get("date"), today)
+        if not weight:
+            continue
+        rows.append((t, weight))
+
+    rows = _prefer_usual_split(rows)
+
+    counts = {}
+    order = []
+    for t, weight in rows:
+        # 舊資料沒有 total（transactions_load 已回退成金額，這裡是雙保險：
+        # 單元測試與其他呼叫端可能直接餵 dict 進來）
+        amount = t.get("total")
+        if amount is None:
+            amount = t.get("amount")
         if amount is None:
             continue
         amount = int(amount) if float(amount) == int(amount) else amount
         if amount not in counts:
             order.append(amount)
-        counts[amount] = counts.get(amount, 0) + 1
+        counts[amount] = counts.get(amount, 0) + weight
 
     ranked = sorted(order, key=lambda a: (-counts[a], order.index(a)))
     out = ranked[:limit]

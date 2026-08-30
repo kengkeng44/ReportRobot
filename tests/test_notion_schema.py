@@ -461,3 +461,18 @@ def test_ensure_all_dbs_survives_one_failure(notion):
 def test_ensure_all_dbs_noop_without_config(monkeypatch):
     monkeypatch.setattr(notion_db, "_TOKEN", "")
     assert notion_db.ensure_all_dbs() == (0, 0)
+
+
+def test_transaction_schema_has_split_columns():
+    """共同消費要存兩件事：分的是哪一種、整桌多少錢。
+
+    _ensure_properties 只補不刪，線上既有 DB 會自動長出這兩欄，
+    既有資料列不動。
+    """
+    schema = notion_db._SCHEMAS["交易明細"]
+
+    assert "分攤類型" in schema
+    assert "原始總額" in schema
+
+    names = [o["name"] for o in schema["分攤類型"]["select"]["options"]]
+    assert names == ["個人", "共同"]
