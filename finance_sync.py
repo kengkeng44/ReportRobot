@@ -15,6 +15,7 @@ import base64
 import os
 from datetime import date as _date
 
+import finance_report
 from parsers import cathay_daily
 
 
@@ -119,6 +120,10 @@ def sync(service=None, lookback_days=DEFAULT_LOOKBACK_DAYS, notion=None):
                     stats["skipped"] += 1
                     continue
                 txn["mail_url"] = mail_url
+                # 共同消費的商店（全聯等）自動改記成共同並只留我那半。
+                # 套在寫入前而不是 parser 裡：這是「錢怎麼分」的政策，
+                # 不是「信件怎麼讀」的解析，混在一起之後兩邊都難改。
+                txn = finance_report.apply_shared_rule(txn)
                 if notion.transaction_add(txn):
                     seen.add(txn["fingerprint"])
                     stats["written"] += 1

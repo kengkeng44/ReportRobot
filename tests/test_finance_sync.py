@@ -290,3 +290,38 @@ def test_portfolio_skipped_when_notion_unconfigured():
 def test_summary_when_nothing_new():
     assert "沒有新交易" in finance_sync.format_summary(
         {"parsed": 0, "written": 0, "skipped": 0, "sources": 1})
+
+
+class _PxParser:
+    """假 parser：回一筆全聯、一筆其他店，用來驗商店規則有沒有接上管線。"""
+
+    @staticmethod
+    def parse(html):
+        return [
+            {"date": "2026-08-26", "amount": 506, "shop": "全聯福利中心－板橋板新",
+             "category": "超市∕量販", "direction": "支出", "status": "授權中",
+             "source": "國泰消費彙整", "fingerprint": "px-fp-1"},
+            {"date": "2026-08-26", "amount": 150, "shop": "星巴克",
+             "category": "餐飲", "direction": "支出", "status": "授權中",
+             "source": "國泰消費彙整", "fingerprint": "sb-fp-1"},
+        ]
+
+
+def test_sync_applies_shared_shop_rule(monkeypatch):
+    """全聯進來就該自動記成共同並只留我那半 —— 不然每個月都要手動改一次，
+    而手動維護的東西遲早會漏，漏掉的月份支出就悄悄高估。"""
+    monkeypatch.setattr(finance_sync, "SOURCES", [("q", _PxParser)])
+    notion = FakeNotion()
+
+    finance_sync.sync(service=FakeGmail({"m1": "<html></html>"}), notion=notion)
+
+    by_shop = {t["shop"]: t for t in notion.added}
+    px = by_shop["全聯福利中心－板橋板新"]
+    assert px["split_type"] == "共同"
+    assert px["amount"] == 253
+    assert px["total"] == 506
+    assert px["fingerprint"] == "px-fp-1", "去重鍵不能被規則改掉"
+
+    sb = by_shop["星巴克"]
+    assert sb["amount"] == 150
+    assert "split_type" not in sb

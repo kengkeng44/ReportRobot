@@ -138,3 +138,62 @@ def test_monthly_total_still_counts_my_share_only():
     text = fr.format_monthly_spending(txns, "2026-08")
 
     assert "NT$300" in text
+
+
+# ── 商店規則（自動同步用） ────────────────────────────────
+
+def test_pxmart_counts_as_shared():
+    """國泰給的店名長這樣「全聯福利中心－板橋板新」，分店會變但「全聯」不會，
+    所以用子字串比對而非完全相等。"""
+    assert fr.is_shared_shop("全聯福利中心－板橋板新")
+    assert fr.is_shared_shop("全聯福利中心－板橋新埔")
+
+
+def test_other_shops_are_not_shared():
+    assert not fr.is_shared_shop("星巴克")
+    assert not fr.is_shared_shop("")
+    assert not fr.is_shared_shop(None)
+
+
+def test_shared_rule_halves_the_amount():
+    txn = {"shop": "全聯福利中心－板橋板新", "amount": 506,
+           "direction": "支出", "fingerprint": "abc123"}
+
+    out = fr.apply_shared_rule(txn)
+
+    assert out["amount"] == 253       # 我負擔的那半
+    assert out["total"] == 506        # 整筆
+    assert out["split_type"] == "共同"
+
+
+def test_shared_rule_never_touches_the_fingerprint():
+    """fingerprint 是去重鍵，由 parser 從原始信件內容算出。改了它，
+    同一封信下次同步會算出不同指紋、被當成新的一筆，每天重複寫入。"""
+    txn = {"shop": "全聯福利中心－板橋板新", "amount": 506,
+           "direction": "支出", "fingerprint": "abc123"}
+
+    assert fr.apply_shared_rule(txn)["fingerprint"] == "abc123"
+
+
+def test_shared_rule_leaves_other_shops_alone():
+    txn = {"shop": "星巴克", "amount": 150, "direction": "支出"}
+
+    assert fr.apply_shared_rule(txn) == txn
+
+
+def test_shared_rule_skips_income():
+    """全聯退款是收入，不用跟人分。"""
+    txn = {"shop": "全聯福利中心－板橋板新", "amount": 200, "direction": "收入"}
+
+    assert fr.apply_shared_rule(txn) == txn
+
+
+def test_shared_rule_does_not_mutate_the_input():
+    """parser 產出的 dict 還帶著 fingerprint、mail_url 等欄位，就地改會
+    讓呼叫端分不出哪些欄位動過。"""
+    txn = {"shop": "全聯福利中心－板橋板新", "amount": 506, "direction": "支出"}
+
+    fr.apply_shared_rule(txn)
+
+    assert txn["amount"] == 506
+    assert "split_type" not in txn
