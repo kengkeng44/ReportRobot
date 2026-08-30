@@ -69,6 +69,20 @@ def _run_finance_sync():
     except Exception as e:
         print(f"[finance] 持倉同步失敗：{e}")
 
+
+def _run_einvoice_sync():
+    """載具發票 → 食材庫存。跟財務同步分開,失敗不互相拖累。
+
+    這條線**不碰交易明細** —— 記帳歸國泰彙整信管,載具負責「買了什麼菜」。
+    彙整通知每月才一封,但每天檢查一次:信何時寄不確定,
+    而重跑有 (名稱, 購買日) 去重擋著,不會寫出重複。
+    """
+    import einvoice_sync
+    try:
+        einvoice_sync.sync()
+    except Exception as e:
+        print(f"[einvoice] 食材同步失敗：{e}")
+
 # DAILY_CRON 必須是 5 欄位的 crontab（minute hour day month dow）
 # 用 env override 但若格式錯亂（空字串 / 欄位數不對）→ fallback 預設值，不讓 startup crash
 DAILY_CRON_DEFAULT = "0 22 * * *"  # UTC 22:00 = 台北 06:00
@@ -151,6 +165,18 @@ async def lifespan(app: FastAPI):
         max_instances=1,
         coalesce=True,
         misfire_grace_time=1800,      # 漏跑半小時內補跑；重跑有指紋擋著不會重複
+        replace_existing=True,
+    )
+    # 載具發票 → 食材庫存：台灣 16:30（UTC 08:30），排在財務同步之後半小時，
+    # 錯開兩者對 Notion 的寫入。彙整通知每月才一封，但每天檢查一次 ——
+    # 信何時寄不確定，而重跑有 (名稱, 購買日) 去重擋著。
+    scheduler.add_job(
+        _run_einvoice_sync,
+        CronTrigger(minute=30, hour=8),
+        id="einvoice_sync",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=1800,
         replace_existing=True,
     )
     # 即時警示（颱風 / 重要 Gmail）：每 5 分鐘檢查一輪
