@@ -204,3 +204,44 @@ def test_broken_message_does_not_stop_the_batch():
     rows = einvoice_sync.fetch_rows(service)
 
     assert len(rows) == 1, "壞的那封略過,好的那封照常解析"
+
+
+# ── 信件識別（等第一封信到達後要用來校正查詢） ──────────────
+
+def _service_with_headers(sender, subject):
+    inner = _service_with_csv()._users.messages()
+    inner._messages["m1"]["payload"]["headers"] = [
+        {"name": "From", "value": sender},
+        {"name": "Subject", "value": subject},
+    ]
+    return FakeService(inner._listing, inner._messages, inner._attachments)
+
+
+def test_with_meta_reports_sender_and_subject():
+    """使用者已開通彙整通知但還不知道寄件人／主旨。
+
+    信真的來的時候要能自動回報，不然得叫使用者自己去信箱翻。
+    """
+    service = _service_with_headers("einvoice@example.gov.tw", "115年7-8月消費發票彙整通知")
+
+    rows, mails = einvoice_sync.fetch_rows(service, with_meta=True)
+
+    assert len(rows) == 1
+    assert mails[0]["from"] == "einvoice@example.gov.tw"
+    assert mails[0]["subject"] == "115年7-8月消費發票彙整通知"
+
+
+def test_with_meta_is_opt_in():
+    """預設維持只回 rows —— 既有呼叫端不必改。"""
+    rows = einvoice_sync.fetch_rows(_service_with_csv())
+
+    assert isinstance(rows, list)
+    assert rows and "name" in rows[0]
+
+
+def test_missing_headers_do_not_crash():
+    """信件缺 header 是常態，不能因此炸掉整批。"""
+    rows, mails = einvoice_sync.fetch_rows(_service_with_csv(), with_meta=True)
+
+    assert len(rows) == 1
+    assert mails[0]["from"] == ""

@@ -73,19 +73,33 @@ def _decode_attachment(data):
     return ""
 
 
-def fetch_rows(service, query=QUERY, max_results=DEFAULT_MAX_RESULTS):
+def _header(payload, name):
+    """從 Gmail payload 抽一個 header。缺 header 是常態,回空字串。"""
+    for h in (payload or {}).get("headers") or []:
+        if (h.get("name") or "").lower() == name.lower():
+            return h.get("value") or ""
+    return ""
+
+
+def fetch_rows(service, query=QUERY, max_results=DEFAULT_MAX_RESULTS,
+               with_meta=False):
     """Gmail → 可寫入食材庫存的列。
 
     單封信失敗只略過該封:這個工作跟每日推播共用同一個 process,
     不能因為一封壞信拖垮整批。
+
+    with_meta=True 時另回每封命中信件的寄件人與主旨。使用者已開通彙整通知
+    但還不知道財政部用哪個位址、主旨長怎樣 —— 讓系統自己回報,
+    比叫他去信箱翻可靠。拿到之後就能把 QUERY 收窄。
     """
     rows = []
+    mails = []
     try:
         listed = service.users().messages().list(
             userId="me", q=query, maxResults=max_results).execute()
     except Exception as e:
         print(f"[einvoice] 列信失敗：{e}")
-        return rows
+        return (rows, mails) if with_meta else rows
 
     for meta in listed.get("messages") or []:
         mid = meta.get("id")
@@ -111,8 +125,15 @@ def fetch_rows(service, query=QUERY, max_results=DEFAULT_MAX_RESULTS):
                 continue
 
             rows.extend(einvoice_pantry.to_pantry_rows(einvoice_csv.parse(text)))
+            payload = msg.get("payload") or {}
+            mails.append({
+                "id": mid,
+                "from": _header(payload, "From"),
+                "subject": _header(payload, "Subject"),
+                "filename": part.get("filename") or "",
+            })
 
-    return rows
+    return (rows, mails) if with_meta else rows
 
 
 def sync(service=None, notion=None):
@@ -129,7 +150,7 @@ def sync(service=None, notion=None):
     if notion is None:
         import notion_db as notion
 
-    rows = fetch_rows(service)
+    rows, mails = fetch_rows(service, with_meta=True)
     if not rows:
         return 0, 0
 
@@ -140,4 +161,32 @@ def sync(service=None, notion=None):
         if notion.pantry_add(row):
             added += 1
     print(f"[einvoice] 食材庫存寫入 {added} 筆，跳過 {len(skipped)} 筆")
+
+    # 只在真的寫進東西時回報。第二天起同一封信會被去重擋掉、added=0，
+    # 所以這則通知實質上只會在「第一封信真的來了」的那天出現。
+    if added and mails:
+        _report_mail_identity(mails, added)
+
     return added, len(skipped)
+
+
+def _report_mail_identity(mails, added):
+    """把命中信件的寄件人與主旨推給管理員。
+
+    使用者已開通彙整通知，但財政部用哪個位址寄、主旨長怎樣都還不知道 ——
+    QUERY 目前是寬鬆猜的。與其等他自己去信箱翻，不如信真的來的時候
+    讓系統自己回報，拿到之後就能把查詢收窄。
+    """
+    import admin_notify
+
+    m = mails[0]
+    msg = (f"載具發票自動同步首次命中，寫入 {added} 筆。\n"
+           f"寄件人：{m.get('from') or '(缺 From header)'}\n"
+           f"主旨：{m.get('subject') or '(缺 Subject header)'}\n"
+           f"附件：{m.get('filename') or '(無檔名)'}\n"
+           f"→ 把這三行貼給 Claude，就能把 Gmail 查詢從寬鬆猜測收窄成精準比對。")
+    try:
+        admin_notify.notify_admin(msg, context={
+            "module": "einvoice_sync", "section": "首次命中"})
+    except Exception as e:
+        print(f"[einvoice] 通知失敗（不影響同步）：{e}")
