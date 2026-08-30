@@ -777,7 +777,8 @@ def _manual_amount_quick_reply(item):
     import notion_db
     from flex_builder import quick_reply_text
 
-    hint = f"{item} 多少錢?點下面的,或直接打:\n記一筆 {item} 95"
+    # 範例帶上「個人」：少了分攤類型會再跳一段，那就不叫「直接打」了
+    hint = f"{item} 多少錢?點下面的,或直接打:\n記一筆 {item} 95 個人"
 
     if not notion_db.is_configured():
         return hint

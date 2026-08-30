@@ -497,3 +497,17 @@ def test_record_cell_does_not_fall_through_to_paid_ai():
     _, param = next(c[3] for c in cells if c[0] == "記一筆")
 
     assert cr.parse(param)[0] != "free_query"
+
+
+def test_amount_hint_teaches_the_complete_command(fake_notion):
+    """提示教的打法要能一步到位 —— 少了分攤類型會再跳一段，
+    那就不叫「直接打」了。
+
+    「搭車」沒有種子金額也沒有歷史，回的是純文字提示（空的
+    quickReply 會被 LINE 當格式錯誤，整則訊息退回）。
+    """
+    fake_notion(txns=[])
+
+    reply = cr.handle("記一筆 搭車", _ctx())
+
+    assert "記一筆 搭車 95 個人" in reply
