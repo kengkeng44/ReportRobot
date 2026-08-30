@@ -387,6 +387,12 @@ def parse_manual(text, today=None):
 # 兩段式：先跳品項、再跳該品項的金額。純邏輯，不碰 Notion 也不碰 LINE。
 # ─────────────────────────────────────────────────────────
 
+# LINE 一則最多 13 顆按鈕（flex_builder.QUICK_REPLY_MAX）。塞滿沒有壞處：
+# 排序不變，最常用的仍在第一顆，後面的要橫滑才看得到。少一顆按鈕就多一次
+# 手打的機會，多一顆的成本幾乎是零 —— 成本不對稱時往「寧可多」的方向倒。
+BUTTON_LIMIT = 13
+
+
 # 沒有記帳歷史時的預設按鈕。用一陣子後會被真實習慣取代。
 _DEFAULT_ITEMS = ["午餐", "晚餐", "早餐", "咖啡", "飲料", "點心"]
 
@@ -414,7 +420,7 @@ def _recency_weight(day, today):
     return 0
 
 
-def frequent_expense_items(txns, limit=6, pad=True, today=None):
+def frequent_expense_items(txns, limit=BUTTON_LIMIT, pad=True, today=None):
     """常記品項：手動記過越多次的排前面，近期的算比較多次。
 
     只看 source == "手動"。交易明細裡混著信用卡自動同步的資料，商店名
@@ -469,66 +475,40 @@ _SEED_AMOUNTS = {
 }
 
 
-# 樣本少於這個數就不做型態推斷：一兩筆推不出習慣，硬推還會讓按鈕
-# 少到不夠用。
-_SPLIT_INFERENCE_MIN = 2
+def _split_of(txn):
+    """這筆的分攤型態。舊資料讀不到就當個人。"""
+    return txn.get("split_type") or "個人"
 
 
-def _prefer_usual_split(rows):
-    """只留這個品項慣用的分攤型態。rows 是 [(txn, weight)]。
+def _usual_split_type(rows):
+    """這個品項慣用哪種分攤方式。rows 是 [(txn, weight)]。
 
-    「個人 / 共同」問在最後一段，跳金額按鈕的當下還不知道這筆屬於哪種，
-    個人的午餐 120 會跟共同的晚餐 600 混在同一排。用品項自己的歷史推斷：
-    晚餐九成是共同的就跳共同價位，咖啡都是個人的就跳個人價位。
+    晚餐九成是共同的就跳共同價位，咖啡都是個人的就跳個人價位 ——
+    「個人 / 共同」問在最後一段，跳金額按鈕的當下還不知道這筆屬於哪種。
 
-    篩完不足 _SPLIT_INFERENCE_MIN 筆就整組退回，寧可混也不要沒得按。
+    推錯了也不會讓選項消失：另一型態排在下一層，只是位置往後。
     """
     weights = defaultdict(int)
     for t, w in rows:
-        weights[t.get("split_type") or "個人"] += w
+        weights[_split_of(t)] += w
     if not weights:
-        return rows
-    usual = max(weights, key=lambda k: weights[k])
-    picked = [(t, w) for t, w in rows
-              if (t.get("split_type") or "個人") == usual]
-    return picked if len(picked) >= _SPLIT_INFERENCE_MIN else rows
+        return "個人"
+    return max(weights, key=lambda k: weights[k])
 
 
-def frequent_amounts(txns, item, limit=5, pad=True, today=None):
-    """某個品項的常用金額，記過越多次的排前面，近期的算比較多次。
+def _rank_amounts(rows):
+    """[(txn, weight)] → 依加權次數排序的金額 list（多的排前面）。
 
-    依品項分別統計：共用一份全域金額清單會讓咖啡的按鈕上出現 200 元。
-    與 frequent_expense_items 一樣只看 source == "手動"。
-
-    統計對象是「原始總額」而不是「金額」：按鈕上的數字是使用者要打進去
-    的錢（整桌 600），不是分攤額（300）。用金額欄統計的話，共同消費的
-    按鈕每次砍半，愈跳愈小，最後每筆都得手打。
+    統計「原始總額」而不是「金額」：按鈕上的數字是使用者要打進去的錢
+    （整桌 600），不是分攤額（300）。用金額欄統計的話，共同消費的按鈕
+    每次砍半，愈跳愈小，最後每筆都得手打。
 
     整數金額回 int，否則按鈕上會出現「120.0」。
+    同次數保持第一次出現的順序：按鈕位置每次都在動，比排序不準更難用。
     """
-    key = (item or "").strip()
-    if not key:
-        return []
-    today = today or date.today()
-
-    rows = []
-    for t in txns or []:
-        if (t.get("source") or "") != "手動":
-            continue
-        if (t.get("shop") or "").strip() != key:
-            continue
-        weight = _recency_weight(t.get("date"), today)
-        if not weight:
-            continue
-        rows.append((t, weight))
-
-    rows = _prefer_usual_split(rows)
-
     counts = {}
     order = []
     for t, weight in rows:
-        # 舊資料沒有 total（transactions_load 已回退成金額，這裡是雙保險：
-        # 單元測試與其他呼叫端可能直接餵 dict 進來）
         amount = t.get("total")
         if amount is None:
             amount = t.get("amount")
@@ -538,15 +518,62 @@ def frequent_amounts(txns, item, limit=5, pad=True, today=None):
         if amount not in counts:
             order.append(amount)
         counts[amount] = counts.get(amount, 0) + weight
+    return sorted(order, key=lambda a: (-counts[a], order.index(a)))
 
-    ranked = sorted(order, key=lambda a: (-counts[a], order.index(a)))
-    out = ranked[:limit]
+
+def frequent_amounts(txns, item, limit=BUTTON_LIMIT, pad=True, today=None):
+    """某個品項的常用金額。依品項分別統計 —— 共用一份全域清單會讓咖啡的
+    按鈕上出現 200 元。只看 source == "手動"。
+
+    按鈕依「可信度」分四層疊上去，每層都不重複已經放進去的金額：
+
+      1. 90 天內、這個品項慣用型態的金額   ← 最可能命中
+      2. 90 天內、另一種型態的金額         ← 真的花過，只是分攤方式不同
+      3. 90 天以前、這個品項的金額         ← 舊了，但仍是真實花過的錢
+      4. 種子金額                          ← 猜的，只拿來墊底補滿
+
+    分層而不是過濾：90 天窗原本的用意是「別讓兩年前的價位卡在前面」，
+    那個目的靠排序就達成了。丟掉它們反而浪費了按鈕的位置 —— 空著的位置
+    最後會拿內建猜測值去填，而舊的真實金額比猜的可信。
+    """
+    key = (item or "").strip()
+    if not key:
+        return []
+    today = today or date.today()
+
+    recent, older = [], []
+    for t in txns or []:
+        if (t.get("source") or "") != "手動":
+            continue
+        if (t.get("shop") or "").strip() != key:
+            continue
+        weight = _recency_weight(t.get("date"), today)
+        if weight:
+            recent.append((t, weight))
+        else:
+            # 90 天外不分遠近，一律 1：它們只是用來墊底的，排序意義不大
+            older.append((t, 1))
+
+    usual = _usual_split_type(recent)
+    layers = [
+        [r for r in recent if _split_of(r[0]) == usual],
+        [r for r in recent if _split_of(r[0]) != usual],
+        older,
+    ]
+
+    out = []
+    for layer in layers:
+        for amount in _rank_amounts(layer):
+            if len(out) >= limit:
+                return out
+            if amount not in out:
+                out.append(amount)
 
     if pad:
         for amount in _SEED_AMOUNTS.get(key, []):
             if len(out) >= limit:
                 break
-            if amount not in counts:
+            if amount not in out:
                 out.append(amount)
     return out
 
