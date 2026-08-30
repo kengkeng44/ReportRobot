@@ -57,16 +57,20 @@ def test_food_is_kept():
     rows = einvoice_pantry.to_pantry_rows(_inv("青江菜產銷履歷"))
 
     assert len(rows) == 1
-    assert rows[0]["名稱"] == "青江菜產銷履歷"
+    assert rows[0]["name"] == "青江菜產銷履歷"
 
 
 # ── 欄位對應食材庫存 DB ────────────────────────────────────
 
 def test_row_matches_pantry_schema():
-    """欄位名要跟 notion_db 的「食材庫存」對得上,不然寫入會掉欄位。"""
+    """欄位要跟 notion_db.pantry_add() 吃的格式一致(即 describe_item 的形狀)。
+
+    pantry_add 自己會把英文 key 映射成 Notion 的中文欄位,
+    這裡照它的契約走 —— 對齊消費端,不是對齊資料庫。
+    """
     row = einvoice_pantry.to_pantry_rows(_inv("青江菜產銷履歷", qty=2))[0]
 
-    assert set(row) >= {"名稱", "數量", "購買日", "分類", "來源"}
+    assert set(row) >= {"name", "qty", "bought", "category", "source"}
 
 
 def test_purchase_date_comes_from_invoice():
@@ -75,27 +79,27 @@ def test_purchase_date_comes_from_invoice():
         _inv("青江菜產銷履歷", day=date(2026, 8, 3))
     )[0]
 
-    assert row["購買日"] == date(2026, 8, 3)
+    assert row["bought"] == date(2026, 8, 3)
 
 
 def test_quantity_is_carried_over():
     row = einvoice_pantry.to_pantry_rows(_inv("青江菜產銷履歷", qty=3))[0]
 
-    assert row["數量"] == 3
+    assert row["qty"] == 3
 
 
 def test_category_uses_kitchen_rules():
     """分類沿用 kitchen.guess_category,不另外造一套規則。"""
     row = einvoice_pantry.to_pantry_rows(_inv("青江菜產銷履歷"))[0]
 
-    assert row["分類"] == "蔬菜"
+    assert row["category"] == "蔬菜"
 
 
 def test_source_marks_carrier_origin():
     """標來源,之後才分得出哪些是發票匯入、哪些是手動加的。"""
     row = einvoice_pantry.to_pantry_rows(_inv("青江菜產銷履歷"))[0]
 
-    assert row["來源"] == "載具發票"
+    assert row["source"] == "載具發票"
 
 
 # ── 營養 ───────────────────────────────────────────────────
@@ -104,8 +108,8 @@ def test_nutrition_filled_when_lookup_hits():
     """命中營養表就填每 100g 的值。"""
     row = einvoice_pantry.to_pantry_rows(_inv("特選鮭魚厚切"))[0]
 
-    assert row["熱量"] == 208
-    assert row["蛋白質"] == 20.0
+    assert row["per_100g"]["kcal"] == 208
+    assert row["per_100g"]["protein"] == 20.0
 
 
 def test_nutrition_left_empty_when_unknown():
@@ -117,14 +121,14 @@ def test_nutrition_left_empty_when_unknown():
     rows = einvoice_pantry.to_pantry_rows(_inv("二配紅豆麵包"))
 
     assert len(rows) == 1, "加工食品仍是食物,不該被過濾掉"
-    assert rows[0].get("熱量") is None
+    assert rows[0]["per_100g"] is None
 
 
 def test_nutrition_is_flagged_as_rough():
     """有填營養值的一律標「營養為粗估」—— 那是查表來的,不是秤出來的。"""
     row = einvoice_pantry.to_pantry_rows(_inv("特選鮭魚厚切"))[0]
 
-    assert row["營養為粗估"] is True
+    assert row["approximate"] is True
 
 
 # ── 多筆 ───────────────────────────────────────────────────
@@ -145,7 +149,7 @@ def test_same_item_on_different_dates_stays_separate():
     rows = einvoice_pantry.to_pantry_rows(invoices)
 
     assert len(rows) == 2
-    assert {r["購買日"] for r in rows} == {date(2026, 8, 1), date(2026, 8, 20)}
+    assert {r["bought"] for r in rows} == {date(2026, 8, 1), date(2026, 8, 20)}
 
 
 def test_voided_invoices_never_reach_pantry():
@@ -173,4 +177,4 @@ def test_real_export_yields_reasonable_ratio():
     rows = einvoice_pantry.to_pantry_rows(invoices)
 
     assert rows, "fixture 裡有真食材,不該全被過濾掉"
-    assert all(r["名稱"] for r in rows)
+    assert all(r["name"] for r in rows)

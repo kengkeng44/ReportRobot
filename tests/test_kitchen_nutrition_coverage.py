@@ -122,5 +122,7 @@ def test_real_data_coverage_improves():
     rows = einvoice_pantry.to_pantry_rows(invoices)
 
     assert rows
-    # fixture 是匿名資料,這裡只確認管線通;真實覆蓋率在 commit 訊息記錄
-    assert all("熱量" in r for r in rows)
+    # fixture 是匿名資料,這裡只確認管線通;真實覆蓋率在 commit 訊息記錄。
+    # 欄位是 describe_item 的形狀(英文 key),不是 Notion 的中文欄位名 ——
+    # pantry_add 自己會做映射。
+    assert all("per_100g" in r for r in rows)

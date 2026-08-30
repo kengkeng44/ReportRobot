@@ -56,32 +56,18 @@ def is_food(name):
     return True
 
 
-def _nutrition_fields(name):
-    """每 100g 的營養。查不到全回 None —— 留空好過填錯。
-
-    刻意存每 100g 而不是總量:發票沒有可靠的重量資訊
-    (數量 2 可能是 2 顆也可能是 2 包),硬乘出來的總熱量會是假的。
-    重量之後由使用者在 Notion 補「重量克」,總熱量再由公式欄算。
-    """
-    per_100g = kitchen.lookup_nutrition(name)
-    if not per_100g:
-        return {"熱量": None, "蛋白質": None, "碳水": None, "脂肪": None,
-                "營養為粗估": False}
-    return {
-        "熱量": per_100g["kcal"],
-        "蛋白質": per_100g["protein"],
-        "碳水": per_100g["carb"],
-        "脂肪": per_100g["fat"],
-        # 查表來的,不是秤出來的 —— 一律標粗估
-        "營養為粗估": True,
-    }
-
-
 def to_pantry_rows(invoices):
-    """發票清單 → 可寫進「食材庫存」的列。
+    """發票清單 → 可直接餵給 `notion_db.pantry_add()` 的列。
+
+    輸出的是 `kitchen.describe_item()` 的形狀(英文 key),不是 Notion 的
+    中文欄位名 —— pantry_add 自己會做映射。契約對齊消費端,不對齊資料庫。
+
+    單位一律留 None:發票只給數量不給單位,「2」可能是 2 顆也可能是 2 包。
+    連帶 grams 也估不出來,所以營養只存每 100g 的值,不算總量 ——
+    硬乘出來的總熱量會是假的。重量由使用者在 Notion 補「重量克」。
 
     同一種食材不同天買的維持兩筆:到期日不一樣,合併會讓先買的那批
-    永遠不過期。要合併是使用者在 Notion 自己決定的事。
+    永遠不過期。要不要合併是使用者在 Notion 自己決定的事。
     """
     rows = []
 
@@ -95,19 +81,13 @@ def to_pantry_rows(invoices):
             if not is_food(name):
                 continue
 
-            category = kitchen.guess_category(name)
-            row = {
-                "名稱": name,
-                "數量": item.get("qty"),
-                "購買日": bought,
-                "分類": category,
-                "存放位置": kitchen.default_storage(category),
-                "來源": SOURCE,
-                "商店": (inv.get("seller") or "").strip(),
-            }
-            if isinstance(bought, date) and category:
-                row["到期日"] = kitchen.estimate_expiry(bought, category)
-            row.update(_nutrition_fields(name))
+            # 單位傳 None —— describe_item 會據此把 grams 留空
+            row = kitchen.describe_item(name, item.get("qty"), None)
+            row["bought"] = bought
+            row["source"] = SOURCE
+            row["shop"] = (inv.get("seller") or "").strip()
+            if isinstance(bought, date) and row.get("category"):
+                row["expiry"] = kitchen.estimate_expiry(bought, row["category"])
             rows.append(row)
 
     return rows
