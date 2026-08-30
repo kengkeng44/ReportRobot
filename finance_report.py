@@ -251,25 +251,57 @@ def guess_category(shop):
     return "餐飲" if any(k in name for k in _FOOD_HINTS) else "其他"
 
 
-def make_manual_fingerprint(day, amount, shop):
+# 分攤類型只認這兩個詞。不加「一起」「共用」這類同義詞 ——
+# 「一起吃飯 300」會被誤判成共同消費，而使用者是用按鈕選的，
+# 同義詞只擴大誤判面不增加可用性。
+_SPLIT_TYPES = ("個人", "共同")
+
+
+def _strip_split_type(text):
+    """從尾端剝離「個人」/「共同」。回 (剩下的文字, split_type or None)。
+
+    只認尾端：「共同基金 3000」的共同在開頭，那是商店名不是分攤類型。
+    """
+    cleaned = (text or "").strip()
+    for name in _SPLIT_TYPES:
+        if cleaned.endswith(name):
+            return cleaned[: -len(name)].strip(), name
+    return cleaned, None
+
+
+def make_manual_fingerprint(day, amount, shop, split_type=None):
+    """個人維持既有四段格式，共同才加後綴。
+
+    個人 300 與共同 600（分攤 300）的「金額」欄都是 300，不加區別就會
+    算出相同 fingerprint。個人不動格式是為了不改變既有資料的比對基準。
+    """
     raw = f"手動|{day}|{amount}|{shop}"
+    if split_type == "共同":
+        raw += "|共同"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 
 def parse_manual(text, today=None):
-    """「午餐 120」或「120 午餐」→ 交易 dict。沒有金額就回 None。
+    """「午餐 120」或「晚餐 600 共同」→ 交易 dict。沒有金額就回 None。
 
     沒金額不猜 —— 記一筆金額錯的帳，比沒記更難發現也更難修。
+
+    split_type 的三態約定，呼叫端靠它決定下一步：
+      沒有金額        → 回 None，呼叫端跳金額按鈕
+      「晚餐 600」    → split_type=None，呼叫端跳個人/共同按鈕
+      「晚餐 600 共同」→ split_type="共同"，呼叫端寫入 Notion
+    split_type=None 時 amount 先等於 total，但那是還沒決定分攤前的暫定值，
+    呼叫端不該拿去寫入。
     """
     if not text:
         return None
-    cleaned = text.strip()
+    cleaned, split_type = _strip_split_type(text)
 
     m = _AMOUNT_RE.search(cleaned)
     if not m:
         return None
-    amount = float(m.group(1))
-    amount = int(amount) if amount == int(amount) else amount
+    total = float(m.group(1))
+    total = int(total) if total == int(total) else total
 
     shop = (cleaned[:m.start()] + " " + cleaned[m.end():]).strip()
     shop = re.sub(r"\s+", " ", shop)
@@ -279,15 +311,23 @@ def parse_manual(text, today=None):
     day = (today or date.today()).isoformat()
     direction = "收入" if any(k in shop for k in _INCOME_HINTS) else "支出"
 
+    # 收入不跟人分攤。留成 None 的話「薪水 50000」也會跳出個人/共同那一段。
+    if direction == "收入" and split_type is None:
+        split_type = "個人"
+
+    amount = my_share_of(total) if split_type == "共同" else total
+
     return {
         "date": day,
-        "amount": amount,
+        "amount": amount,               # 我實際負擔 —— 六處報表都讀這個
+        "total": total,                 # 掏出去的全額
+        "split_type": split_type,
         "shop": shop,
         "category": guess_category(shop),
         "direction": direction,
-        "status": "已結帳",          # 手動輸入就是最終金額，不需要對帳
+        "status": "已結帳",              # 手動輸入就是最終金額，不需要對帳
         "source": "手動",
-        "fingerprint": make_manual_fingerprint(day, amount, shop),
+        "fingerprint": make_manual_fingerprint(day, total, shop, split_type),
     }
 
 
