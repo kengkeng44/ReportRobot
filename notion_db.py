@@ -260,6 +260,7 @@ _SCHEMAS = {
         "存放位置": _select(("冷藏", "blue"), ("冷凍", "purple"), ("常溫", "brown"), ("調味櫃", "gray")),
         "分類": _select(("蔬菜", "green"), ("肉類", "red"), ("海鮮", "blue"), ("蛋奶", "yellow"),
                         ("主食", "orange"), ("調味料", "brown"), ("罐頭乾貨", "gray")),
+        "來源": _select(("載具發票", "purple"), ("手動", "gray")),
         # 營養一律以「每 100g」存，總量交給 Notion formula 算 ——
         # 這樣使用者改了重量克，總熱量會自己跟著更新。
         "重量克": {"number": {"format": "number"}},
@@ -918,6 +919,12 @@ def _read_formula_number(props, name):
     return ((props.get(name, {}) or {}).get("formula") or {}).get("number")
 
 
+def _read_date(props, name):
+    """回 ISO 字串(Notion 就是這樣存的)。沒填回 None。"""
+    d = (props.get(name, {}) or {}).get("date") or {}
+    return d.get("start") or None
+
+
 def _read_title(props, name):
     blocks = (props.get(name, {}) or {}).get("title", []) or []
     return "".join(b.get("plain_text", "") for b in blocks)
@@ -950,6 +957,9 @@ def pantry_add(item):
         "脂肪": _prop_number(per_100g.get("fat")),
         "營養為粗估": {"checkbox": bool(item.get("approximate", True))},
         "狀態": _prop_select("在庫"),
+        # 分得出哪些是發票匯入、哪些是手動加的 —— 之後要重跑或清掉
+        # 某一批時才有得篩
+        "來源": _prop_select(item.get("source")),
     }
     props = {k: v for k, v in candidates.items() if v is not None}
 
@@ -984,6 +994,9 @@ def pantry_load(status="在庫"):
                 "category": _read_select(props, "分類"),
                 "grams": _read_number(props, "重量克"),
                 "days_left": _read_formula_number(props, "剩餘天數"),
+                # 匯入腳本靠 (名稱, 購買日) 去重 —— 少了這個,重跑會寫出兩份
+                "bought": _read_date(props, "購買日"),
+                "source": _read_select(props, "來源"),
             })
         return out
     except Exception as e:
