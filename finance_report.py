@@ -340,9 +340,32 @@ def parse_manual(text, today=None):
 # 沒有記帳歷史時的預設按鈕。用一陣子後會被真實習慣取代。
 _DEFAULT_ITEMS = ["午餐", "晚餐", "早餐", "咖啡", "飲料", "點心"]
 
+# 距今多久算幾次。近期的算比較多次，物價漲了按鈕會自己跟上，
+# 不必手動維護一份「現在午餐多少錢」的清單。
+_WEIGHT_WINDOWS = ((30, 3), (60, 2), (90, 1))
 
-def frequent_expense_items(txns, limit=6, pad=True):
-    """常記品項：手動記過越多次的排前面。
+
+def _recency_weight(day, today):
+    """這筆記錄在統計裡算幾次。超過 90 天回 0（不計）。
+
+    日期壞掉的列回 0 而不是丟例外 —— Notion 上手改過的列會長出各種
+    格式，一列壞掉不該讓整排按鈕消失。
+    """
+    if not day:
+        return 0
+    try:
+        d = date.fromisoformat(str(day)[:10])
+    except ValueError:
+        return 0
+    delta = max((today - d).days, 0)
+    for limit, weight in _WEIGHT_WINDOWS:
+        if delta <= limit:
+            return weight
+    return 0
+
+
+def frequent_expense_items(txns, limit=6, pad=True, today=None):
+    """常記品項：手動記過越多次的排前面，近期的算比較多次。
 
     只看 source == "手動"。交易明細裡混著信用卡自動同步的資料，商店名
     長這樣「全聯福利中心－板橋板新」—— 放到按鈕上沒有意義，而且 LINE 的
@@ -353,7 +376,10 @@ def frequent_expense_items(txns, limit=6, pad=True):
 
     pad=True 時用 _DEFAULT_ITEMS 補到 limit：沒歷史就給空按鈕列，
     等於這個功能第一天不存在。
+
+    today 可注入：沒有這個參數，測試就得依賴系統時鐘，跑起來時好時壞。
     """
+    today = today or date.today()
     counts = {}
     order = []
     for t in txns or []:
@@ -362,9 +388,12 @@ def frequent_expense_items(txns, limit=6, pad=True):
         name = (t.get("shop") or "").strip()
         if not name:
             continue
+        weight = _recency_weight(t.get("date"), today)
+        if not weight:
+            continue
         if name not in counts:
             order.append(name)
-        counts[name] = counts.get(name, 0) + 1
+        counts[name] = counts.get(name, 0) + weight
 
     ranked = sorted(order, key=lambda n: (-counts[n], order.index(n)))
     out = ranked[:limit]

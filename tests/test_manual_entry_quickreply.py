@@ -8,15 +8,24 @@
 """
 
 import pytest
+from datetime import date, timedelta
 
 import command_router as cr
 import finance_report as fr
 
 
-def _txn(shop, amount, source="手動"):
-    return {"date": "2026-08-19", "amount": amount, "shop": shop,
+# 測試用的「今天」。統計函式一律傳這個進去 —— 寫死日期加上 90 天窗
+# 等於埋一顆定時炸彈，會在某個沒人動過程式碼的日子突然全部變紅。
+TODAY = date(2026, 8, 30)
+
+
+def _txn(shop, amount, source="手動", days_ago=0, split_type="個人", total=None):
+    day = TODAY - timedelta(days=days_ago)
+    return {"date": day.isoformat(), "amount": amount, "shop": shop,
             "category": "餐飲", "direction": "支出", "currency": "TWD",
-            "status": "已結帳", "source": source}
+            "status": "已結帳", "source": source,
+            "split_type": split_type,
+            "total": total if total is not None else amount}
 
 
 # ── 分類判斷 ─────────────────────────────────────────────
@@ -53,7 +62,7 @@ def test_frequent_items_ranks_by_count():
             _txn("咖啡", 55), _txn("咖啡", 65),
             _txn("搭車", 30)]
 
-    assert fr.frequent_expense_items(txns, limit=3, pad=False) == [
+    assert fr.frequent_expense_items(txns, limit=3, pad=False, today=TODAY) == [
         "午餐", "咖啡", "搭車"]
 
 
@@ -63,32 +72,32 @@ def test_frequent_items_ignores_auto_synced():
             _txn("全聯福利中心－板橋板新", 210, source="國泰消費彙整"),
             _txn("午餐", 120)]
 
-    assert fr.frequent_expense_items(txns, limit=6, pad=False) == ["午餐"]
+    assert fr.frequent_expense_items(txns, limit=6, pad=False, today=TODAY) == ["午餐"]
 
 
 def test_frequent_items_ties_keep_first_seen_order():
     """同次數時位置要穩定：按鈕每次都在跳比排序不準更難用。"""
     txns = [_txn("咖啡", 55), _txn("午餐", 120)]
 
-    assert fr.frequent_expense_items(txns, limit=6, pad=False) == ["咖啡", "午餐"]
+    assert fr.frequent_expense_items(txns, limit=6, pad=False, today=TODAY) == ["咖啡", "午餐"]
 
 
 def test_frequent_items_ignores_blank_names():
     txns = [_txn("", 100), _txn("   ", 100), _txn("午餐", 120)]
 
-    assert fr.frequent_expense_items(txns, limit=6, pad=False) == ["午餐"]
+    assert fr.frequent_expense_items(txns, limit=6, pad=False, today=TODAY) == ["午餐"]
 
 
 def test_frequent_items_pads_with_defaults():
     """第一天沒歷史，給空按鈕列等於這個功能不存在。"""
-    assert fr.frequent_expense_items([], limit=6) == [
+    assert fr.frequent_expense_items([], limit=6, today=TODAY) == [
         "午餐", "晚餐", "早餐", "咖啡", "飲料", "點心"]
 
 
 def test_padding_never_duplicates_history():
     txns = [_txn("咖啡", 55)]
 
-    out = fr.frequent_expense_items(txns, limit=6)
+    out = fr.frequent_expense_items(txns, limit=6, today=TODAY)
 
     assert out[0] == "咖啡"
     assert out.count("咖啡") == 1
@@ -98,13 +107,40 @@ def test_padding_never_duplicates_history():
 def test_history_always_outranks_padding():
     txns = [_txn("搭車", 30)]
 
-    assert fr.frequent_expense_items(txns, limit=6)[0] == "搭車"
+    assert fr.frequent_expense_items(txns, limit=6, today=TODAY)[0] == "搭車"
 
 
 def test_frequent_items_respects_limit():
     txns = [_txn(f"品項{i}", 100) for i in range(20)]
 
-    assert len(fr.frequent_expense_items(txns, limit=6)) == 6
+    assert len(fr.frequent_expense_items(txns, limit=6, today=TODAY)) == 6
+
+
+def test_frequent_items_ignores_records_older_than_90_days():
+    """物價會漲，兩年前那個 65 元的咖啡不該還卡在按鈕上。"""
+    txns = [_txn("舊品項", 100, days_ago=120),
+            _txn("舊品項", 100, days_ago=200),
+            _txn("午餐", 120, days_ago=5)]
+
+    assert fr.frequent_expense_items(
+        txns, limit=6, pad=False, today=TODAY) == ["午餐"]
+
+
+def test_frequent_items_weight_recent_records_higher():
+    """各記一次，近的排前面。沒有權重的話兩者同分，順序只看誰先出現。"""
+    txns = [_txn("舊愛", 100, days_ago=75),      # ×1
+            _txn("新歡", 200, days_ago=3)]       # ×3
+
+    assert fr.frequent_expense_items(
+        txns, limit=6, pad=False, today=TODAY) == ["新歡", "舊愛"]
+
+
+def test_frequent_items_boundary_at_exactly_90_days():
+    """剛好 90 天算數，91 天不算 —— 邊界寫清楚，日後才不會各自解讀。"""
+    txns = [_txn("剛好", 100, days_ago=90), _txn("過期", 100, days_ago=91)]
+
+    assert fr.frequent_expense_items(
+        txns, limit=6, pad=False, today=TODAY) == ["剛好"]
 
 
 # ── 常用金額 ─────────────────────────────────────────────
