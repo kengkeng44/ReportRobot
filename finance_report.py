@@ -79,6 +79,18 @@ def format_monthly_spending(txns, month):
     total = sum(by_cat.values())
 
     lines = [f"💳 {month} 支出　NT${_money(total)}", f"　共 {len(twd_rows)} 筆", ""]
+
+    # 「金額」欄已經是我實際負擔，這行是為了看得到整桌花多少。
+    # 沒有共同消費的月份不印 —— 常態是零的欄位每個月都佔一行，
+    # 會讓人不再讀它。
+    shared = [t for t in twd_rows if (t.get("split_type") or "個人") == "共同"]
+    if shared:
+        mine = sum(t.get("amount") or 0 for t in shared)
+        gross = sum((t.get("total") if t.get("total") is not None
+                     else t.get("amount")) or 0 for t in shared)
+        lines.insert(2, f"　其中共同分攤 NT${_money(mine)}"
+                        f"（原始 NT${_money(gross)}）")
+
     for cat, amt in sorted(by_cat.items(), key=lambda kv: -kv[1]):
         pct = round(amt / total * 100) if total else 0
         lines.append(f"・{cat}　NT${_money(amt)}　{pct}%")

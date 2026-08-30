@@ -98,3 +98,43 @@ def test_shared_and_personal_with_same_share_do_not_collide():
 
     assert personal["amount"] == shared["amount"] == 300
     assert personal["fingerprint"] != shared["fingerprint"]
+
+
+# ── 報表 ─────────────────────────────────────────────────
+
+def _row(date_, amount, split_type="個人", total=None, category="餐飲"):
+    return {"date": date_, "amount": amount, "category": category,
+            "shop": "某店", "direction": "支出", "status": "已結帳",
+            "currency": "TWD", "split_type": split_type,
+            "total": total if total is not None else amount}
+
+
+def test_monthly_spending_shows_shared_line():
+    txns = [_row("2026-08-01", 300, "共同", 600),
+            _row("2026-08-02", 250, "共同", 500),
+            _row("2026-08-03", 120)]
+
+    text = fr.format_monthly_spending(txns, "2026-08")
+
+    assert "670" in text                      # 總額仍是我實際負擔
+    assert "共同分攤" in text
+    assert "550" in text                      # 我在共同消費裡負擔的
+    assert "1,100" in text                    # 整桌加起來
+
+
+def test_monthly_spending_hides_shared_line_when_none():
+    """常態是零的欄位每個月都佔一行，會讓人不再讀它。"""
+    txns = [_row("2026-08-01", 120), _row("2026-08-02", 80)]
+
+    text = fr.format_monthly_spending(txns, "2026-08")
+
+    assert "共同分攤" not in text
+
+
+def test_monthly_total_still_counts_my_share_only():
+    """金額欄的語意是「我實際負擔」—— 這次改動不能讓總額變成整桌。"""
+    txns = [_row("2026-08-01", 300, "共同", 600)]
+
+    text = fr.format_monthly_spending(txns, "2026-08")
+
+    assert "NT$300" in text
