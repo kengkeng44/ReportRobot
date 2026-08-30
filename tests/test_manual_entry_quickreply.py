@@ -319,19 +319,26 @@ def test_amount_buttons_send_complete_commands(fake_notion):
 
 
 def test_full_flow_actually_writes(fake_notion):
-    """整條線走完：點品項 → 點金額 → 真的進 Notion。"""
+    """整條線走完：點品項 → 點金額 → 點個人/共同 → 真的進 Notion。
+
+    2026-08-30 起多了第三段。這是設計變更（分攤類型放在最後一段），
+    不是回歸 —— 見 docs/superpowers/specs/2026-08-30-shared-expense-split-design.md
+    """
     fake = fake_notion(txns=[_txn("午餐", 120)])
 
     step1 = cr.handle("記一筆", _ctx())
     item_cmd = step1["quickReply"]["items"][0]["action"]["text"]
     step2 = cr.handle(item_cmd, _ctx())
     amount_cmd = step2["quickReply"]["items"][0]["action"]["text"]
+    step3 = cr.handle(amount_cmd, _ctx())
+    split_cmd = step3["quickReply"]["items"][0]["action"]["text"]
 
-    cr.handle(amount_cmd, _ctx())
+    cr.handle(split_cmd, _ctx())
 
     assert len(fake.added) == 1
     assert fake.added[0]["shop"] == "午餐"
     assert fake.added[0]["amount"] == 120
+    assert fake.added[0]["split_type"] == "個人"
     assert fake.added[0]["category"] == "餐飲"
 
 
@@ -346,10 +353,14 @@ def test_unknown_item_falls_back_to_text(fake_notion):
 
 
 def test_complete_command_is_unchanged(fake_notion):
-    """有帶完整參數時行為照舊，不要因為加按鈕改掉主要路徑。"""
+    """帶滿品項/金額/分攤類型時行為照舊，不要因為加按鈕改掉主要路徑。
+
+    2026-08-30 起「完整參數」多了分攤類型這一項 —— 這是設計變更
+    （第四態把個人/共同放到最後一段問），不是回歸。
+    """
     fake = fake_notion()
 
-    reply = cr.handle("記一筆 午餐 120", _ctx())
+    reply = cr.handle("記一筆 午餐 120 個人", _ctx())
 
     assert isinstance(reply, str)
     assert "已記錄" in reply
@@ -359,7 +370,7 @@ def test_complete_command_is_unchanged(fake_notion):
 def test_reply_shows_category(fake_notion):
     fake_notion()
 
-    reply = cr.handle("記一筆 午餐 120", _ctx())
+    reply = cr.handle("記一筆 午餐 120 個人", _ctx())
 
     assert "餐飲" in reply
 
@@ -381,9 +392,11 @@ def test_falls_back_to_text_when_notion_down(fake_notion):
 
 
 def test_write_failure_is_readable(fake_notion):
+    """要真的走到寫入那一步才測得到失敗訊息 —— 分攤類型不給的話
+    現在（設計變更後）會先跳個人/共同按鈕，不會碰 Notion。"""
     fake_notion(write_ok=False)
 
-    reply = cr.handle("記一筆 午餐 120", _ctx())
+    reply = cr.handle("記一筆 午餐 120 個人", _ctx())
 
     assert isinstance(reply, str) and "失敗" in reply
 
@@ -395,6 +408,71 @@ def test_bare_command_still_explains_typed_form(fake_notion):
     reply = cr.handle("記一筆", _ctx())
 
     assert "記一筆" in reply["text"]
+
+
+# ── 第四態：個人 / 共同 ───────────────────────────────────
+
+def test_amount_without_split_type_returns_split_buttons(fake_notion):
+    fake_notion(txns=[_txn("晚餐", 300, split_type="共同", total=600)])
+
+    reply = cr.handle("記一筆 晚餐 600", _ctx())
+
+    labels = [i["action"]["label"] for i in reply["quickReply"]["items"]]
+    assert labels == ["個人", "共同"]
+
+
+def test_split_buttons_send_complete_commands(fake_notion):
+    """按鈕送出的字串必須自己 parse 得回來，不然點了沒反應。"""
+    fake_notion(txns=[])
+
+    reply = cr.handle("記一筆 晚餐 600", _ctx())
+
+    sent = [i["action"]["text"] for i in reply["quickReply"]["items"]]
+    assert sent == ["記一筆 晚餐 600 個人", "記一筆 晚餐 600 共同"]
+    for s in sent:
+        assert cr.parse(s)[0] == "fin_manual"
+
+
+def test_split_buttons_work_without_notion(fake_notion):
+    """走到這一段的人已經把品項與金額打完了，不該卡在最後一步。
+    兩顆靜態按鈕不碰 Notion。"""
+    fake_notion(configured=False)
+
+    reply = cr.handle("記一筆 晚餐 600", _ctx())
+
+    assert reply["quickReply"]["items"][1]["action"]["text"] == "記一筆 晚餐 600 共同"
+
+
+def test_shared_entry_writes_only_my_share(fake_notion):
+    fake = fake_notion(txns=[])
+
+    reply = cr.handle("記一筆 晚餐 600 共同", _ctx())
+
+    assert len(fake.added) == 1
+    assert fake.added[0]["amount"] == 300      # 金額欄 = 我實際負擔
+    assert fake.added[0]["total"] == 600
+    assert fake.added[0]["split_type"] == "共同"
+    assert "300" in reply and "600" in reply    # 兩個數字都要看得到
+
+
+def test_personal_entry_writes_full_amount(fake_notion):
+    fake = fake_notion(txns=[])
+
+    cr.handle("記一筆 午餐 120 個人", _ctx())
+
+    assert fake.added[0]["amount"] == 120
+    assert fake.added[0]["total"] == 120
+    assert fake.added[0]["split_type"] == "個人"
+
+
+def test_income_skips_the_split_question(fake_notion):
+    """薪水不用跟人分 —— 不該多問一段。"""
+    fake = fake_notion(txns=[])
+
+    cr.handle("記一筆 薪水 50000", _ctx())
+
+    assert len(fake.added) == 1
+    assert fake.added[0]["direction"] == "收入"
 
 
 # ── Rich Menu ────────────────────────────────────────────

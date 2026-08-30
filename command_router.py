@@ -792,6 +792,22 @@ def _manual_amount_quick_reply(item):
                             [(str(a), f"記一筆 {item} {a}") for a in amounts])
 
 
+def _manual_split_quick_reply(item, total):
+    """「記一筆 晚餐 600」→ 個人 / 共同按鈕。
+
+    兩顆靜態按鈕，不碰 Notion —— 前兩段沒有 Notion 會退回文字提示，
+    但走到這一段的人已經把品項與金額都打完了，不該卡在最後一步。
+
+    順序固定「個人」在前:多數記錄是個人消費，常用的放左邊少移動一次拇指。
+    """
+    from flex_builder import quick_reply_text
+
+    return quick_reply_text(
+        f"{item} NT${total:,} —— 這筆是自己的還是一起分的?",
+        [("個人", f"記一筆 {item} {total} 個人"),
+         ("共同", f"記一筆 {item} {total} 共同")])
+
+
 def _handle_finance(kind, arg):
     """財務分頁的五個功能。Notion 掛掉時回可讀訊息，不丟例外。"""
     import finance_report
@@ -804,9 +820,17 @@ def _handle_finance(kind, arg):
         if not txn:
             # 有品項沒金額 —— 這是兩段式的第二段，不是錯誤
             return _manual_amount_quick_reply(arg.strip())
+        if txn["split_type"] is None:
+            # 有金額沒分攤類型 —— 第三段。收入不會走到這裡（parse_manual
+            # 直接給「個人」），薪水不用跟人分。
+            return _manual_split_quick_reply(txn["shop"], txn["total"])
         if not notion_db.transaction_add(txn):
             return "寫入 Notion 失敗,請稍後再試。"
         sign = "+" if txn["direction"] == "收入" else "-"
+        if txn["split_type"] == "共同":
+            # 兩個數字都要看得到:整桌多少、我付多少
+            return (f"✅ 已記錄:{txn['shop']}　共同 NT${txn['total']:,}\n"
+                    f"　你分攤 {sign}NT${txn['amount']:,}（{txn['category']}）")
         return (f"✅ 已記錄:{txn['shop']}　{sign}NT${txn['amount']:,}"
                 f"（{txn['category']}）")
 
