@@ -252,6 +252,44 @@ def my_share_of(total):
     return int((total or 0) * MY_SHARE + 0.5)
 
 
+# 這些店的消費一律算共同 —— 買回來的東西兩個人一起吃、一起用。
+# 用子字串比對而非完全相等：國泰給的店名是「全聯福利中心－板橋板新」，
+# 分店會變但「全聯」不會。要加別的店（量販、超市）改這一行就好。
+_SHARED_SHOPS = ("全聯",)
+
+
+def is_shared_shop(shop):
+    """這家店的消費算不算共同。"""
+    name = (shop or "").strip()
+    return any(k in name for k in _SHARED_SHOPS)
+
+
+def apply_shared_rule(txn):
+    """自動同步進來的交易，商店在共同清單裡就改記成共同並只留我那半。
+
+    沒有這條規則，每個月都要手動把全聯那幾筆改一次 —— 手動維護的東西
+    遲早會漏，漏掉的那個月支出就悄悄高估。
+
+    **不動 fingerprint**：那是去重鍵，由 parser 從原始信件內容算出。改了
+    它，同一封信下次同步會算出不同指紋、被當成新的一筆，每天重複寫入。
+
+    回新 dict 不就地改：parser 產出的 dict 還帶著 mail_url 等欄位，
+    就地改會讓呼叫端分不出哪些欄位動過。
+    """
+    if not txn or txn.get("direction") == "收入":
+        return txn                      # 退款不用跟人分
+    if not is_shared_shop(txn.get("shop")):
+        return txn
+    total = txn.get("amount")
+    if total is None:
+        return txn
+    out = dict(txn)
+    out["total"] = total
+    out["amount"] = my_share_of(total)
+    out["split_type"] = "共同"
+    return out
+
+
 def guess_category(shop):
     """品項 → 消費類別。認不出來回「其他」，不自創類別。
 
