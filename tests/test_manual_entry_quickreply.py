@@ -148,31 +148,31 @@ def test_frequent_items_boundary_at_exactly_90_days():
 def test_amounts_rank_by_count():
     txns = [_txn("午餐", 120), _txn("午餐", 120), _txn("午餐", 100)]
 
-    assert fr.frequent_amounts(txns, "午餐", limit=5, pad=False) == [120, 100]
+    assert fr.frequent_amounts(txns, "午餐", limit=5, pad=False, today=TODAY) == [120, 100]
 
 
 def test_amounts_are_per_item():
     """共用一份全域金額清單會讓咖啡的按鈕上出現 200 元。"""
     txns = [_txn("午餐", 120), _txn("咖啡", 55)]
 
-    assert fr.frequent_amounts(txns, "咖啡", limit=5, pad=False) == [55]
+    assert fr.frequent_amounts(txns, "咖啡", limit=5, pad=False, today=TODAY) == [55]
 
 
 def test_amounts_ignore_auto_synced():
     txns = [_txn("午餐", 999, source="國泰消費彙整"), _txn("午餐", 120)]
 
-    assert fr.frequent_amounts(txns, "午餐", limit=5, pad=False) == [120]
+    assert fr.frequent_amounts(txns, "午餐", limit=5, pad=False, today=TODAY) == [120]
 
 
 def test_amounts_pad_with_seeds():
     """第一天沒歷史，金額按鈕不能是空的。"""
-    assert fr.frequent_amounts([], "午餐") == [100, 120, 150]
+    assert fr.frequent_amounts([], "午餐", today=TODAY) == [100, 120, 150]
 
 
 def test_seeds_never_duplicate_history():
     txns = [_txn("午餐", 120)]
 
-    out = fr.frequent_amounts(txns, "午餐")
+    out = fr.frequent_amounts(txns, "午餐", today=TODAY)
 
     assert out[0] == 120
     assert out.count(120) == 1
@@ -181,24 +181,65 @@ def test_seeds_never_duplicate_history():
 def test_unknown_item_has_no_seed_amounts():
     """使用者自己打的品項沒有種子金額 —— 呼叫端要據此不放 quickReply，
     空的 quickReply 物件會被 LINE 當格式錯誤整則退回。"""
-    assert fr.frequent_amounts([], "搭車") == []
+    assert fr.frequent_amounts([], "搭車", today=TODAY) == []
 
 
 def test_unknown_item_still_learns_from_history():
     txns = [_txn("搭車", 30), _txn("搭車", 30), _txn("搭車", 45)]
 
-    assert fr.frequent_amounts(txns, "搭車") == [30, 45]
+    assert fr.frequent_amounts(txns, "搭車", today=TODAY) == [30, 45]
 
 
 def test_blank_item_returns_empty():
-    assert fr.frequent_amounts([_txn("午餐", 120)], "") == []
+    assert fr.frequent_amounts([_txn("午餐", 120)], "", today=TODAY) == []
 
 
 def test_amounts_are_ints_when_whole():
     """按鈕 label 不要出現 120.0。"""
     txns = [_txn("午餐", 120.0)]
 
-    assert fr.frequent_amounts(txns, "午餐", pad=False) == [120]
+    assert fr.frequent_amounts(txns, "午餐", pad=False, today=TODAY) == [120]
+
+
+def test_amounts_use_gross_not_my_share():
+    """按鈕上的數字是使用者要打進去的錢（整桌 600），不是分攤額（300）。
+    用金額欄統計的話，共同消費的按鈕每次砍半，愈跳愈小。"""
+    txns = [_txn("晚餐", 300, split_type="共同", total=600),
+            _txn("晚餐", 300, split_type="共同", total=600)]
+
+    assert fr.frequent_amounts(
+        txns, "晚餐", pad=False, today=TODAY) == [600]
+
+
+def test_amounts_prefer_the_usual_split_type_of_that_item():
+    """「個人/共同」問在最後一段，跳金額按鈕時還不知道這筆屬於哪種。
+    用品項自己的歷史推斷：晚餐幾乎都是共同的就跳共同價位。"""
+    txns = [_txn("晚餐", 300, split_type="共同", total=600),
+            _txn("晚餐", 300, split_type="共同", total=600),
+            _txn("晚餐", 300, split_type="共同", total=620),
+            _txn("晚餐", 150, split_type="個人", total=150)]
+
+    out = fr.frequent_amounts(txns, "晚餐", pad=False, today=TODAY)
+
+    assert 150 not in out
+    assert out[0] == 600
+
+
+def test_amounts_fall_back_to_all_records_when_sample_too_small():
+    """一兩筆推不出習慣，硬推會讓按鈕少到不夠用。"""
+    txns = [_txn("宵夜", 100, split_type="共同", total=200),
+            _txn("宵夜", 80, split_type="個人", total=80)]
+
+    out = fr.frequent_amounts(txns, "宵夜", pad=False, today=TODAY)
+
+    assert sorted(out) == [80, 200]
+
+
+def test_amounts_ignore_records_older_than_90_days():
+    txns = [_txn("午餐", 95, days_ago=150), _txn("午餐", 130, days_ago=2)]
+
+    assert fr.frequent_amounts(
+        txns, "午餐", pad=False, today=TODAY) == [130]
 
 
 # ── 三態分流 ─────────────────────────────────────────────

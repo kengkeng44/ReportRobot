@@ -419,32 +419,75 @@ _SEED_AMOUNTS = {
 }
 
 
-def frequent_amounts(txns, item, limit=5, pad=True):
-    """某個品項的常用金額，記過越多次的排前面。
+# 樣本少於這個數就不做型態推斷：一兩筆推不出習慣，硬推還會讓按鈕
+# 少到不夠用。
+_SPLIT_INFERENCE_MIN = 2
+
+
+def _prefer_usual_split(rows):
+    """只留這個品項慣用的分攤型態。rows 是 [(txn, weight)]。
+
+    「個人 / 共同」問在最後一段，跳金額按鈕的當下還不知道這筆屬於哪種，
+    個人的午餐 120 會跟共同的晚餐 600 混在同一排。用品項自己的歷史推斷：
+    晚餐九成是共同的就跳共同價位，咖啡都是個人的就跳個人價位。
+
+    篩完不足 _SPLIT_INFERENCE_MIN 筆就整組退回，寧可混也不要沒得按。
+    """
+    weights = defaultdict(int)
+    for t, w in rows:
+        weights[t.get("split_type") or "個人"] += w
+    if not weights:
+        return rows
+    usual = max(weights, key=lambda k: weights[k])
+    picked = [(t, w) for t, w in rows
+              if (t.get("split_type") or "個人") == usual]
+    return picked if len(picked) >= _SPLIT_INFERENCE_MIN else rows
+
+
+def frequent_amounts(txns, item, limit=5, pad=True, today=None):
+    """某個品項的常用金額，記過越多次的排前面，近期的算比較多次。
 
     依品項分別統計：共用一份全域金額清單會讓咖啡的按鈕上出現 200 元。
     與 frequent_expense_items 一樣只看 source == "手動"。
+
+    統計對象是「原始總額」而不是「金額」：按鈕上的數字是使用者要打進去
+    的錢（整桌 600），不是分攤額（300）。用金額欄統計的話，共同消費的
+    按鈕每次砍半，愈跳愈小，最後每筆都得手打。
 
     整數金額回 int，否則按鈕上會出現「120.0」。
     """
     key = (item or "").strip()
     if not key:
         return []
+    today = today or date.today()
 
-    counts = {}
-    order = []
+    rows = []
     for t in txns or []:
         if (t.get("source") or "") != "手動":
             continue
         if (t.get("shop") or "").strip() != key:
             continue
-        amount = t.get("amount")
+        weight = _recency_weight(t.get("date"), today)
+        if not weight:
+            continue
+        rows.append((t, weight))
+
+    rows = _prefer_usual_split(rows)
+
+    counts = {}
+    order = []
+    for t, weight in rows:
+        # 舊資料沒有 total（transactions_load 已回退成金額，這裡是雙保險：
+        # 單元測試與其他呼叫端可能直接餵 dict 進來）
+        amount = t.get("total")
+        if amount is None:
+            amount = t.get("amount")
         if amount is None:
             continue
         amount = int(amount) if float(amount) == int(amount) else amount
         if amount not in counts:
             order.append(amount)
-        counts[amount] = counts.get(amount, 0) + 1
+        counts[amount] = counts.get(amount, 0) + weight
 
     ranked = sorted(order, key=lambda a: (-counts[a], order.index(a)))
     out = ranked[:limit]
