@@ -202,6 +202,10 @@ _SCHEMAS = {
             ("富邦轉帳", "orange"), ("PDF對帳單", "gray"), ("手動", "default"),
         ),
         "原信連結": {"url": {}},
+        # 共同消費把「金額」存成我實際負擔的那半，整桌多少錢存這裡。
+        # 「金額」欄的語意（我實際負擔）維持不變，六處既有報表才不用改。
+        "分攤類型": _select(("個人", "default"), ("共同", "blue")),
+        "原始總額": {"number": {"format": "number"}},
         "Fingerprint": {"rich_text": {}},                       # 去重鍵，見 spec 3.3
     },
     "信用卡帳單": {
@@ -1052,6 +1056,10 @@ def transaction_add(txn):
         "商店": {"rich_text": [{"text": {"content": txn.get("shop") or ""}}]},
         "狀態": _prop_select(txn.get("status")),
         "來源": _prop_select(txn.get("source")),
+        # 沒帶就不寫這兩欄 —— 國泰同步走的是同一個函式，硬填「個人」
+        # 會把「這個來源沒有分攤概念」偽裝成「已經判斷過是個人」。
+        "分攤類型": _prop_select(txn.get("split_type")),
+        "原始總額": _prop_number(txn.get("total")),
         "Fingerprint": {"rich_text": [{"text": {"content": txn["fingerprint"]}}]},
     }
     if txn.get("mail_url"):
@@ -1146,6 +1154,13 @@ def transactions_load(limit=200):
                     # 沒讀這欄就分不出手動記帳與自動同步 —— transaction_add
                     # 一直有寫進去，讀不回來只會安靜地得到 None。
                     "source": _read_select(props, "來源"),
+                    # 遷移前的資料沒有這兩欄。國泰同步的本來就是自己刷的，
+                    # 一律當個人；原始總額回退成金額 —— 個人消費兩者相等。
+                    # 沒有這兩條 fallback，所有統計都得特判 None。
+                    "split_type": _read_select(props, "分攤類型") or "個人",
+                    "total": (_read_number(props, "原始總額")
+                              if _read_number(props, "原始總額") is not None
+                              else _read_number(props, "金額")),
                 })
             if not res.get("has_more"):
                 break

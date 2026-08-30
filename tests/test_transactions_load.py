@@ -142,3 +142,57 @@ def test_load_reads_source(monkeypatch):
 
     assert [r["source"] for r in rows] == [
         "國泰消費彙整", "手動", "國泰消費彙整", "手動"]
+
+
+class OneRow:
+    """單列假 Notion，用來測欄位讀取與舊資料 fallback。"""
+
+    def __init__(self, props):
+        self._props = props
+        self.queries = []
+
+    def query(self, **kwargs):
+        self.queries.append(kwargs)
+        return {"results": [{"properties": self._props}],
+                "has_more": False, "next_cursor": None}
+
+
+def _install_row(monkeypatch, props):
+    dbs = OneRow(props)
+    monkeypatch.setattr(notion_db, "_TOKEN", "secret_fake")
+    monkeypatch.setattr(notion_db, "_PARENT_PAGE", "page_fake")
+    monkeypatch.setattr(notion_db, "_client", FakeClient(dbs))
+    monkeypatch.setattr(notion_db, "get_or_create_db", lambda name: "db_交易明細")
+    return dbs
+
+
+def test_reads_split_columns(monkeypatch):
+    _install_row(monkeypatch, {
+        "日期": {"date": {"start": "2026-08-30"}},
+        "金額": {"number": 300},
+        "原始總額": {"number": 600},
+        "分攤類型": {"select": {"name": "共同"}},
+    })
+
+    row = notion_db.transactions_load(limit=1)[0]
+
+    assert row["split_type"] == "共同"
+    assert row["total"] == 600
+    assert row["amount"] == 300
+
+
+def test_old_rows_without_split_columns_default_to_personal(monkeypatch):
+    """遷移前的資料沒有這兩欄。既有的國泰同步資料本來就是自己刷的，
+    一律當個人；原始總額回退成金額 —— 個人消費兩者本來就相等。
+
+    沒有這兩條 fallback，所有統計都得特判 None。"""
+    _install_row(monkeypatch, {
+        "日期": {"date": {"start": "2026-08-01"}},
+        "金額": {"number": 361},
+        "來源": {"select": {"name": "國泰消費彙整"}},
+    })
+
+    row = notion_db.transactions_load(limit=1)[0]
+
+    assert row["split_type"] == "個人"
+    assert row["total"] == 361
