@@ -143,6 +143,14 @@ def test_frequent_items_boundary_at_exactly_90_days():
         txns, limit=6, pad=False, today=TODAY) == ["剛好"]
 
 
+def test_item_buttons_fill_up_to_thirteen():
+    """品項按鈕也塞滿。記過的品項越多，越不需要手打。"""
+    txns = [_txn(f"品項{i}", 100, days_ago=i) for i in range(20)]
+
+    assert len(fr.frequent_expense_items(txns, today=TODAY)) == 13
+
+
+
 # ── 常用金額 ─────────────────────────────────────────────
 
 def test_amounts_rank_by_count():
@@ -213,20 +221,25 @@ def test_amounts_use_gross_not_my_share():
 
 def test_amounts_prefer_the_usual_split_type_of_that_item():
     """「個人/共同」問在最後一段，跳金額按鈕時還不知道這筆屬於哪種。
-    用品項自己的歷史推斷：晚餐幾乎都是共同的就跳共同價位。"""
+    用品項自己的歷史推斷：晚餐幾乎都是共同的就跳共同價位。
+
+    2026-08-31 起另一型態的金額不再被排除，只是排在後面 —— 這是設計變更。
+    LINE 一則能放 13 顆按鈕，空著的位置拿真實花過的金額來填，比拿內建
+    猜測值填更可能命中。"""
     txns = [_txn("晚餐", 300, split_type="共同", total=600),
             _txn("晚餐", 300, split_type="共同", total=600),
             _txn("晚餐", 300, split_type="共同", total=620),
-            _txn("晚餐", 150, split_type="個人", total=150)]
+            _txn("晚餐", 175, split_type="個人", total=175)]
 
     out = fr.frequent_amounts(txns, "晚餐", pad=False, today=TODAY)
 
-    assert 150 not in out
     assert out[0] == 600
+    assert out.index(175) > out.index(620), "另一型態要排在慣用型態後面"
 
 
-def test_amounts_fall_back_to_all_records_when_sample_too_small():
-    """一兩筆推不出習慣，硬推會讓按鈕少到不夠用。"""
+def test_amounts_include_both_split_types_when_sample_is_small():
+    """一兩筆推不出習慣。分層疊加之後這件事自然成立 —— 慣用型態排前面，
+    另一型態接在後面，不必再為「樣本太小」特判一條規則。"""
     txns = [_txn("宵夜", 100, split_type="共同", total=200),
             _txn("宵夜", 80, split_type="個人", total=80)]
 
@@ -235,11 +248,47 @@ def test_amounts_fall_back_to_all_records_when_sample_too_small():
     assert sorted(out) == [80, 200]
 
 
-def test_amounts_ignore_records_older_than_90_days():
+def test_amounts_rank_recent_above_old():
+    """2026-08-31 起 90 天外的記錄不再被丟掉，只是排在後面 —— 設計變更。
+
+    90 天窗原本的用意是「別讓兩年前的價位卡在前面」，那個目的靠排序就
+    達成了。丟掉它們反而是浪費：舊的價位仍然是真的花過的錢，比內建的
+    猜測值可信。"""
     txns = [_txn("午餐", 95, days_ago=150), _txn("午餐", 130, days_ago=2)]
 
     assert fr.frequent_amounts(
-        txns, "午餐", pad=False, today=TODAY) == [130]
+        txns, "午餐", pad=False, today=TODAY) == [130, 95]
+
+
+def test_amounts_fill_up_to_thirteen_buttons():
+    """LINE 一則最多 13 顆。少一顆按鈕就多一次手打的機會，而多一顆的
+    成本幾乎是零 —— 排序不變，最常用的仍在第一顆，後面的要橫滑才看到。"""
+    txns = [_txn("午餐", 100 + i, days_ago=i) for i in range(20)]
+
+    assert len(fr.frequent_amounts(txns, "午餐", today=TODAY)) == 13
+
+
+def test_real_history_outranks_seed_amounts():
+    """90 天前真的花過的金額，比內建的猜測值可信，該排在種子前面。"""
+    txns = [_txn("午餐", 130, days_ago=2), _txn("午餐", 95, days_ago=150)]
+
+    out = fr.frequent_amounts(txns, "午餐", today=TODAY)
+
+    assert out[:2] == [130, 95]
+    assert 100 in out, "種子仍該墊底把按鈕補滿"
+
+
+def test_other_split_type_outranks_seed_amounts():
+    """另一種分攤方式的金額也是真的花過，比猜的可信。"""
+    txns = [_txn("晚餐", 300, split_type="共同", total=600),
+            _txn("晚餐", 300, split_type="共同", total=600),
+            _txn("晚餐", 175, split_type="個人", total=175)]
+
+    out = fr.frequent_amounts(txns, "晚餐", today=TODAY)
+
+    assert out[0] == 600
+    assert out.index(175) < out.index(120), "真實金額要贏過種子金額"
+
 
 
 # ── 三態分流 ─────────────────────────────────────────────
