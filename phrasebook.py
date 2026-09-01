@@ -27,3 +27,36 @@ def next_due(appeared_count, today):
     """
     index = min(max(appeared_count, 1) - 1, len(INTERVALS) - 1)
     return today + timedelta(days=INTERVALS[index])
+
+
+def pick_due(rows, today):
+    """從 rows 挑一句今天該出現的。沒有就回 None。
+
+    rows 的每個元素至少要有 due(ISO 字串或 None)。
+
+    排序規則:
+    1. due 為空的最優先 —— 使用者剛貼進 Notion,當天就該上場
+    2. 其次 due 最舊的 —— 逾期最久的先還債
+
+    空字串在字典序上小於任何 ISO 日期,所以兩條規則可以用同一個
+    排序 key 表達,不需要分兩段。
+    """
+    today_iso = today.isoformat()
+    due = [r for r in rows if not r.get("due") or r["due"] <= today_iso]
+    if not due:
+        return None
+    return min(due, key=lambda r: r.get("due") or "")
+
+
+def advance(row, today):
+    """挑中一句之後,要寫回 Notion 的欄位。
+
+    回 dict 而不是直接寫 Notion:這個模組不做 I/O,而且這樣測試
+    看得到「算出來的排程」而不是「有沒有呼叫 API」。
+    """
+    appeared = (row.get("appeared") or 0) + 1
+    return {
+        "appeared": appeared,
+        "last_seen": today,
+        "due": next_due(appeared, today),
+    }

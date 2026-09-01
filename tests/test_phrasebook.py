@@ -40,3 +40,76 @@ def test_next_due_caps_at_last_interval():
 def test_next_due_treats_zero_as_first():
     """防呆:Notion 的「出現次數」沒填時讀回來是 0。"""
     assert phrasebook.next_due(0, D) == date(2026, 9, 2)
+
+
+# ── 挑句 ──────────────────────────────────────────────────
+
+def _row(page_id, sentence, due=None, appeared=0):
+    return {
+        "page_id": page_id, "sentence": sentence,
+        "meaning": "", "note": "", "appeared": appeared, "due": due,
+    }
+
+
+def test_pick_due_returns_none_when_nothing_is_due():
+    rows = [_row("a", "hello", due="2026-09-05")]
+
+    assert phrasebook.pick_due(rows, D) is None
+
+
+def test_pick_due_returns_none_for_empty_library():
+    assert phrasebook.pick_due([], D) is None
+
+
+def test_pick_due_takes_the_most_overdue_first():
+    """逾期最久的先還債。"""
+    rows = [
+        _row("a", "newer", due="2026-08-31"),
+        _row("b", "older", due="2026-08-01"),
+    ]
+
+    assert phrasebook.pick_due(rows, D)["page_id"] == "b"
+
+
+def test_pick_due_prefers_freshly_pasted_rows():
+    """使用者剛貼進 Notion 的句子「下次出現」是空的,當天就該上場。
+
+    不這樣做的話,貼完還得手動去填一個日期欄位 —— 那張表就變成家事。
+    """
+    rows = [
+        _row("old", "overdue", due="2026-01-01"),
+        _row("new", "just pasted", due=None),
+    ]
+
+    assert phrasebook.pick_due(rows, D)["page_id"] == "new"
+
+
+def test_pick_due_includes_today():
+    """due 正好是今天要算到期,不是明天。"""
+    rows = [_row("a", "hello", due="2026-09-01")]
+
+    assert phrasebook.pick_due(rows, D)["page_id"] == "a"
+
+
+# ── 推進排程 ──────────────────────────────────────────────
+
+def test_advance_increments_and_reschedules():
+    row = _row("a", "hello", due="2026-08-01", appeared=2)
+
+    out = phrasebook.advance(row, D)
+
+    assert out == {
+        "appeared": 3,
+        "last_seen": D,
+        "due": date(2026, 10, 1),      # 第 3 次 → +30
+    }
+
+
+def test_advance_handles_missing_count():
+    """Notion 沒填「出現次數」時讀回來是 None。"""
+    row = {"page_id": "a", "sentence": "hi", "appeared": None, "due": None}
+
+    out = phrasebook.advance(row, D)
+
+    assert out["appeared"] == 1
+    assert out["due"] == date(2026, 9, 2)
