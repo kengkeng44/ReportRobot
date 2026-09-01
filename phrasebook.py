@@ -42,6 +42,8 @@ def pick_due(rows, today):
     排序 key 表達,不需要分兩段。
     """
     today_iso = today.isoformat()
+    # not r.get("due") 短路要留著:少了它,due=None 會跟字串比較
+    # (None <= "2026-09-01"),直接 TypeError。
     due = [r for r in rows if not r.get("due") or r["due"] <= today_iso]
     if not due:
         return None
@@ -54,7 +56,9 @@ def advance(row, today):
     回 dict 而不是直接寫 Notion:這個模組不做 I/O,而且這樣測試
     看得到「算出來的排程」而不是「有沒有呼叫 API」。
     """
-    appeared = (row.get("appeared") or 0) + 1
+    # Notion 的 number 欄位可能回 float(例如 3.0),float 拿去當
+    # INTERVALS 的索引會 TypeError,所以這裡轉 int。
+    appeared = int(row.get("appeared") or 0) + 1
     return {
         "appeared": appeared,
         "last_seen": today,

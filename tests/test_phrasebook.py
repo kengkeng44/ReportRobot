@@ -91,6 +91,16 @@ def test_pick_due_includes_today():
     assert phrasebook.pick_due(rows, D)["page_id"] == "a"
 
 
+def test_pick_due_skips_future_rows_but_still_picks_overdue_ones():
+    """真實的庫是混的:有到期的也有還沒到的。"""
+    rows = [
+        _row("future", "not yet", due="2026-12-25"),
+        _row("overdue", "due now", due="2026-08-01"),
+    ]
+
+    assert phrasebook.pick_due(rows, D)["page_id"] == "overdue"
+
+
 # ── 推進排程 ──────────────────────────────────────────────
 
 def test_advance_increments_and_reschedules():
@@ -113,3 +123,17 @@ def test_advance_handles_missing_count():
 
     assert out["appeared"] == 1
     assert out["due"] == date(2026, 9, 2)
+
+
+def test_advance_casts_float_count_from_notion():
+    """Notion 的 number 欄位可能回 3.0 而不是 3。
+
+    float 拿去當 INTERVALS 的索引會 TypeError —— 而且只在真的接上
+    Notion 之後才會炸,測試用 int 寫死是抓不到的。
+    """
+    row = {"page_id": "a", "sentence": "hi", "appeared": 3.0, "due": None}
+
+    out = phrasebook.advance(row, D)
+
+    assert out["appeared"] == 4
+    assert out["due"] == date(2026, 11, 30)      # 第 4 次 → +90
