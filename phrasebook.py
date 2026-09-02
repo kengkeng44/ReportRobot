@@ -64,3 +64,54 @@ def advance(row, today):
         "last_seen": today,
         "due": next_due(appeared, today),
     }
+
+
+def pick_quote(rows, today):
+    """挑一句中文金句。沒講過的優先(隨機),全講過就挑最久沒講的。
+
+    為什麼金句不排間隔重複:英西是要背的,隔一個月再看有回升價值;
+    金句是要被啟發的,同一句名言隔一個月不會產生同樣的回升(見 spec 2.3)。
+
+    為什麼用完不回 None(語句庫的做法是回 None 交給 AI 補位):
+    金句沒有 AI 補位這條路 —— 硬生的「名言」是假的。輪回去重講
+    比讓區塊消失好。
+
+    today 目前沒用到,保留在簽名上是為了跟 pick_due 對稱,呼叫端
+    兩個都傳同一組參數。
+    """
+    if not rows:
+        return None
+    unseen = [r for r in rows if not r.get("last_seen")]
+    if unseen:
+        # 隨機而不是取第一個:不然新貼一批之後會照 Notion 的順序
+        # 一路念下去,排前面的永遠先被消耗完
+        return random.choice(unseen)
+    return min(rows, key=lambda r: r.get("last_seen") or "")
+
+
+def _phrase_block(tag, row):
+    """一句的三行:原句 / 中文意思 / 情境提示。後兩行沒填就不佔行。"""
+    lines = [f"[{tag}] {row['sentence']}"]
+    if row.get("meaning"):
+        lines.append(f"     {row['meaning']}")
+    if row.get("note"):
+        lines.append(f"     💡 {row['note']}")
+    return "\n".join(lines)
+
+
+def format_daily(en=None, es=None, quote=None):
+    """組「今日三句」的純文字。三個都沒有回 None。
+
+    回 None 是刻意的:呼叫端(_build_personal_sections)的既有規則是
+    「空的區塊直接不放」,留一張空卡片比沒有還糟。
+    """
+    parts = [_phrase_block(tag, row)
+             for tag, row in (("EN", en), ("ES", es)) if row]
+
+    if quote:
+        lines = [f"[中] {quote['sentence']}"]
+        if quote.get("source"):
+            lines.append(f"     —— {quote['source']}")
+        parts.append("\n".join(lines))
+
+    return "\n\n".join(parts) if parts else None

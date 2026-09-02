@@ -137,3 +137,94 @@ def test_advance_casts_float_count_from_notion():
 
     assert out["appeared"] == 4
     assert out["due"] == date(2026, 11, 30)      # 第 4 次 → +90
+
+
+# ── 金句 ──────────────────────────────────────────────────
+
+def _quote(page_id, text, last_seen=None):
+    return {"page_id": page_id, "sentence": text,
+            "source": "", "last_seen": last_seen}
+
+
+def test_pick_quote_returns_none_for_empty_library():
+    assert phrasebook.pick_quote([], D) is None
+
+
+def test_pick_quote_prefers_unseen():
+    rows = [
+        _quote("seen", "講過了", last_seen="2026-08-01"),
+        _quote("fresh", "沒講過"),
+    ]
+
+    assert phrasebook.pick_quote(rows, D)["page_id"] == "fresh"
+
+
+def test_pick_quote_falls_back_to_oldest_when_all_seen():
+    """金句庫用完不該讓區塊消失 —— 輪回去重講是可接受的。
+
+    語句庫不能這樣做(那邊有 AI 補位),但金句是拿來被提醒的,
+    重看一次不算浪費。硬生的「名言」才是假的。
+    """
+    rows = [
+        _quote("a", "第一句", last_seen="2026-08-20"),
+        _quote("b", "第二句", last_seen="2026-01-05"),
+    ]
+
+    assert phrasebook.pick_quote(rows, D)["page_id"] == "b"
+
+
+def test_pick_quote_picks_among_unseen_not_always_first():
+    """沒講過的有很多句時要隨機,不能每次都拿 Notion 順序的第一句。"""
+    rows = [_quote(str(i), f"句{i}") for i in range(20)]
+
+    picked = {phrasebook.pick_quote(rows, D)["page_id"] for _ in range(30)}
+
+    assert len(picked) > 1
+
+
+# ── 組版 ──────────────────────────────────────────────────
+
+def test_format_daily_renders_three_languages():
+    text = phrasebook.format_daily(
+        en={"sentence": "Play it by ear.",
+            "meaning": "再看情況決定吧", "note": "口語很常用"},
+        es={"sentence": "Me da igual.",
+            "meaning": "我都可以", "note": "比 no me importa 更輕鬆"},
+        quote={"sentence": "你以為的極限,只是別人的起點。", "source": "佚名"},
+    )
+
+    assert "[EN] Play it by ear." in text
+    assert "再看情況決定吧" in text
+    assert "💡 口語很常用" in text
+    assert "[ES] Me da igual." in text
+    assert "[中] 你以為的極限,只是別人的起點。" in text
+    assert "—— 佚名" in text
+
+
+def test_format_daily_keeps_language_order():
+    text = phrasebook.format_daily(
+        en={"sentence": "A"}, es={"sentence": "B"}, quote={"sentence": "C"},
+    )
+
+    assert text.index("[EN]") < text.index("[ES]") < text.index("[中]")
+
+
+def test_format_daily_skips_missing_languages():
+    """某一語言撈不到也生不出來時,少那一行,不是整段消失。"""
+    text = phrasebook.format_daily(en={"sentence": "A"}, es=None, quote=None)
+
+    assert "[EN] A" in text
+    assert "[ES]" not in text
+    assert "[中]" not in text
+
+
+def test_format_daily_omits_blank_meaning_and_note():
+    """沒填中文意思時不要留一行空白。"""
+    text = phrasebook.format_daily(en={"sentence": "A", "meaning": "", "note": ""})
+
+    assert text == "[EN] A"
+
+
+def test_format_daily_returns_none_when_nothing_available():
+    """三個都沒有 → 呼叫端據此整個區塊不放,不要留一張空卡片。"""
+    assert phrasebook.format_daily(None, None, None) is None
