@@ -732,7 +732,13 @@ def _query_all(db_id, client, limit, **extra):
         if cursor:
             kwargs["start_cursor"] = cursor
         res = client.databases.query(**kwargs)
-        out.extend(res.get("results", []))
+        page = res.get("results", [])
+        # 空頁但宣稱還有下一頁 → 迴圈永遠跑不完(len(out) 不會長)。
+        # 真實的 Notion 不會這樣回,但這是每天早上跑的排程 ——
+        # 卡死比報錯難查太多,值得這一行保險。
+        if not page:
+            break
+        out.extend(page)
         if not res.get("has_more"):
             break
         cursor = res.get("next_cursor")

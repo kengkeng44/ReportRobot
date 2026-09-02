@@ -257,3 +257,19 @@ def test_quote_mark_seen_writes_date(monkeypatch):
     assert pages.updated[0]["properties"] == {
         "上次出現": {"date": {"start": "2026-09-01"}},
     }
+
+
+def test_phrases_load_stops_on_empty_page(monkeypatch):
+    """空頁但宣稱 has_more → 不能無限迴圈。
+
+    真實的 Notion 不會這樣回,但這段每天早上在 Railway 上跑,
+    卡死比報錯難查太多。
+    """
+    dbs, _ = _install(monkeypatch, [])
+
+    def always_more(**kwargs):
+        return {"results": [], "has_more": True, "next_cursor": "cur"}
+
+    dbs.query = always_more
+
+    assert notion_db.phrases_load("英文") == []
