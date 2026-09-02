@@ -526,3 +526,11 @@ def test_quote_schema_tracks_last_seen_only():
     assert schema["上次出現"] == {"date": {}}
     assert "下次出現" not in schema
     assert "出現次數" not in schema
+
+
+def test_quote_schema_keeps_theme_tags():
+    """舊的「每日一句」有主題標籤(改變 / 休息 / 力量 …)。
+
+    目前程式不用它,但資料丟了就回不來 —— 搬的時候一起帶進來。
+    """
+    assert notion_db._SCHEMAS["金句庫"]["主題"] == {"multi_select": {"options": []}}

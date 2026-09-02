@@ -199,6 +199,10 @@ _SCHEMAS = {
     "金句庫": {
         "金句": {"title": {}},
         "出處": {"rich_text": {}},
+        # 從舊的「每日一句」搬過來的主題標籤(改變 / 休息 / 力量 …)。
+        # 目前只存不用 —— 之後想「只看某個主題」或配合心情出句才用得上,
+        # 但資料丟了就回不來,所以搬的時候一起帶進來。
+        "主題": {"multi_select": {"options": []}},
         "加入日期": {"date": {}},
         "上次出現": {"date": {}},               # 有值代表講過了
     },
@@ -764,9 +768,15 @@ def phrases_load(language, limit=500):
         )
         for r in rows:
             props = r.get("properties", {}) or {}
+            sentence = _read_title(props, "句子")
+            # 在 Notion 按了新增卻還沒貼句子的那一列不是資料。
+            # 不濾掉的話它反而會被優先挑中(「下次出現」也是空的,
+            # pick_due 把空的排最前),信裡就出現一行「[EN] 」後面沒東西。
+            if not sentence.strip():
+                continue
             out.append({
                 "page_id": r.get("id"),
-                "sentence": _read_title(props, "句子"),
+                "sentence": sentence,
                 "meaning": _read_rich_text(props, "中文意思"),
                 "note": _read_rich_text(props, "情境備註"),
                 # 手貼的句子不會填這欄。None 會讓 advance 的 +1 變 TypeError
@@ -841,9 +851,12 @@ def quotes_load(limit=500):
     try:
         for r in _query_all(db_id, client, limit):
             props = r.get("properties", {}) or {}
+            sentence = _read_title(props, "金句")
+            if not sentence.strip():
+                continue          # 同 phrases_load:空白列不是資料
             out.append({
                 "page_id": r.get("id"),
-                "sentence": _read_title(props, "金句"),
+                "sentence": sentence,
                 "source": _read_rich_text(props, "出處"),
                 # 沒講過必須是 None（不是 ""）—— pick_quote 靠它分類
                 "last_seen": _read_date(props, "上次出現"),

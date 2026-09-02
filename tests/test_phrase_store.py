@@ -273,3 +273,32 @@ def test_phrases_load_stops_on_empty_page(monkeypatch):
     dbs.query = always_more
 
     assert notion_db.phrases_load("英文") == []
+
+
+# ── 空白列(2026-09-02)──────────────────────────────────
+
+def test_phrases_load_skips_rows_with_no_sentence(monkeypatch):
+    """在 Notion 按了新增卻還沒貼句子的列不是資料。
+
+    不濾掉的話它反而會被優先挑中 —— 「下次出現」也是空的,
+    pick_due 把空的排最前 —— 信裡就出現一行「[EN] 」後面沒東西。
+    手貼是這張表唯一的輸入方式,貼一半是日常不是例外。
+    """
+    _install(monkeypatch, [
+        _phrase_page("blank", ""),
+        _phrase_page("blank2", "   "),
+        _phrase_page("real", "Play it by ear."),
+    ])
+
+    out = notion_db.phrases_load("英文")
+
+    assert [r["page_id"] for r in out] == ["real"]
+
+
+def test_quotes_load_skips_rows_with_no_sentence(monkeypatch):
+    _install(monkeypatch, [
+        _quote_page("blank", ""),
+        _quote_page("real", "你以為的極限"),
+    ])
+
+    assert [r["page_id"] for r in notion_db.quotes_load()] == ["real"]
