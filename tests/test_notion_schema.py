@@ -247,6 +247,7 @@ def test_existing_props_are_not_overwritten(monkeypatch):
 @pytest.mark.parametrize("name", [
     "帳戶", "交易明細", "信用卡帳單", "持倉", "淨值快照",
     "食材庫存", "食譜", "本週菜單", "採購清單",
+    "語句庫", "金句庫",
 ])
 def test_all_new_dbs_are_defined(name):
     assert name in notion_db._SCHEMAS, f"{name} 未定義 schema"
@@ -476,3 +477,52 @@ def test_transaction_schema_has_split_columns():
 
     names = [o["name"] for o in schema["分攤類型"]["select"]["options"]]
     assert names == ["個人", "共同"]
+
+
+# ── 語言學習區塊(2026-09-01)────────────────────────────
+
+def test_language_section_holds_both_dbs():
+    assert notion_db._SECTIONS["語言學習"]["dbs"] == ("語句庫", "金句庫")
+    assert notion_db._SECTIONS["語言學習"]["icon"] == "📚"
+
+
+def test_language_dbs_are_routed_to_the_section():
+    """_DB_SECTION 是從 _SECTIONS 推導的 —— 漏掉會建到根頁去。"""
+    assert notion_db._DB_SECTION["語句庫"] == "語言學習"
+    assert notion_db._DB_SECTION["金句庫"] == "語言學習"
+
+
+def test_phrase_schema_has_scheduling_fields():
+    """少任何一個排程欄位,間隔重複就會安靜地退化成隨機出現。"""
+    schema = notion_db._SCHEMAS["語句庫"]
+
+    assert "title" in schema["句子"]
+    assert schema["出現次數"] == {"number": {"format": "number"}}
+    assert schema["上次出現"] == {"date": {}}
+    assert schema["下次出現"] == {"date": {}}
+
+
+def test_phrase_schema_covers_both_languages():
+    options = [o["name"]
+               for o in notion_db._SCHEMAS["語句庫"]["語言"]["select"]["options"]]
+
+    assert options == ["英文", "西班牙文"]
+
+
+def test_phrase_schema_marks_ai_generated_rows():
+    """AI 補位生的句子要跟老師整理的分得出來,否則無從判斷庫的品質。"""
+    options = [o["name"]
+               for o in notion_db._SCHEMAS["語句庫"]["來源"]["select"]["options"]]
+
+    assert "AI生成" in options
+    assert "Preply課堂" in options
+
+
+def test_quote_schema_tracks_last_seen_only():
+    """金句走隨機不重複,只需要「講過沒」,不需要排程欄位。"""
+    schema = notion_db._SCHEMAS["金句庫"]
+
+    assert "title" in schema["金句"]
+    assert schema["上次出現"] == {"date": {}}
+    assert "下次出現" not in schema
+    assert "出現次數" not in schema

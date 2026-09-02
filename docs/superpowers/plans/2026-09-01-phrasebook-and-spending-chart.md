@@ -502,14 +502,16 @@ def test_phrase_schema_has_scheduling_fields():
 
 
 def test_phrase_schema_covers_both_languages():
-    options = [o["name"] for o in schema_options(notion_db._SCHEMAS["語句庫"], "語言")]
+    options = [o["name"]
+               for o in notion_db._SCHEMAS["語句庫"]["語言"]["select"]["options"]]
 
     assert options == ["英文", "西班牙文"]
 
 
 def test_phrase_schema_marks_ai_generated_rows():
     """AI 補位生的句子要跟老師整理的分得出來,否則無從判斷庫的品質。"""
-    options = [o["name"] for o in schema_options(notion_db._SCHEMAS["語句庫"], "來源")]
+    options = [o["name"]
+               for o in notion_db._SCHEMAS["語句庫"]["來源"]["select"]["options"]]
 
     assert "AI生成" in options
     assert "Preply課堂" in options
@@ -525,13 +527,21 @@ def test_quote_schema_tracks_last_seen_only():
     assert "出現次數" not in schema
 ```
 
-同時在該檔的 import 區之後加一個小工具(放在檔案上方、`class FakeDatabases` 之前):
+同時把既有的 parametrize 清單(`test_all_new_dbs_are_defined`,約 247-250 行)補上兩張新表 —— 那份清單是這個檔案既有的「schema 完整性」機制,新表不進去等於沒被涵蓋:
 
 ```python
-def schema_options(schema, field):
-    """取某個 select 欄位的選項清單。"""
-    return schema[field]["select"]["options"]
+@pytest.mark.parametrize("name", [
+    "帳戶", "交易明細", "信用卡帳單", "持倉", "淨值快照",
+    "食材庫存", "食譜", "本週菜單", "採購清單",
+    "語句庫", "金句庫",
+])
+def test_all_new_dbs_are_defined(name):
+    assert name in notion_db._SCHEMAS, f"{name} 未定義 schema"
 ```
+
+> **不要新增 `schema_options` helper。** 這個檔案既有的寫法是 inline 展開
+> `schema[欄位]["select"]["options"]`(見 `test_shared_expense` 那組),
+> 多一個 helper 反而跟房子風格打架。
 
 - [ ] **Step 2: 跑測試確認失敗**
 
