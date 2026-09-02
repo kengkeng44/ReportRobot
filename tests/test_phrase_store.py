@@ -302,3 +302,34 @@ def test_quotes_load_skips_rows_with_no_sentence(monkeypatch):
     ])
 
     assert [r["page_id"] for r in notion_db.quotes_load()] == ["real"]
+
+
+def test_quote_add_writes_source_and_themes(monkeypatch):
+    """搬遷腳本用的寫入。主題標籤要進 multi_select。"""
+    _, pages = _install(monkeypatch, [])
+
+    ok = notion_db.quote_add("你以為的極限", source="佚名",
+                             themes=["改變", "力量"], day=D)
+
+    props = pages.created[0]["properties"]
+    assert ok is True
+    assert props["金句"]["title"][0]["text"]["content"] == "你以為的極限"
+    assert props["出處"]["rich_text"][0]["text"]["content"] == "佚名"
+    assert props["主題"]["multi_select"] == [{"name": "改變"}, {"name": "力量"}]
+    assert props["加入日期"]["date"]["start"] == "2026-09-01"
+
+
+def test_quote_add_leaves_last_seen_empty(monkeypatch):
+    """搬進來的一律當作沒講過 —— 新庫不該一開始就在重播。"""
+    _, pages = _install(monkeypatch, [])
+
+    notion_db.quote_add("某句", day=D)
+
+    assert "上次出現" not in pages.created[0]["properties"]
+
+
+def test_quote_add_refuses_empty_sentence(monkeypatch):
+    _, pages = _install(monkeypatch, [])
+
+    assert notion_db.quote_add("", day=D) is False
+    assert pages.created == []

@@ -866,6 +866,33 @@ def quotes_load(limit=500):
     return out
 
 
+def quote_add(sentence, source="", themes=None, day=None):
+    """新增一句金句。搬遷腳本 import_quotes.py 走這裡。
+
+    「上次出現」刻意留空 —— 搬進來的一律當作還沒講過,
+    pick_quote 會優先挑它們,新庫才不會一開始就在重播。
+
+    Notion 的 multi_select 選項名稱不能含逗號,而 split_themes 正好
+    就是用逗號切的,所以切出來的標籤天生安全。
+    """
+    db_id = get_or_create_db("金句庫")
+    client = _get_client()
+    if not db_id or not client or not sentence:
+        return False
+    day = day or datetime.now().date()
+    try:
+        client.pages.create(parent={"database_id": db_id}, properties={
+            "金句": {"title": [{"text": {"content": sentence}}]},
+            "出處": {"rich_text": [{"text": {"content": source or ""}}]},
+            "主題": {"multi_select": [{"name": t} for t in (themes or [])]},
+            "加入日期": {"date": {"start": day.isoformat()}},
+        })
+        return True
+    except Exception as e:
+        print(f"[notion] quote_add 失敗：{e}")
+        return False
+
+
 def quote_mark_seen(page_id, today):
     """標記這句金句今天講過了。"""
     client = _get_client()
