@@ -228,3 +228,24 @@ def test_format_daily_omits_blank_meaning_and_note():
 def test_format_daily_returns_none_when_nothing_available():
     """三個都沒有 → 呼叫端據此整個區塊不放,不要留一張空卡片。"""
     assert phrasebook.format_daily(None, None, None) is None
+
+def test_format_daily_omits_missing_quote_source():
+    """金句沒填出處時不要留一行只有破折號。"""
+    text = phrasebook.format_daily(quote={"sentence": "某句金句"})
+
+    assert text == "[中] 某句金句"
+
+
+def test_format_daily_works_with_only_a_quote():
+    """語句庫剛好都沒到期、AI 也生不出來的日子,金句還在 —— 區塊不該消失。
+
+    這是真的會發生的路徑,不是假設:語句庫養起來之後,
+    大多數日子都不會有到期的句子。
+    """
+    text = phrasebook.format_daily(
+        en=None, es=None, quote={"sentence": "某句", "source": "佚名"},
+    )
+
+    assert "[中] 某句" in text
+    assert "—— 佚名" in text
+    assert "[EN]" not in text
