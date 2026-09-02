@@ -715,6 +715,154 @@ def daily_extra_add(kind, text, topic="", day=None, source=None):
 
 
 # ─────────────────────────────────────────────────────────
+# 語句庫 / 金句庫(2026-09-01)
+# ─────────────────────────────────────────────────────────
+
+def _query_all(db_id, client, limit, **extra):
+    """分頁撈到 limit 筆。Notion 單頁上限 100,不分頁會安靜地少拿。
+
+    transactions_load 的註解已經記過這個坑:只查一次就回,limit 傳 200
+    也只拿得到 100 筆,而且不會報錯。
+    """
+    out, cursor = [], None
+    while len(out) < limit:
+        kwargs = dict(extra)
+        kwargs["database_id"] = db_id
+        kwargs["page_size"] = min(limit - len(out), 100)
+        if cursor:
+            kwargs["start_cursor"] = cursor
+        res = client.databases.query(**kwargs)
+        out.extend(res.get("results", []))
+        if not res.get("has_more"):
+            break
+        cursor = res.get("next_cursor")
+    return out
+
+
+def phrases_load(language, limit=500):
+    """撈某語言的全部句子。到期判斷交給 phrasebook.pick_due。
+
+    刻意不在 Notion 端 filter 到期日:「下次出現為空」要寫成 is_empty
+    的 or 分支,那個分支寫錯不會報錯 —— 只會讓使用者剛貼的句子永遠
+    不出現。語句庫是幾百筆等級,全撈一次再在 Python 判斷更安全。
+    """
+    db_id = get_or_create_db("語句庫")
+    client = _get_client()
+    if not db_id or not client:
+        return []
+    out = []
+    try:
+        rows = _query_all(
+            db_id, client, limit,
+            filter={"property": "語言", "select": {"equals": language}},
+        )
+        for r in rows:
+            props = r.get("properties", {}) or {}
+            out.append({
+                "page_id": r.get("id"),
+                "sentence": _read_title(props, "句子"),
+                "meaning": _read_rich_text(props, "中文意思"),
+                "note": _read_rich_text(props, "情境備註"),
+                # 手貼的句子不會填這欄。None 會讓 advance 的 +1 變 TypeError
+                "appeared": _read_number(props, "出現次數") or 0,
+                "due": _read_date(props, "下次出現"),
+            })
+    except Exception as e:
+        print(f"[notion] phrases_load 失敗：{e}")
+    return out
+
+
+def phrase_advance(page_id, fields):
+    """寫回出現次數 / 上次出現 / 下次出現。fields 來自 phrasebook.advance()。
+
+    失敗只回 False:信這時已經寄出去了,排程沒推進頂多明天同一句再出現
+    一次,不值得把整個每日 job 拉進 error listener。
+    """
+    client = _get_client()
+    if not client or not page_id:
+        return False
+    try:
+        client.pages.update(page_id=page_id, properties={
+            "出現次數": {"number": fields["appeared"]},
+            "上次出現": {"date": {"start": fields["last_seen"].isoformat()}},
+            "下次出現": {"date": {"start": fields["due"].isoformat()}},
+        })
+        return True
+    except Exception as e:
+        print(f"[notion] phrase_advance 失敗：{e}")
+        return False
+
+
+def phrase_add(sentence, language, meaning="", note="",
+               source="AI生成", day=None, due=None):
+    """新增一句到語句庫。AI 補位生的句子走這裡。
+
+    due 由呼叫端算好再傳進來,不在這裡 import phrasebook ——
+    notion_db 是底層,反過來相依會變成循環。
+    """
+    db_id = get_or_create_db("語句庫")
+    client = _get_client()
+    if not db_id or not client or not sentence:
+        return False
+    day = day or datetime.now().date()
+    due = due or day
+    try:
+        client.pages.create(parent={"database_id": db_id}, properties={
+            "句子": {"title": [{"text": {"content": sentence}}]},
+            "語言": {"select": {"name": language}},
+            "中文意思": {"rich_text": [{"text": {"content": meaning or ""}}]},
+            "情境備註": {"rich_text": [{"text": {"content": note or ""}}]},
+            "來源": {"select": {"name": source}},
+            "加入日期": {"date": {"start": day.isoformat()}},
+            # 生出來當天就用掉了,所以是 1 不是 0
+            "出現次數": {"number": 1},
+            "上次出現": {"date": {"start": day.isoformat()}},
+            "下次出現": {"date": {"start": due.isoformat()}},
+        })
+        return True
+    except Exception as e:
+        print(f"[notion] phrase_add 失敗：{e}")
+        return False
+
+
+def quotes_load(limit=500):
+    """撈全部中文金句。挑選交給 phrasebook.pick_quote。"""
+    db_id = get_or_create_db("金句庫")
+    client = _get_client()
+    if not db_id or not client:
+        return []
+    out = []
+    try:
+        for r in _query_all(db_id, client, limit):
+            props = r.get("properties", {}) or {}
+            out.append({
+                "page_id": r.get("id"),
+                "sentence": _read_title(props, "金句"),
+                "source": _read_rich_text(props, "出處"),
+                # 沒講過必須是 None（不是 ""）—— pick_quote 靠它分類
+                "last_seen": _read_date(props, "上次出現"),
+            })
+    except Exception as e:
+        print(f"[notion] quotes_load 失敗：{e}")
+    return out
+
+
+def quote_mark_seen(page_id, today):
+    """標記這句金句今天講過了。"""
+    client = _get_client()
+    if not client or not page_id:
+        return False
+    try:
+        client.pages.update(page_id=page_id, properties={
+            "上次出現": {"date": {"start": today.isoformat()}},
+        })
+        return True
+    except Exception as e:
+        print(f"[notion] quote_mark_seen 失敗：{e}")
+        return False
+
+
+# ─────────────────────────────────────────────────────────
 # Todos：每筆待辦 = Notion DB 一個 page
 # ─────────────────────────────────────────────────────────
 
