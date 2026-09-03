@@ -23,6 +23,7 @@ def test_order_is_todo_finance_grocery():
         spending="最新消費 NT$85",
         kitchen="高麗菜　今天到期",
         weather="板橋 28°C",
+        phrases=None,
     )
     titles = _titles(sections)
 
@@ -37,6 +38,7 @@ def test_weather_goes_last():
     sections = dr._build_personal_sections(
         todos="x", reminders=None, monthly_detail="y",
         spending=None, kitchen="z", weather="板橋 28°C",
+        phrases=None,
     )
 
     assert "天氣" in _titles(sections)[-1]
@@ -46,6 +48,7 @@ def test_empty_sections_are_dropped():
     sections = dr._build_personal_sections(
         todos=None, reminders=None, monthly_detail="y",
         spending=None, kitchen=None, weather=None,
+        phrases=None,
     )
 
     assert len(sections) == 1
@@ -58,6 +61,7 @@ def test_monthly_detail_comes_before_recent_spending():
         todos=None, reminders=None,
         monthly_detail="本月明細", spending="最新消費",
         kitchen=None, weather=None,
+        phrases=None,
     )
     bodies = [body for _, body in sections]
 
@@ -69,4 +73,35 @@ def test_nothing_at_all_returns_empty_list():
     assert dr._build_personal_sections(
         todos=None, reminders=None, monthly_detail=None,
         spending=None, kitchen=None, weather=None,
+        phrases=None,
     ) == []
+
+
+# ── 今日三句(2026-09-01)────────────────────────────────
+
+def test_phrases_go_right_after_todos():
+    """學習內容放信尾容易被滑過去,但待辦仍然排最前 —— 那是當天要做的事。"""
+    sections = dr._build_personal_sections(
+        phrases="[EN] Play it by ear.",
+        todos="⬜ [1] 繳健保費",
+        reminders="⏰ 08/27 09:30 → 牙醫回診",
+        monthly_detail="■ 08/26　・全家　NT$85",
+        spending="最新消費 NT$85",
+        kitchen="高麗菜　今天到期",
+        weather="板橋 28°C",
+    )
+    titles = _titles(sections)
+
+    assert "待辦" in titles[0]
+    phrase_at = min(i for i, t in enumerate(titles) if "三句" in t)
+    finance_at = min(i for i, t in enumerate(titles) if "消費" in t)
+    assert phrase_at < finance_at
+
+
+def test_phrases_section_dropped_when_empty():
+    sections = dr._build_personal_sections(
+        phrases=None, todos="x", reminders=None, monthly_detail=None,
+        spending=None, kitchen=None, weather=None,
+    )
+
+    assert not any("三句" in t for t in _titles(sections))

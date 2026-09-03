@@ -114,19 +114,25 @@ SEP = NL * 2
 
 
 def _build_personal_sections(todos, reminders, monthly_detail,
-                             spending, kitchen, weather):
-    """個人版每日信的區塊與順序：**待辦 → 財務 → 買菜**（使用者指定，
-    2026-08-26），跟 digest_preview.html 範本原本的順序不同。
+                             spending, kitchen, weather, phrases=None):
+    """個人版每日信的區塊與順序。
+
+    待辦 → **今日三句** → 財務 → 買菜（使用者指定順序 2026-08-26，
+    三句是 2026-09-01 加的）。
+
+    三句排在待辦之後而不是信尾：學習內容放最後容易被滑過去。待辦仍然
+    排最前 —— 那是當天要做的事。
 
     本月明細排在最新消費前面 —— 使用者要的是「整個月的花銷」，
     那是主角，最新消費只是補充。
 
-    天氣範本裡沒有但現有信件有，保留並排最後（移除功能不在這次要求裡）。
+    天氣範本裡沒有但現有信件有，保留並排最後。
     空的區塊直接不放：留一張空卡片比沒有還糟。
     """
     candidates = [
         ("📋 今日待辦", todos),
         ("⏰ 進行中提醒", reminders),
+        ("🗣️ 今日三句", phrases),
         ("💳 本月消費明細", monthly_detail),
         ("🧾 最新消費", spending),
         ("🍳 冰箱快過期・煮什麼", kitchen),
@@ -197,6 +203,12 @@ def _email_personal_report(today):
     reminders_text = _safe("個人版提醒", _personal_reminders)
     monthly_text = _safe("個人版本月明細", _monthly_detail)
 
+    def _daily_phrases():
+        import phrasebook
+        return phrasebook.daily_three(today_tpe())
+
+    phrases_text = _safe("個人版今日三句", _daily_phrases)
+
     sections = _build_personal_sections(
         todos=todos_text,
         reminders=reminders_text,
@@ -204,6 +216,7 @@ def _email_personal_report(today):
         spending=spending_text,
         kitchen=kitchen.get("text"),
         weather=weather_text,
+        phrases=phrases_text,
     )
     if not sections:
         # 全部區塊都沒東西 → 不寄空信
