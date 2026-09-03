@@ -1,12 +1,17 @@
-"""個人版每日報(食材 + 板橋天氣 + 最新消費,寄給自己)。
+"""個人版每日報(待辦 + 今日三句 + 財務 + 板橋天氣,寄給自己)。
 
-群組版與個人版的分工是刻意的:群組不該看到別人的冰箱和帳單,
+群組版與個人版的分工是刻意的:群組不該看到別人的帳單,
 但自己每天要看是另一回事。
 
 2026-08-20 個人版從 LINE 1 對 1 推播改成 Gmail(見 mailer.py)——
 push 每月只有 200 則,不該有一半花在自己身上。
 下面「卡片組裝」那段測的 flex_builder.personal_report_carousel 目前
-沒有呼叫端,刻意留著:要改回 LINE 推播時直接接回去就好。
+沒有呼叫端,刻意留著:要改回 LINE 推播時直接接回去就好(它的
+kitchen_text 參數跟這裡拿掉的 daily_report._kitchen_for_personal
+是兩回事,沒有一起動)。
+
+2026-09-04 個人版信本身拿掉「冰箱快過期・煮什麼」——太吵,記錄還在,
+通知沒了。見本檔「冰箱快過期拿掉了」那段。
 """
 
 import json
@@ -90,9 +95,6 @@ def _mailed(monkeypatch):
     monkeypatch.setattr(daily_report, "get_weather_report",
                         lambda locations=None: ("板橋天氣", None))
     monkeypatch.setattr(daily_report, "_spending_recent", lambda: "最新消費內容")
-    monkeypatch.setattr(daily_report, "_kitchen_for_personal",
-                        lambda: {"items": [], "more": 0, "recipe_text": "",
-                                 "text": "高麗菜快過期"})
     return box
 
 
@@ -103,7 +105,6 @@ def test_personal_report_is_emailed(_mailed):
     assert "2026-08-19" in subject
     assert "板橋天氣" in body
     assert "最新消費內容" in body
-    assert "高麗菜快過期" in body
 
 
 def test_personal_report_never_touches_push_quota():
@@ -138,13 +139,12 @@ def test_personal_report_skipped_when_nothing_to_say(monkeypatch, _mailed):
     monkeypatch.setattr(daily_report, "get_weather_report",
                         lambda locations=None: (None, None))
     monkeypatch.setattr(daily_report, "_spending_recent", lambda: None)
-    monkeypatch.setattr(daily_report, "_kitchen_for_personal", lambda: None)
     daily_report._email_personal_report("2026-08-19")
     assert _mailed == []
 
 
 def test_personal_weather_failure_does_not_kill_the_rest(monkeypatch, _mailed):
-    """天氣炸了還是要把食材和消費寄出去。"""
+    """天氣炸了還是要把消費寄出去。"""
     def boom(locations=None):
         raise RuntimeError("CWA 掛了")
     monkeypatch.setattr(daily_report, "get_weather_report", boom)
@@ -156,56 +156,17 @@ def test_personal_weather_failure_does_not_kill_the_rest(monkeypatch, _mailed):
     assert "最新消費內容" in _mailed[0][1]
 
 
-def test_kitchen_full_text_used_because_email_has_no_buttons(monkeypatch, _mailed):
-    """LINE 推播版有 page_id 時清單交給「已用掉」按鈕、文字只留菜色建議。
+# ── 冰箱快過期拿掉了(2026-09-04)──────────────────────────
+#
+# 使用者覺得每天跳這張太吵：買了什麼還是要記,但過期不用天天被通知。
+# 記錄路徑(notion_db.pantry_add / pantry_load、LINE「買了」、電子發票
+# → pantry 的橋接)完全沒動;動的只是「每天被動通知」這件事——
+# 要看自己在 LINE 打「快過期」問 command_router 的 pantry_expiring。
 
-    email 沒有 quick reply —— 清單必須留在文字裡,不然快過期的東西
-    整個看不到,只剩一句沒頭沒尾的菜色建議。
-    """
-    monkeypatch.setattr(daily_report, "_kitchen_for_personal",
-                        lambda: {"items": [{"name": "高麗菜", "page_id": "p1",
-                                            "days": 2}],
-                                 "more": 0, "recipe_text": "建議煮高麗菜炒肉",
-                                 "text": "高麗菜 2 天\n\n建議煮高麗菜炒肉"})
-
-    daily_report._email_personal_report("2026-08-19")
-
-    body = _mailed[0][1]
-    assert "高麗菜 2 天" in body
-    assert "建議煮高麗菜炒肉" in body
-
-
-# ── 食材:沒事就不出現 ────────────────────────────────────
-
-def test_kitchen_returns_none_when_nothing_expiring(monkeypatch):
-    """沒有快過期的就回 None —— 每天跳一則「今天沒事」會讓人略過整包。"""
-    import sys
-
-    class FakeNotion:
-        def is_configured(self):
-            return True
-
-        def pantry_load(self, status="在庫"):
-            return [{"name": "醬油", "days_left": 300}]
-
-        def recipes_load(self, pantry=None):
-            return []
-
-    monkeypatch.setitem(sys.modules, "notion_db", FakeNotion())
-    monkeypatch.setattr("kitchen.expiring_soon", lambda pantry, days=3: [])
-
-    assert daily_report._kitchen_for_personal() is None
-
-
-def test_kitchen_returns_none_without_notion(monkeypatch):
-    import sys
-
-    class NoNotion:
-        def is_configured(self):
-            return False
-
-    monkeypatch.setitem(sys.modules, "notion_db", NoNotion())
-    assert daily_report._kitchen_for_personal() is None
+def test_daily_report_no_longer_has_kitchen_for_personal():
+    """跟 test_daily_kitchen.py 的 test_daily_report_no_longer_fetches_kitchen
+    同一個精神:函式沒了就要真的沒了,不是留著沒人叫。"""
+    assert not hasattr(daily_report, "_kitchen_for_personal")
 
 
 # ── 天氣模組可指定地點 ────────────────────────────────────

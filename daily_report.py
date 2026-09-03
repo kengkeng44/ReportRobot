@@ -7,8 +7,12 @@
 
 推兩個目標，內容刻意不同，但只有群組吃 push 配額（1 則/天，約 30 則/月）：
 - 群組（LINE_GROUP_ID）：今日一則 + 天氣（淡水、金山）+ 盤前 —— LINE push
-- 本人：食材 + 天氣（板橋）+ 最新消費 —— 2026-08-20 改寄 Gmail（見 mailer.py）
+- 本人：待辦 + 今日三句 + 財務 + 天氣（板橋）—— 2026-08-20 改寄 Gmail（見 mailer.py）
   財務只走個人版，不進群組。
+
+2026-09-04 個人版拿掉「冰箱快過期・煮什麼」區塊：使用者覺得每天跳這張
+太吵。食材記錄（LINE「買了」、電子發票 → pantry 的自動記錄）完全沒動，
+動的只是「每天被動通知」這件事 —— 要看自己在 LINE 打「快過期」問。
 """
 
 import os
@@ -51,48 +55,6 @@ def _fetch_market_news(limit=3):
 # 群組不該看到別人的冰箱和帳單，但自己每天要看是另一回事。
 
 
-def _kitchen_for_personal(threshold_days=3):
-    """快過期食材 + 建議菜色。沒有快過期的就回 None。
-
-    沒事時回 None 是刻意的：每天都跳一則「今天沒有要過期的」，
-    人很快就會開始略過整則推播。
-
-    跟 command_router 的「快過期」指令不同 —— 那是使用者主動問的，
-    沒有快過期的也必須回答，不能靜默。
-    """
-    import kitchen
-    import notion_db
-
-    if not notion_db.is_configured():
-        return None
-
-    pantry = notion_db.pantry_load()
-    if not kitchen.expiring_soon(pantry, threshold_days):
-        return None
-
-    items, more = kitchen.expiring_actions(pantry, threshold_days)
-
-    recipe_text = ""
-    recipes = notion_db.recipes_load(pantry)
-    if recipes:
-        recs = kitchen.recommend(pantry, recipes, threshold_days)
-        if recs:
-            recipe_text = kitchen.format_recommendations(recs)
-
-    # 有按鈕時文字只留菜色建議，快過期清單交給按鈕列呈現；
-    # 撈不到 page_id（沒按鈕）就退回完整文字，提醒不能消失
-    parts = [kitchen.format_expiring(pantry, threshold_days)]
-    if recipe_text:
-        parts.append(recipe_text)
-
-    return {
-        "items": items,
-        "more": more,
-        "recipe_text": recipe_text,
-        "text": "\n\n".join(parts),
-    }
-
-
 def _spending_recent():
     """最近一天的消費明細 + 本月累計。沒有任何支出資料就回 None。
 
@@ -114,10 +76,10 @@ SEP = NL * 2
 
 
 def _build_personal_sections(todos, reminders, monthly_detail,
-                             spending, kitchen, weather, phrases=None):
+                             spending, weather, phrases=None):
     """個人版每日信的區塊與順序。
 
-    待辦 → **今日三句** → 財務 → 買菜（使用者指定順序 2026-08-26，
+    待辦 → **今日三句** → 財務（使用者指定順序 2026-08-26，
     三句是 2026-09-01 加的）。
 
     三句排在待辦之後而不是信尾：學習內容放最後容易被滑過去。待辦仍然
@@ -128,6 +90,10 @@ def _build_personal_sections(todos, reminders, monthly_detail,
 
     天氣範本裡沒有但現有信件有，保留並排最後。
     空的區塊直接不放：留一張空卡片比沒有還糟。
+
+    2026-09-04 拿掉「冰箱快過期・煮什麼」：使用者覺得每天跳這張太吵。
+    買了什麼還是記在 pantry，只是不再主動通知 —— 沒有 kitchen 參數了，
+    加回來之前先看 tests/test_daily_kitchen.py 同一套精神的測試。
     """
     candidates = [
         ("📋 今日待辦", todos),
@@ -135,25 +101,24 @@ def _build_personal_sections(todos, reminders, monthly_detail,
         ("🗣️ 今日三句", phrases),
         ("💳 本月消費明細", monthly_detail),
         ("🧾 最新消費", spending),
-        ("🍳 冰箱快過期・煮什麼", kitchen),
         ("🌤️ 天氣", weather),
     ]
     return [(title, text) for title, text in candidates if text]
 
 
 def _email_personal_report(today):
-    """個人版：食材 + 板橋天氣 + 最新消費，寄 Gmail 給自己。
+    """個人版：待辦 + 今日三句 + 財務 + 板橋天氣，寄 Gmail 給自己。
 
     2026-08-20 從 LINE 1 對 1 推播改成 email。push 每月只有 200 則，
     群組版每天已經佔掉一則，個人版再佔一則等於一半配額花在自己身上；
     email 免費。群組版維持 LINE 不動 —— 家人不會去收信。
 
-    天氣得重抓（地點跟群組版不同，見 weather.PERSONAL_WEATHER_LOCATIONS），
-    食材也得自己抓 —— 群組版 2026-08-16 之後就不碰食材了。
+    天氣得重抓（地點跟群組版不同，見 weather.PERSONAL_WEATHER_LOCATIONS）。
 
-    食材用完整文字版（kitchen["text"]）而不是推播那套按鈕版：email 沒有
-    quick reply，「已用掉」還是得回 LINE 打，所以清單不能只靠按鈕呈現。
-    要改回 LINE 推播的話，flex_builder.personal_report_carousel 還留著。
+    2026-09-04 拿掉「冰箱快過期・煮什麼」區塊：使用者覺得每天跳這張太吵。
+    買了什麼仍然記在 pantry（LINE「買了」、電子發票 → pantry 的橋接都沒動），
+    只是不再每天主動通知快過期 —— 要看自己在 LINE 打「快過期」問
+    command_router 的 pantry_expiring。
 
     整段包在呼叫端的 try 裡：個人版炸掉不能影響已經推出去的群組版。
     """
@@ -168,7 +133,6 @@ def _email_personal_report(today):
         return msg
 
     weather_text = _safe("個人版天氣", _personal_weather)
-    kitchen = _safe("個人版食材", _kitchen_for_personal) or {}
     spending_text = _safe("個人版消費", _spending_recent)
 
     def _personal_todos():
@@ -214,7 +178,6 @@ def _email_personal_report(today):
         reminders=reminders_text,
         monthly_detail=monthly_text,
         spending=spending_text,
-        kitchen=kitchen.get("text"),
         weather=weather_text,
         phrases=phrases_text,
     )
