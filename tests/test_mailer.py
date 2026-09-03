@@ -179,3 +179,67 @@ def test_without_html_behaviour_unchanged():
 
     payload = msg.get_payload()[1].get_payload(decode=True).decode()
     assert "一般內容" in payload
+
+
+# ── 內嵌圖片（2026-09-01）──────────────────────────────────
+
+def _png(tmp_path):
+    """最小的合法 PNG（1x1 透明）。不用真的畫圖就能驗 MIME 結構。"""
+    data = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4"
+        "nGNgAAIAAAUAAY27m/MAAAAASUVORK5CYII="
+    )
+    path = tmp_path / "pie.png"
+    path.write_bytes(data)
+    return str(path)
+
+
+def test_no_images_keeps_the_original_structure(configured, gmail_spy):
+    """不給 images 時行為必須跟改動前一模一樣。"""
+    mailer.send_email("主旨", "內文")
+
+    msg = _decode(gmail_spy[0])
+
+    assert msg.get_body(("plain",)).get_content().strip() == "內文"
+    assert msg.get_body(("html",)) is not None
+    assert not list(msg.iter_attachments())
+
+
+def test_image_is_embedded_with_content_id(configured, gmail_spy, tmp_path):
+    mailer.send_email(
+        "主旨", "內文",
+        html='<div><img src="cid:spending"></div>',
+        images={"spending": _png(tmp_path)},
+    )
+
+    msg = _decode(gmail_spy[0])
+    cids = [p["Content-ID"] for p in msg.walk()
+            if p.get_content_type() == "image/png"]
+
+    assert cids == ["<spending>"]
+
+
+def test_html_and_plain_survive_alongside_the_image(configured, gmail_spy, tmp_path):
+    """加了圖不能把純文字版擠掉 —— 不吃 HTML 的收信端還要有東西看。"""
+    mailer.send_email(
+        "主旨", "本月合計 NT$1,000",
+        html='<div><img src="cid:spending">本月合計 NT$1,000</div>',
+        images={"spending": _png(tmp_path)},
+    )
+
+    msg = _decode(gmail_spy[0])
+
+    assert "NT$1,000" in msg.get_body(("plain",)).get_content()
+    assert "cid:spending" in msg.get_body(("html",)).get_content()
+
+
+def test_missing_image_file_still_sends(configured, gmail_spy, tmp_path):
+    """圖檔不見了要照寄 —— 少一張圖遠好過整封信不見。"""
+    ok = mailer.send_email(
+        "主旨", "內文",
+        html='<div><img src="cid:spending"></div>',
+        images={"spending": str(tmp_path / "not-there.png")},
+    )
+
+    assert ok is True
+    assert len(gmail_spy) == 1

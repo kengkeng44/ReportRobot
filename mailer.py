@@ -98,11 +98,36 @@ def to_html(text):
     return out.replace("\n", "<br>")
 
 
-def _build_message(subject, body, html=None):
+def _attach_images(msg, images):
+    """把圖片掛成 multipart/related 的一部分，讓 HTML 用 cid: 引用。
+
+    掛在 html part 上而不是整封信上：掛在最外層會變成「附件」，
+    Gmail 會在信末多出一排下載圖示，而不是在文中顯示。
+
+    單張圖讀不到就跳過那張，不中斷整封信 —— 少一張圖遠好過信不見。
+    """
+    html_part = msg.get_body(("html",))
+    if html_part is None:
+        return
+    for cid, path in (images or {}).items():
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+        except OSError as e:
+            print(f"[mailer] 讀不到圖片 {path}：{e}，這張跳過")
+            continue
+        html_part.add_related(
+            data, maintype="image", subtype="png", cid=f"<{cid}>",
+        )
+
+
+def _build_message(subject, body, html=None, images=None):
     """html 給了就原樣寄（digest.py 產的卡片版型已經是完整 HTML，
     再包一層 div 會把版面弄壞）；沒給就維持原本的簡易轉換。
 
-    純文字版一律保留 —— 收信端不吃 HTML 時還有東西可看。
+    純文字版一律保留 —— 收信端不吃 HTML 時還有東西可看，而且純文字版
+    看不到圖，所以圖裡的數字必須也出現在文字裡（見 spending_chart 的
+    summary）。
     """
     msg = EmailMessage()
     msg["Subject"] = subject
@@ -113,11 +138,16 @@ def _build_message(subject, body, html=None):
         html or f'<div style="font-family:sans-serif;line-height:1.7">{to_html(body)}</div>',
         subtype="html",
     )
+    if images:
+        _attach_images(msg, images)
     return msg
 
 
-def send_email(subject, body, html=None):
+def send_email(subject, body, html=None, images=None):
     """寄一封信，成功回 True。
+
+    images 是 {cid: 檔案路徑}；HTML 裡用 <img src="cid:那個 cid"> 引用。
+    不給就跟改動前完全一樣。
 
     沒設定就回 False 而不是丟例外 —— 呼叫端（每日排程）當作沒這功能，
     不該因為少一個 env var 就讓整個 job 進 error listener。
@@ -126,7 +156,7 @@ def send_email(subject, body, html=None):
         print("[mailer] 沒設 GMAIL_USER / SEND_TOKEN_PICKLE_B64，跳過寄信")
         return False
 
-    msg = _build_message(subject, body, html=html)
+    msg = _build_message(subject, body, html=html, images=images)
     # Gmail API 收的是 RFC822 全文的 urlsafe base64，不是 MIME 物件
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
     _service().users().messages().send(userId="me", body={"raw": raw}).execute()
