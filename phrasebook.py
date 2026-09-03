@@ -108,16 +108,28 @@ _LINE_RE = {
 }
 
 
+# prompt 裡的範例長這樣:「句子：<英文原句>」。模型把指示回音一次,
+# 這行就會被當成答案。角括號在真正的句子裡幾乎不會出現,拿來當
+# 「這是範本不是答案」的訊號夠可靠。
+_PLACEHOLDER_RE = re.compile(r"[<＜].*[>＞]")
+
+
 def parse_ai(text):
     """把 AI 的三行回覆拆成 dict。沒有句子就回 None。
 
     容錯而不是 raise —— 但「沒有句子」是硬失敗:意思和提示是配角,
     句子沒有就沒有東西可教,寧可讓呼叫端當作生不出來。
+
+    取**最後一個**符合的而不是第一個:模型有時會先把 prompt 的範例
+    回音一次再給真答案,有時會先給草稿再自己改一版。兩種情況下
+    第一個都是錯的那個。這裡的東西會寫進語句庫並進入複習循環,
+    一句垃圾會在 1/7/30/90/180 天後反覆回來 —— 值得多這一道。
     """
     out = {}
     for key, pattern in _LINE_RE.items():
-        m = pattern.search(text or "")
-        out[key] = m.group(1).strip() if m else ""
+        hits = [h.strip() for h in pattern.findall(text or "")]
+        hits = [h for h in hits if h and not _PLACEHOLDER_RE.search(h)]
+        out[key] = hits[-1] if hits else ""
     return out if out["sentence"] else None
 
 
@@ -173,6 +185,13 @@ def _ai(prompt, max_tokens=200):
         messages=[{"role": "user", "content": prompt}],
     )
     usage_tracker.track(AI_MODEL, message)
+
+    # 截斷的回覆「還是解析得出來」——「句子：Play it」被切一半,
+    # parse_ai 會當成一個完整片語收下,然後它就永久住在語句庫裡了。
+    # 寧可整次當失敗:那天少一句,遠好過庫裡多一句假的。
+    if getattr(message, "stop_reason", None) == "max_tokens":
+        raise RuntimeError(f"AI 回覆被 max_tokens({max_tokens}) 截斷")
+
     return message.content[0].text.strip()
 
 

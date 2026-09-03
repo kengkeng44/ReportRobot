@@ -4,6 +4,8 @@
 否則使用者不貼檔的日子庫永遠長不大。
 """
 
+import pytest
+
 import prompts
 
 
@@ -62,6 +64,53 @@ def test_parse_ai_tolerates_halfwidth_colon_and_spaces():
 
     assert out["sentence"] == "Me da igual."
     assert out["meaning"] == "我都可以"
+
+
+def test_parse_ai_ignores_the_prompt_template_echo():
+    """模型把 prompt 的範例行回音回來時,不能把範例當成答案。
+
+    prompt 裡就有「句子：<英文原句>」這行。抓第一個 match 的話,
+    信裡會出現「[EN] <英文原句>」,而且那句還會被寫進語句庫、
+    在 1/7/30/90/180 天後反覆回來。
+    """
+    echoed = "\n".join([
+        "好的,格式如下:",
+        "句子：<英文原句>",
+        "意思：<繁體中文>",
+        "提示：<情境或陷阱>",
+        "",
+        "句子：Play it by ear.",
+        "意思：再看情況決定吧",
+        "提示：口語很常用",
+    ])
+
+    out = phrasebook.parse_ai(echoed)
+
+    assert out["sentence"] == "Play it by ear."
+    assert out["meaning"] == "再看情況決定吧"
+
+
+def test_parse_ai_takes_the_last_answer_when_model_self_corrects():
+    """模型先給草稿再改一版時,要的是後面那個。"""
+    out = phrasebook.parse_ai("\n".join([
+        "句子：Draft one.",
+        "意思：草稿",
+        "抱歉,重來:",
+        "句子：Final one.",
+        "意思：定稿",
+    ]))
+
+    assert out["sentence"] == "Final one."
+    assert out["meaning"] == "定稿"
+
+
+def test_parse_ai_rejects_a_pure_placeholder_answer():
+    """整份回覆只有範本 → 當作生不出來,不要寫進庫裡。"""
+    assert phrasebook.parse_ai("\n".join([
+        "句子：<英文原句>",
+        "意思：<繁體中文>",
+        "提示：<情境或陷阱>",
+    ])) is None
 
 
 def test_parse_ai_returns_none_without_a_sentence():
@@ -259,3 +308,53 @@ def test_one_language_blowing_up_spares_the_others(monkeypatch):
     assert "English one" not in text
     assert "Spanish one" in text
     assert "金句" in text
+
+
+# ── 截斷防護 ──────────────────────────────────────────────
+
+def _fake_anthropic(monkeypatch, stop_reason, text):
+    """假的 anthropic 模組。_ai 是在函式內 import 的,所以換 sys.modules。
+
+    這個 repo 的慣例是整個換掉 _ai、從不測它本身(humor._ai 也沒測)。
+    這裡破例:截斷防護的存在意義就是擋永久污染,不驗等於沒有。
+    """
+    import sys
+    import types
+
+    message = types.SimpleNamespace(
+        stop_reason=stop_reason,
+        content=[types.SimpleNamespace(text=text)],
+        usage=types.SimpleNamespace(input_tokens=10, output_tokens=200),
+    )
+
+    class _Messages:
+        def create(self, **kwargs):
+            return message
+
+    class _Client:
+        def __init__(self, api_key=None):
+            self.messages = _Messages()
+
+    fake = types.ModuleType("anthropic")
+    fake.Anthropic = _Client
+    monkeypatch.setitem(sys.modules, "anthropic", fake)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+
+
+def test_ai_rejects_a_truncated_reply(monkeypatch):
+    """被 max_tokens 切斷的回覆「還是解析得出來」。
+
+    「句子：Play it」會被 parse_ai 當成一個完整片語收下,然後永久
+    住在語句庫裡,在 1/7/30/90/180 天後反覆回來。
+    寧可那天少一句,也不要庫裡多一句假的。
+    """
+    _fake_anthropic(monkeypatch, "max_tokens", "句子：Play it")
+
+    with pytest.raises(RuntimeError, match="截斷"):
+        phrasebook._ai("prompt")
+
+
+def test_ai_accepts_a_complete_reply(monkeypatch):
+    _fake_anthropic(monkeypatch, "end_turn", "句子：Play it by ear.")
+
+    assert phrasebook._ai("prompt") == "句子：Play it by ear."
