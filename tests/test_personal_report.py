@@ -89,8 +89,11 @@ def test_group_carousel_cannot_carry_private_stuff():
 def _mailed(monkeypatch):
     box = []
     monkeypatch.setattr(mailer, "is_configured", lambda: True)
+    # 簽章要跟真的 mailer.send_email 對齊。少一個 images 參數，
+    # daily_report 傳 images= 就會炸在替身上 —— 那是替身過期，
+    # 不是被測程式有問題（2026-09-04 就是這樣紅了三個測試）。
     monkeypatch.setattr(mailer, "send_email",
-                        lambda subject, body, html=None:
+                        lambda subject, body, html=None, images=None:
                             box.append((subject, body)) or True)
     monkeypatch.setattr(daily_report, "get_weather_report",
                         lambda locations=None: ("板橋天氣", None))
@@ -198,3 +201,57 @@ def test_owm_knows_banqiao():
     """板橋要有座標,不然個人版只剩中央氣象署單一來源。"""
     import inspect
     assert "板橋區" in inspect.getsource(weather.get_owm_weather)
+
+
+# ── 圓餅圖真的進得了信 (2026-09-04) ────────────────────────
+
+@pytest.fixture
+def _mailed_full(monkeypatch):
+    """跟 _mailed 一樣，但連 html 與 images 都收下來。
+
+    _mailed 只留 (subject, body)，接線層（產圖 → images= → <img>）
+    整條路徑沒有任何斷言守著。分開一個 fixture 而不是改 _mailed，
+    是因為既有測試都在 unpack 兩元組。
+    """
+    box = []
+    monkeypatch.setattr(mailer, "is_configured", lambda: True)
+    monkeypatch.setattr(
+        mailer, "send_email",
+        lambda subject, body, html=None, images=None:
+            box.append({"subject": subject, "body": body,
+                        "html": html, "images": images}) or True)
+    monkeypatch.setattr(daily_report, "get_weather_report",
+                        lambda locations=None: ("板橋天氣", None))
+    monkeypatch.setattr(daily_report, "_spending_recent", lambda: "最新消費內容")
+    return box
+
+
+def test_pie_chart_reaches_the_email(monkeypatch, _mailed_full):
+    """圖檔路徑要掛上 images，HTML 要用同一個 cid 引用它。
+
+    這兩件事在不同模組（daily_report / digest）各寫一次 cid，
+    對不上的話信裡就是一個破圖，而且沒有任何既有測試會紅。
+    """
+    import spending_chart
+    monkeypatch.setattr(spending_chart, "build_pie",
+                        lambda txns, month: ("C:/tmp/pie.png", "本月合計 NT$9,142"))
+
+    daily_report._email_personal_report("2026-09-04")
+
+    sent = _mailed_full[0]
+    assert sent["images"] == {daily_report.CHART_CID: "C:/tmp/pie.png"}
+    assert f'src="cid:{daily_report.CHART_CID}"' in sent["html"]
+    # 純文字版看不到圖，金額必須在文字裡自己活著
+    assert "本月合計 NT$9,142" in sent["body"]
+
+
+def test_no_chart_means_no_images(monkeypatch, _mailed_full):
+    """月初還沒消費 → build_pie 回 (None, None)，不要掛一個空的 images。"""
+    import spending_chart
+    monkeypatch.setattr(spending_chart, "build_pie",
+                        lambda txns, month: (None, None))
+
+    daily_report._email_personal_report("2026-09-04")
+
+    assert _mailed_full[0]["images"] is None
+    assert "<img" not in _mailed_full[0]["html"]

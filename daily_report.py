@@ -74,9 +74,14 @@ def _spending_recent():
 NL = chr(10)
 SEP = NL * 2
 
+# 圓餅圖在信裡的 Content-ID。mailer 掛圖與 digest 產 <img> 都引用它 ——
+# 兩邊各寫死一個字串遲早會漂移
+CHART_CID = "spending"
+
 
 def _build_personal_sections(todos, reminders, monthly_detail,
-                             spending, weather, phrases=None):
+                             spending, weather, phrases=None,
+                             monthly_chart=None):
     """個人版每日信的區塊與順序。
 
     待辦 → **今日三句** → 財務（使用者指定順序 2026-08-26，
@@ -94,6 +99,12 @@ def _build_personal_sections(todos, reminders, monthly_detail,
     2026-09-04 拿掉「冰箱快過期・煮什麼」：使用者覺得每天跳這張太吵。
     買了什麼還是記在 pantry，只是不再主動通知 —— 沒有 kitchen 參數了，
     加回來之前先看 tests/test_daily_kitchen.py 同一套精神的測試。
+
+    圓餅圖排在明細前面：使用者要的是「一個月花在哪」的分布，那是主角，
+    逐筆流水帳只是補充。
+
+    monthly_chart 是 (摘要文字, cid) 或 None。有 cid 的區塊回三元組，
+    digest.build_digest_html 據此插 <img>。
     """
     candidates = [
         ("📋 今日待辦", todos),
@@ -103,7 +114,21 @@ def _build_personal_sections(todos, reminders, monthly_detail,
         ("🧾 最新消費", spending),
         ("🌤️ 天氣", weather),
     ]
-    return [(title, text) for title, text in candidates if text]
+    out = [(title, text) for title, text in candidates if text]
+
+    if monthly_chart and monthly_chart[0]:
+        summary, cid = monthly_chart
+        # 插在「本月消費明細」之前。用索引搜尋而不是寫死位置 ——
+        # 空區塊會被濾掉，位置每天都不一樣。
+        titles = [s[0] for s in out]
+        if "💳 本月消費明細" in titles:
+            at = titles.index("💳 本月消費明細")
+        else:
+            # 天氣永遠壓最後，分布不能掉到它後面
+            at = len(out) - (1 if "🌤️ 天氣" in titles else 0)
+        out.insert(at, ("📊 本月消費分布", summary, cid))
+
+    return out
 
 
 def _email_personal_report(today):
@@ -163,9 +188,21 @@ def _email_personal_report(today):
         # 判斷放在這裡而不是改 format_monthly_detail，改它會弄壞指令查詢。
         return None if text == _EMPTY_MONTH else text
 
+    def _monthly_chart():
+        """圓餅圖 + 摘要文字。當月沒有 TWD 支出時回 None。"""
+        import notion_db
+        import spending_chart
+        txns = notion_db.transactions_load(limit=400)
+        path, summary = spending_chart.build_pie(
+            txns, today_tpe().strftime("%Y-%m")
+        )
+        return (path, summary) if path else None
+
     todos_text = _safe("個人版待辦", _personal_todos)
     reminders_text = _safe("個人版提醒", _personal_reminders)
     monthly_text = _safe("個人版本月明細", _monthly_detail)
+    chart = _safe("個人版消費圓餅圖", _monthly_chart)
+    chart_path, chart_summary = chart if chart else (None, None)
 
     def _daily_phrases():
         import phrasebook
@@ -180,6 +217,7 @@ def _email_personal_report(today):
         spending=spending_text,
         weather=weather_text,
         phrases=phrases_text,
+        monthly_chart=(chart_summary, CHART_CID) if chart_path else None,
     )
     if not sections:
         # 全部區塊都沒東西 → 不寄空信
@@ -189,9 +227,12 @@ def _email_personal_report(today):
     import digest
     html = digest.build_digest_html(today, sections)
     # 純文字版是給不吃 HTML 的收信端看的，內容一樣、沒有版型
-    plain = SEP.join(f"{title}{NL}{text}" for title, text in sections)
+    plain = SEP.join(f"{s[0]}{NL}{s[1]}" for s in sections)
 
-    mailer.send_email(f"📮 每日個人報 {today}", plain, html=html)
+    mailer.send_email(
+        f"📮 每日個人報 {today}", plain, html=html,
+        images={CHART_CID: chart_path} if chart_path else None,
+    )
 
 
 async def run_daily_report(force_premarket=False):
