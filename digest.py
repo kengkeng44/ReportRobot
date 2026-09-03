@@ -34,6 +34,11 @@ _CARD_TITLE_STYLE = (
 )
 _CARD_BODY_STYLE = f"font-size:14px;line-height:1.7;color:{_TEXT};"
 
+_IMG_STYLE = (
+    "max-width:100%;height:auto;display:block;"
+    "border-radius:8px;margin:0 0 12px;"
+)
+
 
 def _as_html(text):
     """純文字 → 安全的 HTML 片段（escape 後換行轉 <br>）。"""
@@ -41,18 +46,27 @@ def _as_html(text):
 
 
 def build_digest_html(date_str, blocks):
-    """blocks: [(標題, 內容純文字)]，照給的順序渲染。
+    """blocks: [(標題, 內容純文字)] 或 [(標題, 內容, cid)]，照給的順序渲染。
 
-    內容是空的區塊直接不出現 —— 留一張空卡片比沒有還糟。
-    全部都空回 None,呼叫端據此決定不寄信（不要寄一封只有標題的信）。
+    三元組的 cid 對應 mailer 內嵌圖片的 Content-ID，渲染成
+    <img src="cid:...">。兩元組維持原行為 —— 既有呼叫端全是兩元組。
+
+    內容是空的區塊直接不出現（即使有圖）：留一張空卡片比沒有還糟，
+    而純文字版根本看不到圖。
+    全部都空回 None，呼叫端據此決定不寄信。
     """
     cards = []
-    for title, body in blocks or []:
+    for block in blocks or []:
+        title, body = block[0], block[1]
+        cid = block[2] if len(block) > 2 else None
         if not body:
             continue
+        img = (f'<img src="cid:{escape(str(cid))}" style="{_IMG_STYLE}">'
+               if cid else "")
         cards.append(
             f'<div style="{_CARD_STYLE}">'
             f'<div style="{_CARD_TITLE_STYLE}">{_as_html(title)}</div>'
+            f'{img}'
             f'<div style="{_CARD_BODY_STYLE}">{_as_html(body)}</div>'
             f'</div>'
         )

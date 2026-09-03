@@ -81,3 +81,56 @@ def test_footer_present():
     html = digest.build_digest_html("2026-08-26", [("📋 待辦", "x")])
 
     assert "ReportRobot" in html
+
+
+# ── 圖片卡片(2026-09-01)────────────────────────────────
+
+def test_three_tuple_block_renders_an_image():
+    html = digest.build_digest_html("2026-09-01", [
+        ("📊 本月消費分布", "本月合計 NT$12,345", "spending"),
+    ])
+
+    assert 'src="cid:spending"' in html
+    assert "本月合計 NT$12,345" in html
+
+
+def test_two_tuple_blocks_still_work():
+    """既有呼叫端全是兩元組 —— 向後相容不能破。"""
+    html = digest.build_digest_html("2026-09-01", [("📋 待辦", "x")])
+
+    assert "待辦" in html
+    assert "<img" not in html
+
+
+def test_mixed_tuples_render_together():
+    html = digest.build_digest_html("2026-09-01", [
+        ("📋 待辦", "繳費"),
+        ("📊 分布", "合計 NT$100", "pie"),
+    ])
+
+    assert html.index("待辦") < html.index("分布")
+    assert 'cid:pie' in html
+
+
+def test_image_block_without_cid_is_plain():
+    """cid 給 None 時退回純文字卡片,不要產出壞掉的 <img src="cid:None">。"""
+    html = digest.build_digest_html("2026-09-01", [("📊 分布", "合計", None)])
+
+    assert "<img" not in html
+    assert "合計" in html
+
+
+def test_image_block_with_empty_text_is_dropped():
+    """有圖但沒文字仍然算空 —— 純文字版會看到一張空卡片。"""
+    html = digest.build_digest_html("2026-09-01", [
+        ("📋 待辦", "x"), ("📊 分布", "", "pie"),
+    ])
+
+    assert "分布" not in html
+
+
+def test_image_is_responsive():
+    """信在手機上開的機會比桌機高,圖不能撐破卡片。"""
+    html = digest.build_digest_html("2026-09-01", [("📊 分布", "合計", "pie")])
+
+    assert "max-width:100%" in html
