@@ -6,6 +6,8 @@
 這份測試不驗 PNG 像素 —— 驗圖片內容是脆的,而且真正會出錯的是彙總。
 """
 
+import os
+
 import spending_chart
 
 
@@ -92,3 +94,33 @@ def test_other_is_always_last_even_when_large():
 def test_summarize_returns_empty_without_spending():
     assert spending_chart.summarize([], "2026-09") == []
     assert spending_chart.summarize([_txn("2026-08-01", 100, "餐飲")], "2026-09") == []
+
+
+# ── 出圖 ──────────────────────────────────────────────────
+
+def test_build_pie_writes_a_png_and_summary():
+    rows = [
+        _txn("2026-09-01", 300, "餐飲"),
+        _txn("2026-09-02", 700, "超市∕量販"),
+    ]
+
+    path, summary = spending_chart.build_pie(rows, "2026-09")
+
+    assert path and os.path.exists(path)
+    assert os.path.getsize(path) > 0
+    assert "1,000" in summary          # 合計
+    assert "2 筆" in summary
+
+
+def test_summary_survives_in_plain_text_email():
+    """純文字版信件沒有圖,合計數字必須也活在文字裡(spec 4.4)。"""
+    rows = [_txn("2026-09-01", 1234, "餐飲")]
+
+    _, summary = spending_chart.build_pie(rows, "2026-09")
+
+    assert "NT$1,234" in summary
+
+
+def test_build_pie_returns_none_without_spending():
+    """當月沒有 TWD 支出 → 呼叫端整個區塊不放。"""
+    assert spending_chart.build_pie([], "2026-09") == (None, None)
