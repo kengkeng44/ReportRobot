@@ -249,12 +249,27 @@ def _one_quote(today):
     return picked
 
 
+def _safe_source(label, fn):
+    """單一來源炸掉不該讓另外兩句一起消失。
+
+    _one_language 已經包住「讀取語句庫」的失敗,但挑句與寫回排程
+    本身還是可能丟例外。目前丟不出來 —— notion_db.phrase_advance
+    內部自己吞了 —— 但那是它的實作細節,不是 daily_three 該賴以
+    為生的保證。這一層在這裡,規則才真的成立。
+    """
+    try:
+        return fn()
+    except Exception as e:
+        print(f"[phrasebook] {label} 失敗：{e}")
+        return None
+
+
 def daily_three(today):
     """每日信的「今日三句」。全部拿不到回 None。
 
-    三個來源各自 try:英文生不出來不該讓西班牙文和金句一起消失。
+    三個來源各自包 try:英文炸了不該讓西班牙文和金句一起消失。
     """
-    en = _one_language("英文", today)
-    es = _one_language("西班牙文", today)
-    quote = _one_quote(today)
+    en = _safe_source("英文", lambda: _one_language("英文", today))
+    es = _safe_source("西班牙文", lambda: _one_language("西班牙文", today))
+    quote = _safe_source("金句", lambda: _one_quote(today))
     return format_daily(en=en, es=es, quote=quote)

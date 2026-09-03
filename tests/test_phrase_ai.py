@@ -227,3 +227,35 @@ def test_avoid_block_lists_existing_sentences(monkeypatch):
 
     assert "- A" in out
     assert "- B" in out
+
+
+def test_one_language_blowing_up_spares_the_others(monkeypatch):
+    """只有英文那一筆寫回時炸掉,西班牙文和金句都要照常出現。
+
+    「各自獨立失敗」是設計規則,不能靠 notion_db 內部剛好有吞例外
+    來成立 —— 那是它的實作細節,改一次就破功。
+
+    刻意只讓英文那一筆失敗:全面炸的話兩個語言都會掛,
+    測試看起來會過,但根本沒驗到「獨立」這件事。
+    """
+    store = FakeStore(
+        phrases={"英文": [_prow("e1", "English one", due="2026-08-01")],
+                 "西班牙文": [_prow("s1", "Spanish one", due="2026-08-01")]},
+        quotes=[{"page_id": "q1", "sentence": "金句", "source": "",
+                 "last_seen": None}],
+    )
+    real_advance = store.phrase_advance
+
+    def boom_for_english(page_id, fields):
+        if page_id == "e1":
+            raise RuntimeError("notion 寫回炸了")
+        return real_advance(page_id, fields)
+
+    store.phrase_advance = boom_for_english
+    _install_store(monkeypatch, store)
+
+    text = phrasebook.daily_three(D)
+
+    assert "English one" not in text
+    assert "Spanish one" in text
+    assert "金句" in text
