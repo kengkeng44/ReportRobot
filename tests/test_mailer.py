@@ -217,6 +217,11 @@ def test_image_is_embedded_with_content_id(configured, gmail_spy, tmp_path):
             if p.get_content_type() == "image/png"]
 
     assert cids == ["<spending>"]
+    # walk() 掃的是整棵樹，圖掛錯層級（沒進 multipart/related，而是跟
+    # text/html 平輩掛在 alternative 底下）上面那行照樣會綠，信到了
+    # Gmail 卻變成信末的下載圖示而不是文中的圖。iter_attachments()
+    # 是唯一能分辨這兩種形狀的斷言。
+    assert not list(msg.iter_attachments())
 
 
 def test_html_and_plain_survive_alongside_the_image(configured, gmail_spy, tmp_path):
