@@ -4,6 +4,8 @@
 不能回一句「無資料」讓人不知道是壞了還是本來就空的。
 """
 
+from datetime import date as _date
+
 import pytest
 
 import finance_report as fr
@@ -337,3 +339,78 @@ def test_monthly_detail_keeps_foreign_currency_separate():
     ], "2026-08")
 
     assert "USD" in text
+
+
+# ── 近三天(2026-09-01)──────────────────────────────────
+
+
+def _t(day, amount, shop, direction="支出", currency="TWD"):
+    return {"date": day, "amount": amount, "shop": shop,
+            "direction": direction, "currency": currency}
+
+
+def test_recent_days_uses_days_with_data_not_calendar_days():
+    """國泰彙整信下午才到,早上寄信時昨天的資料還沒進 Notion。
+
+    用日曆算,月初與同步中斷時使用者會看到一片空白(spec 2.6)。
+    """
+    txns = [
+        _t("2026-08-20", 100, "全家"),
+        _t("2026-08-15", 200, "全聯"),
+        _t("2026-08-10", 300, "7-11"),
+        _t("2026-08-05", 400, "星巴克"),
+    ]
+
+    out = fr.format_recent_days(txns, _date(2026, 9, 1), days=3)
+
+    assert "全家" in out and "全聯" in out and "7-11" in out
+    assert "星巴克" not in out          # 第四舊的那天不列
+
+
+def test_recent_days_orders_newest_first():
+    txns = [_t("2026-08-10", 300, "舊"), _t("2026-08-20", 100, "新")]
+
+    out = fr.format_recent_days(txns, _date(2026, 9, 1))
+
+    assert out.index("新") < out.index("舊")
+
+
+def test_recent_days_shows_per_day_subtotal():
+    txns = [_t("2026-08-20", 100, "全家"), _t("2026-08-20", 250, "全聯")]
+
+    out = fr.format_recent_days(txns, _date(2026, 9, 1))
+
+    assert "NT$350" in out
+
+
+def test_recent_days_ignores_income():
+    txns = [_t("2026-08-20", 100, "全家"),
+            _t("2026-08-20", 50000, "薪水", direction="收入")]
+
+    out = fr.format_recent_days(txns, _date(2026, 9, 1))
+
+    assert "薪水" not in out
+
+
+def test_recent_days_ignores_future_dates():
+    """授權中的筆數偶爾帶未來日期,列出來會看起來像資料錯亂。"""
+    txns = [_t("2026-09-05", 100, "未來"), _t("2026-08-20", 200, "過去")]
+
+    out = fr.format_recent_days(txns, _date(2026, 9, 1))
+
+    assert "未來" not in out
+    assert "過去" in out
+
+
+def test_recent_days_marks_foreign_currency():
+    txns = [_t("2026-08-20", 15, "Amazon", currency="USD")]
+
+    out = fr.format_recent_days(txns, _date(2026, 9, 1))
+
+    assert "USD 15" in out
+    assert "NT$15" not in out
+
+
+def test_recent_days_returns_none_without_data():
+    """每日信的區塊:沒資料就整塊不放,不要說明文案。"""
+    assert fr.format_recent_days([], _date(2026, 9, 1)) is None

@@ -646,3 +646,58 @@ def format_latest_day_spending(txns, today, stale_days=3, max_rows=5):
     lines.append(f"本月累計 NT${_money(month_total)}")
 
     return "\n".join(lines)
+
+
+def format_recent_days(txns, today, days=3):
+    """最近幾個**有資料的**日期的逐筆消費。沒有任何支出回 None。
+
+    刻意不是日曆上的近三天：國泰消費彙整信每天彙整前一日、當天下午
+    才寄到，早上寄信時昨天的資料還沒進 Notion。用日曆算，月初與同步
+    中斷時使用者會看到一片空白 —— format_latest_day_spending 的註解
+    已經記過同一個坑。
+
+    取代每日信裡的「本月消費明細」+「最新消費」兩塊：三天的明細已經
+    包含最近一天，再放一次是重複。那兩個函式本身保留不動 —— LINE 的
+    指令查詢還在用，刪掉會弄壞它們，而那個壞法在每日信上看不出來。
+    """
+    by_day = defaultdict(list)
+    for t in txns or []:
+        if not _is_spending(t):
+            continue
+        day = _to_date(t.get("date"))
+        # 授權中的筆數偶爾帶未來日期，列出來看起來像資料錯亂
+        if day is None or day > today:
+            continue
+        by_day[day].append(t)
+
+    if not by_day:
+        return None
+
+    lines = []
+    for day in sorted(by_day, reverse=True)[:days]:
+        rows = by_day[day]
+        head = f"■ {day.month}/{day.day:02d}（{_WEEKDAY_ZH[day.weekday()]}）"
+        twd_total = 0.0
+        body = []
+        for t in sorted(rows, key=lambda x: x.get("amount") or 0, reverse=True):
+            amount = t.get("amount") or 0
+            currency = _currency(t)
+            shop = t.get("shop") or t.get("category") or "消費"
+            if currency == "TWD":
+                body.append(f"　・{shop}　NT${_money(amount)}")
+                twd_total += amount
+            else:
+                # 外幣不併進台幣小計 —— 加起來會得到一個沒有意義的數字
+                body.append(f"　・{shop}　{currency} {_money(amount)}")
+        if twd_total:
+            head = f"{head}　NT${_money(twd_total)}"
+        lines.append(head)
+        lines.extend(body)
+        lines.append("")
+
+    stale = (today - max(by_day)).days
+    if stale > 3:
+        lines.append(f"⚠️ 已 {stale} 天沒新消費資料")
+        lines.append(f"　{_STALE_HINT}")
+
+    return "\n".join(lines).rstrip()
