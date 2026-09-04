@@ -81,3 +81,60 @@ def test_footer_present():
     html = digest.build_digest_html("2026-08-26", [("📋 待辦", "x")])
 
     assert "ReportRobot" in html
+
+
+# ── v2 掃讀強化（2026-09-04）────────────────────────────────
+
+def test_bold_tags_are_restored_not_shown_literally():
+    """format_todos / format_reminders 帶 <b>…</b>，HTML 版要當粗體，
+    不能在信裡看到字面上的「<b>」。"""
+    html = digest.build_digest_html("2026-08-26", [("📋 待辦", "<b>待辦清單</b>\n買菜")])
+
+    assert "<b>待辦清單</b>" in html
+    assert "&lt;b&gt;" not in html
+
+
+def test_amounts_are_emphasized():
+    """一封信最該一眼看到「花多少」—— 金額上色加粗。"""
+    html = digest.build_digest_html("2026-08-26", [("💳 財務", "全聯 NT$1,234")])
+
+    assert "#b26b1e" in html          # 金額色
+    assert "NT$1,234" in html         # 數字本身沒被吃掉
+
+
+def test_expiry_marked_red_only_in_kitchen():
+    """到期字樣標紅，但只在冰箱卡 —— 別的卡剛好有「剩」字不該被咬。"""
+    kitchen = digest.build_digest_html("2026-08-26", [("🍳 冰箱快過期", "高麗菜　今天到期")])
+    other = digest.build_digest_html("2026-08-26", [("📋 待辦", "剩 3 天要交報告")])
+
+    assert "#c0392b" in kitchen
+    assert "#c0392b" not in other
+
+
+def test_cards_get_category_accent_bar():
+    """每張卡左側色條按類別上色，掃讀更快。"""
+    html = digest.build_digest_html("2026-08-26", [("💳 財務", "x")])
+
+    assert "border-left:4px solid #3a6ea5" in html
+
+
+def test_summary_tiles_render_when_given():
+    """置頂摘要列：幾筆待辦、本月花多少、幾樣要過期。"""
+    html = digest.build_digest_html(
+        "2026-08-26",
+        [("📋 今日待辦", "買菜")],
+        summary=[("📋", "3", "待辦", "#a97b50"),
+                 ("💳", "NT$12,340", "本月", "#3a6ea5")],
+    )
+
+    assert "待辦" in html
+    assert "NT$12,340" in html
+    # 摘要列排在第一張內容卡之前
+    assert html.index("NT$12,340") < html.index("今日待辦")
+
+
+def test_summary_absent_by_default():
+    """沒給 summary 就不放摘要列（維持舊行為）。"""
+    html = digest.build_digest_html("2026-08-26", [("📋 待辦", "x")])
+    # 沒有摘要 table 的等寬 td
+    assert "vertical-align:top" not in html

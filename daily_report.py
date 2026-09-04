@@ -90,6 +90,9 @@ def _kitchen_for_personal(threshold_days=3):
         "more": more,
         "recipe_text": recipe_text,
         "text": "\n\n".join(parts),
+        # 摘要列要的是「幾樣快過期」的完整數字，不是給按鈕的 items（那被 limit
+        # 到 5 筆、又只留有 page_id 的）。所以直接數整份快過期清單。
+        "expiring_count": len(kitchen.expiring_soon(pantry, threshold_days)),
     }
 
 
@@ -179,23 +182,40 @@ def _email_personal_report(today):
         import personal
         return personal.format_reminders(user_id)
 
+    # 摘要列要的數字（本月總額）順手在明細那次載入算出來，不另外打一次
+    # Notion —— transactions_load 已經是這個 job 裡最貴的呼叫。
+    stats = {}
+
     def _monthly_detail():
         # 使用者要「一整個月的花銷都列出來」（2026-08-26）。
         # limit 抓 400 是因為當月筆數可能超過 transactions_load 的預設 200，
         # 抓不夠會安靜地少列幾筆 —— 那正是這個專案一直在防的錯。
         import notion_db
-        from finance_report import format_monthly_detail, _EMPTY_MONTH
+        from finance_report import (
+            format_monthly_detail, month_spending_total, _EMPTY_MONTH,
+        )
         txns = notion_db.transactions_load(limit=400)
-        text = format_monthly_detail(txns, today_tpe().strftime("%Y-%m"))
+        month = today_tpe().strftime("%Y-%m")
+        stats["month_total"] = month_spending_total(txns, month)
+        text = format_monthly_detail(txns, month)
         # 月初還沒有任何消費時 format_monthly_detail 回的是一段說明文字，
         # 不是空值。那段對「/財務」這種指令查詢有用（你問了就該回答），
         # 但對每日信只是雜訊 —— 其他區塊也空的話整封信就不該寄。
         # 判斷放在這裡而不是改 format_monthly_detail，改它會弄壞指令查詢。
         return None if text == _EMPTY_MONTH else text
 
+    def _todo_count():
+        user_id = os.environ.get("PERSONAL_USER_ID", "").strip()
+        if not user_id:
+            return 0
+        import personal
+        # cache 這時已被 format_todos 暖過，不會再打 Notion
+        return len(personal.list_todos(user_id))
+
     todos_text = _safe("個人版待辦", _personal_todos)
     reminders_text = _safe("個人版提醒", _personal_reminders)
     monthly_text = _safe("個人版本月明細", _monthly_detail)
+    todo_count = _safe("個人版待辦數", _todo_count) or 0
 
     sections = _build_personal_sections(
         todos=todos_text,
@@ -210,10 +230,29 @@ def _email_personal_report(today):
         print("[個人版] 沒有任何內容，這次不寄")
         return
 
+    # 置頂摘要列：幾筆待辦、本月花多少、幾樣要過期 —— 一眼看懂。
+    # 每格只在有數字時出現（0 不放，避免「本月 NT$0」的雜訊），
+    # 顏色對齊 digest 卡片左色條。
+    from finance_report import _money
+    month_total = stats.get("month_total") or 0
+    expiring_count = kitchen.get("expiring_count") or 0
+    tiles = []
+    if todo_count:
+        tiles.append(("📋", str(todo_count), "待辦", "#a97b50"))
+    if month_total:
+        tiles.append(("💳", f"NT${_money(month_total)}", "本月", "#3a6ea5"))
+    if expiring_count:
+        tiles.append(("🍳", str(expiring_count), "快過期", "#7d9a4f"))
+
     import digest
-    html = digest.build_digest_html(today, sections)
-    # 純文字版是給不吃 HTML 的收信端看的，內容一樣、沒有版型
-    plain = SEP.join(f"{title}{NL}{text}" for title, text in sections)
+    html = digest.build_digest_html(today, sections, summary=tiles)
+    # 純文字版是給不吃 HTML 的收信端看的，內容一樣、沒有版型。
+    # 摘要列在純文字也放一行（不吃 HTML 也該一眼看到重點）。
+    plain_parts = []
+    if tiles:
+        plain_parts.append(" ・ ".join(f"{e} {label} {v}" for e, v, label, _ in tiles))
+    plain_parts.extend(f"{title}{NL}{text}" for title, text in sections)
+    plain = SEP.join(plain_parts)
 
     mailer.send_email(f"📮 每日個人報 {today}", plain, html=html)
 

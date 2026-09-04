@@ -337,3 +337,20 @@ def test_monthly_detail_keeps_foreign_currency_separate():
     ], "2026-08")
 
     assert "USD" in text
+
+
+# ── 本月總額（每日信摘要列用）────────────────────────────────
+
+def test_month_spending_total_sums_twd_only():
+    """摘要列的「本月」只算台幣，外幣不併進去。"""
+    total = fr.month_spending_total([
+        _mtxn("2026-08-01", "全聯", 300),
+        _mtxn("2026-08-09", "Netflix", 15, currency="USD"),
+        _mtxn("2026-07-31", "上月", 999),          # 別月不算
+    ], "2026-08")
+
+    assert total == 300
+
+
+def test_month_spending_total_zero_when_empty():
+    assert fr.month_spending_total([], "2026-08") == 0

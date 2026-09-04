@@ -156,6 +156,22 @@ def format_monthly_detail(txns, month):
     return "\n".join(lines)
 
 
+def month_spending_total(txns, month):
+    """當月台幣支出總額（純數字，給每日信摘要列用）。
+
+    只算台幣：外幣併進台幣總計會得到一個沒有意義的數字（跟
+    format_monthly_detail 同一個理由）。沒有支出回 0，呼叫端據此決定
+    要不要放這格摘要 —— 0 元不放，避免「本月 NT$0」的雜訊。
+    """
+    return sum(
+        t.get("amount") or 0
+        for t in txns or []
+        if (t.get("date") or "").startswith(month)
+        and _is_spending(t)
+        and _currency(t) == "TWD"
+    )
+
+
 # ─────────────────────────────────────────────────────────
 # 最近交易
 # ─────────────────────────────────────────────────────────
