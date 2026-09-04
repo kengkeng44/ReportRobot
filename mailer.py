@@ -26,6 +26,7 @@ gmail.readonly（gmail_reader.SCOPES），財務同步、發票、Gmail 警示
 import base64
 import os
 import pickle
+import time
 from email.message import EmailMessage
 from html import escape
 
@@ -35,6 +36,11 @@ from line_sender import _strip_html as strip_html
 SEND_SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
 # 本機備援；雲端一律走 env。刻意跟 gmail_reader 的檔名分開。
 SEND_TOKEN_FILE = "token_send.pickle"
+
+# 寄幾次才放棄。每日信一天只寄一次，一次網路抖動不該讓當天的信整封
+# 不見；三次還不通就是真的壞了，該讓例外往上冒進 admin 通知。
+SEND_ATTEMPTS = 3
+SEND_RETRY_SECONDS = 2
 
 
 def _send_token_b64():
@@ -144,13 +150,16 @@ def _build_message(subject, body, html=None, images=None):
 
 
 def send_email(subject, body, html=None, images=None):
-    """寄一封信，成功回 True。
+    """寄一封信，成功回 True。失敗會重試，SEND_ATTEMPTS 次都不成就丟例外。
 
     images 是 {cid: 檔案路徑}；HTML 裡用 <img src="cid:那個 cid"> 引用。
     不給就跟改動前完全一樣。
 
-    沒設定就回 False 而不是丟例外 —— 呼叫端（每日排程）當作沒這功能，
-    不該因為少一個 env var 就讓整個 job 進 error listener。
+    「沒設定」與「寄不出去」是兩件事，處理方式刻意不同：
+    - 沒設定 → 回 False。呼叫端（每日排程）當作沒這功能，不該因為少一個
+      env var 就讓整個 job 進 error listener。
+    - 三次都寄不出去 → 丟例外。安靜地回 False 才是真的壞：信沒寄出去
+      而且沒有人知道。呼叫端的 try 會把例外送進 admin 通知。
     """
     if not is_configured():
         print("[mailer] 沒設 GMAIL_USER / SEND_TOKEN_PICKLE_B64，跳過寄信")
@@ -159,6 +168,17 @@ def send_email(subject, body, html=None, images=None):
     msg = _build_message(subject, body, html=html, images=images)
     # Gmail API 收的是 RFC822 全文的 urlsafe base64，不是 MIME 物件
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-    _service().users().messages().send(userId="me", body={"raw": raw}).execute()
-    print(f"[mailer] 已寄出：{subject} → {recipient()}")
-    return True
+
+    for attempt in range(1, SEND_ATTEMPTS + 1):
+        try:
+            _service().users().messages().send(
+                userId="me", body={"raw": raw}
+            ).execute()
+            print(f"[mailer] 已寄出：{subject} → {recipient()}")
+            return True
+        except Exception as e:
+            if attempt == SEND_ATTEMPTS:
+                raise
+            print(f"[mailer] 第 {attempt} 次寄信失敗（{e}），"
+                  f"{SEND_RETRY_SECONDS} 秒後重試")
+            time.sleep(SEND_RETRY_SECONDS)

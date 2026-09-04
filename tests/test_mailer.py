@@ -248,3 +248,67 @@ def test_missing_image_file_still_sends(configured, gmail_spy, tmp_path):
 
     assert ok is True
     assert len(gmail_spy) == 1
+
+
+# ── 寄信重試（2026-09-04）───────────────────
+def test_send_retries_on_transient_failure(configured, monkeypatch):
+    """前兩次失敗第三次成功 —— 一次網路抖動不該讓整天的信不見。"""
+    attempts = []
+
+    class _FlakyRequest:
+        def execute(self):
+            attempts.append(1)
+            if len(attempts) < 3:
+                raise RuntimeError("temporary failure")
+            return {"id": "ok"}
+
+    class _M:
+        def send(self, userId, body):
+            return _FlakyRequest()
+
+    class _U:
+        def messages(self):
+            return _M()
+
+    class _S:
+        def users(self):
+            return _U()
+
+    monkeypatch.setattr(mailer, "_service", lambda: _S())
+    monkeypatch.setattr(mailer.time, "sleep", lambda s: None)
+
+    assert mailer.send_email("主旨", "內文") is True
+    assert len(attempts) == 3
+
+
+def test_send_gives_up_after_max_attempts(configured, monkeypatch):
+    """三次都失敗要丟例外 —— 呼叫端的 try 會把它送進 admin 通知。
+
+    安靜地回 False 才是真的壞：信沒寄出去而且沒有人知道。
+    """
+    attempts = []
+
+    class _DeadRequest:
+        def execute(self):
+            attempts.append(1)
+            raise RuntimeError("gmail down")
+
+    class _M:
+        def send(self, userId, body):
+            return _DeadRequest()
+
+    class _U:
+        def messages(self):
+            return _M()
+
+    class _S:
+        def users(self):
+            return _U()
+
+    monkeypatch.setattr(mailer, "_service", lambda: _S())
+    monkeypatch.setattr(mailer.time, "sleep", lambda s: None)
+
+    with pytest.raises(RuntimeError):
+        mailer.send_email("主旨", "內文")
+
+    assert len(attempts) == mailer.SEND_ATTEMPTS
