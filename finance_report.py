@@ -119,6 +119,11 @@ def format_monthly_detail(txns, month):
     日期由新到舊：信是每天早上看的，最近的花費要先看到，舊的往下捲。
     外幣不併進台幣總計 —— 把 US$15 加進台幣會得到一個沒有意義的數字，
     而且畫面上看不出來哪裡怪。
+
+    2026-09-04 起沒有呼叫端：每日信改用 format_recent_days（近三天）+
+    圓餅圖，整月逐筆流水帳長到沒人看。函式與測試刻意留著 —— 要加一個
+    LINE 指令「本月明細」時直接接回去就好，跟 flex_builder 的
+    personal_report_carousel 同一個處理方式。
     """
     rows = [t for t in txns
             if (t.get("date") or "").startswith(month) and _is_spending(t)]

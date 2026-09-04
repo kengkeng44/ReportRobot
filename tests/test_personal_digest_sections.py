@@ -22,8 +22,7 @@ def test_order_is_todo_finance():
     sections = dr._build_personal_sections(
         todos="⬜ [1] 繳健保費",
         reminders="⏰ 08/27 09:30 → 牙醫回診",
-        monthly_detail="■ 08/26\n　・全家　NT$85",
-        spending="最新消費 NT$85",
+        recent_days="■ 08/26\n　・全家　NT$85",
         weather="板橋 28°C",
         phrases=None,
     )
@@ -37,8 +36,8 @@ def test_order_is_todo_finance():
 
 def test_weather_goes_last():
     sections = dr._build_personal_sections(
-        todos="x", reminders=None, monthly_detail="y",
-        spending=None, weather="板橋 28°C",
+        todos="x", reminders=None, recent_days="y",
+        weather="板橋 28°C",
         phrases=None,
     )
 
@@ -47,8 +46,8 @@ def test_weather_goes_last():
 
 def test_empty_sections_are_dropped():
     sections = dr._build_personal_sections(
-        todos=None, reminders=None, monthly_detail="y",
-        spending=None, weather=None,
+        todos=None, reminders=None, recent_days="y",
+        weather=None,
         phrases=None,
     )
 
@@ -56,24 +55,11 @@ def test_empty_sections_are_dropped():
     assert "消費" in sections[0][0]
 
 
-def test_monthly_detail_comes_before_recent_spending():
-    """使用者要的是「整個月的花銷」，那是主角；最新消費是補充。"""
-    sections = dr._build_personal_sections(
-        todos=None, reminders=None,
-        monthly_detail="本月明細", spending="最新消費",
-        weather=None,
-        phrases=None,
-    )
-    bodies = [body for _, body in sections]
-
-    assert bodies.index("本月明細") < bodies.index("最新消費")
-
-
 def test_nothing_at_all_returns_empty_list():
     """全空時回空 list，呼叫端據此不寄信 —— 不要寄一封只有標題的信。"""
     assert dr._build_personal_sections(
-        todos=None, reminders=None, monthly_detail=None,
-        spending=None, weather=None,
+        todos=None, reminders=None, recent_days=None,
+        weather=None,
         phrases=None,
     ) == []
 
@@ -86,8 +72,7 @@ def test_phrases_go_right_after_todos():
         phrases="[EN] Play it by ear.",
         todos="⬜ [1] 繳健保費",
         reminders="⏰ 08/27 09:30 → 牙醫回診",
-        monthly_detail="■ 08/26　・全家　NT$85",
-        spending="最新消費 NT$85",
+        recent_days="■ 08/26　・全家　NT$85",
         weather="板橋 28°C",
     )
     titles = _titles(sections)
@@ -100,8 +85,8 @@ def test_phrases_go_right_after_todos():
 
 def test_phrases_section_dropped_when_empty():
     sections = dr._build_personal_sections(
-        phrases=None, todos="x", reminders=None, monthly_detail=None,
-        spending=None, weather=None,
+        phrases=None, todos="x", reminders=None, recent_days=None,
+        weather=None,
     )
 
     assert not any("三句" in t for t in _titles(sections))
@@ -125,8 +110,7 @@ def test_personal_sections_never_carry_a_kitchen_card():
     sections = dr._build_personal_sections(
         todos="⬜ [1] 繳健保費",
         reminders="⏰ 08/27 09:30 → 牙醫回診",
-        monthly_detail="■ 08/26\n　・全家　NT$85",
-        spending="最新消費 NT$85",
+        recent_days="■ 08/26\n　・全家　NT$85",
         weather="板橋 28°C",
         phrases="[EN] Play it by ear.",
     )
@@ -142,7 +126,7 @@ def test_chart_section_carries_its_cid():
     sections = dr._build_personal_sections(
         phrases=None, todos="x", reminders=None,
         monthly_chart=("本月合計 NT$1,000", "spending"),
-        monthly_detail=None, spending=None, weather=None,
+        recent_days=None, weather=None,
     )
     chart = [s for s in sections if "分布" in s[0]][0]
 
@@ -152,22 +136,22 @@ def test_chart_section_carries_its_cid():
 
 
 def test_chart_goes_before_the_line_items():
-    """分布是主角,流水帳是補充。"""
+    """分布是主角，流水帳是補充。"""
     sections = dr._build_personal_sections(
         phrases=None, todos="x", reminders=None,
         monthly_chart=("合計", "spending"),
-        monthly_detail="■ 09/01", spending=None, weather=None,
+        recent_days="■ 9/01（二）　NT$100", weather=None,
     )
     titles = _titles(sections)
 
-    assert titles.index("📊 本月消費分布") < titles.index("💳 本月消費明細")
+    assert titles.index("📊 本月消費分布") < titles.index("🧾 近三天消費")
 
 
 def test_chart_section_dropped_when_unavailable():
     """月初還沒有任何消費時 build_pie 回 (None, None)。"""
     sections = dr._build_personal_sections(
         phrases=None, todos="x", reminders=None, monthly_chart=None,
-        monthly_detail=None, spending=None, weather=None,
+        recent_days=None, weather=None,
     )
 
     assert not any("分布" in s[0] for s in sections)
@@ -178,8 +162,24 @@ def test_chart_stays_before_weather_when_detail_missing():
     sections = dr._build_personal_sections(
         phrases=None, todos="x", reminders=None,
         monthly_chart=("合計", "spending"),
-        monthly_detail=None, spending=None, weather="板橋 28°C",
+        recent_days=None, weather="板橋 28°C",
     )
     titles = _titles(sections)
 
     assert titles.index("📊 本月消費分布") < titles.index("🌤️ 天氣")
+
+
+def test_monthly_line_items_are_gone():
+    """整月逐筆流水帳已由圓餅圖 + 近三天取代（2026-09-04）。
+
+    拿掉就要真的拿掉 —— 跟 test_daily_kitchen.py 同一套精神。
+    """
+    sections = dr._build_personal_sections(
+        phrases=None, todos="x", reminders=None,
+        monthly_chart=("合計", "spending"),
+        recent_days="■ 9/01（二）", weather=None,
+    )
+    titles = _titles(sections)
+
+    assert "💳 本月消費明細" not in titles
+    assert "🧾 最新消費" not in titles

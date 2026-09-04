@@ -56,10 +56,13 @@ def _fetch_market_news(limit=3):
 
 
 def _spending_recent():
-    """最近一天的消費明細 + 本月累計。沒有任何支出資料就回 None。
+    """有資料的最近三天消費明細。沒有任何支出資料就回 None。
 
     刻意不是「昨天」：國泰消費彙整信每天彙整前一日、當天下午才寄到，
-    早上推播時昨天的資料還沒進 Notion。寫死「昨日」會每天都是空的。
+    早上寄信時昨天的資料還沒進 Notion。寫死「昨日」會每天都是空的。
+
+    2026-09-04 從 format_latest_day_spending（最近一天）改成
+    format_recent_days（最近三個有資料的日期）—— 使用者要「近三天花費」。
     """
     import finance_report
     import notion_db
@@ -67,8 +70,8 @@ def _spending_recent():
     if not notion_db.is_configured():
         return None
 
-    txns = notion_db.transactions_load()
-    return finance_report.format_latest_day_spending(txns, today_tpe())
+    txns = notion_db.transactions_load(limit=400)
+    return finance_report.format_recent_days(txns, today_tpe(), days=3)
 
 
 NL = chr(10)
@@ -79,50 +82,46 @@ SEP = NL * 2
 CHART_CID = "spending"
 
 
-def _build_personal_sections(todos, reminders, monthly_detail,
-                             spending, weather, phrases=None,
-                             monthly_chart=None):
+def _build_personal_sections(todos, reminders, recent_days, weather,
+                             phrases=None, monthly_chart=None):
     """個人版每日信的區塊與順序。
 
-    待辦 → **今日三句** → 財務（使用者指定順序 2026-08-26，
-    三句是 2026-09-01 加的）。
+    待辦 → 今日三句 → 財務 → 天氣（使用者指定順序 2026-08-26）。
 
     三句排在待辦之後而不是信尾：學習內容放最後容易被滑過去。待辦仍然
-    排最前 —— 那是當天要做的事。
-
-    本月明細排在最新消費前面 —— 使用者要的是「整個月的花銷」，
-    那是主角，最新消費只是補充。
-
-    天氣範本裡沒有但現有信件有，保留並排最後。
-    空的區塊直接不放：留一張空卡片比沒有還糟。
+    排最前 —— 那是當天要做的事。天氣永遠壓最後。
 
     2026-09-04 拿掉「冰箱快過期・煮什麼」：使用者覺得每天跳這張太吵。
     買了什麼還是記在 pantry，只是不再主動通知 —— 沒有 kitchen 參數了，
     加回來之前先看 tests/test_daily_kitchen.py 同一套精神的測試。
 
-    圓餅圖排在明細前面：使用者要的是「一個月花在哪」的分布，那是主角，
-    逐筆流水帳只是補充。
+    2026-09-04 原本的「本月消費明細」（整月逐筆）與「最新消費」合併成
+    「📊 本月消費分布」（圓餅圖）+「🧾 近三天消費」。整月流水帳長到
+    沒人看，使用者要的是分布；流水帳只需要最近幾天。
+
+    圓餅圖排在近三天前面：分布是主角，流水帳是補充。
 
     monthly_chart 是 (摘要文字, cid) 或 None。有 cid 的區塊回三元組，
     digest.build_digest_html 據此插 <img>。
+
+    空的區塊直接不放：留一張空卡片比沒有還糟。
     """
     candidates = [
         ("📋 今日待辦", todos),
         ("⏰ 進行中提醒", reminders),
         ("🗣️ 今日三句", phrases),
-        ("💳 本月消費明細", monthly_detail),
-        ("🧾 最新消費", spending),
+        ("🧾 近三天消費", recent_days),
         ("🌤️ 天氣", weather),
     ]
     out = [(title, text) for title, text in candidates if text]
 
     if monthly_chart and monthly_chart[0]:
         summary, cid = monthly_chart
-        # 插在「本月消費明細」之前。用索引搜尋而不是寫死位置 ——
+        # 插在「近三天消費」之前。用索引搜尋而不是寫死位置 ——
         # 空區塊會被濾掉，位置每天都不一樣。
         titles = [s[0] for s in out]
-        if "💳 本月消費明細" in titles:
-            at = titles.index("💳 本月消費明細")
+        if "🧾 近三天消費" in titles:
+            at = titles.index("🧾 近三天消費")
         else:
             # 天氣永遠壓最後，分布不能掉到它後面
             at = len(out) - (1 if "🌤️ 天氣" in titles else 0)
@@ -174,20 +173,6 @@ def _email_personal_report(today):
         import personal
         return personal.format_reminders(user_id)
 
-    def _monthly_detail():
-        # 使用者要「一整個月的花銷都列出來」（2026-08-26）。
-        # limit 抓 400 是因為當月筆數可能超過 transactions_load 的預設 200，
-        # 抓不夠會安靜地少列幾筆 —— 那正是這個專案一直在防的錯。
-        import notion_db
-        from finance_report import format_monthly_detail, _EMPTY_MONTH
-        txns = notion_db.transactions_load(limit=400)
-        text = format_monthly_detail(txns, today_tpe().strftime("%Y-%m"))
-        # 月初還沒有任何消費時 format_monthly_detail 回的是一段說明文字，
-        # 不是空值。那段對「/財務」這種指令查詢有用（你問了就該回答），
-        # 但對每日信只是雜訊 —— 其他區塊也空的話整封信就不該寄。
-        # 判斷放在這裡而不是改 format_monthly_detail，改它會弄壞指令查詢。
-        return None if text == _EMPTY_MONTH else text
-
     def _monthly_chart():
         """圓餅圖 + 摘要文字。當月沒有 TWD 支出時回 None。"""
         import notion_db
@@ -200,7 +185,6 @@ def _email_personal_report(today):
 
     todos_text = _safe("個人版待辦", _personal_todos)
     reminders_text = _safe("個人版提醒", _personal_reminders)
-    monthly_text = _safe("個人版本月明細", _monthly_detail)
     chart = _safe("個人版消費圓餅圖", _monthly_chart)
     chart_path, chart_summary = chart if chart else (None, None)
 
@@ -213,8 +197,7 @@ def _email_personal_report(today):
     sections = _build_personal_sections(
         todos=todos_text,
         reminders=reminders_text,
-        monthly_detail=monthly_text,
-        spending=spending_text,
+        recent_days=spending_text,
         weather=weather_text,
         phrases=phrases_text,
         monthly_chart=(chart_summary, CHART_CID) if chart_path else None,
