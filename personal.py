@@ -236,6 +236,74 @@ def format_todos(user_id):
     return "\n".join(lines)
 
 
+def _deadline(item):
+    """待辦的截止日：end 有值就用 end，沒有就用 start。
+
+    單日待辦（只講「明天交」）不需要被迫填兩個日期，所以 end 常常是
+    None；一段期間的待辦則是 end 那天才到期。
+    """
+    return item.get("end") or item.get("start")
+
+
+def todos_due_today(user_id, today):
+    """每日信要顯示的待辦：**截止日 <= 今天 或 優先度 = P0**。
+
+    兩個維度刻意不合併：截止日回答「什麼時候該做」，P0 回答「不管什麼
+    時候都得盯著」。只用日期篩，沒設日期的重要事情會消失；只用優先度篩，
+    時效性就沒了。
+
+    排序：逾期最久的最前面 → 今天到期 → P0 且沒設日期。
+    """
+    out = []
+    for t in list_todos(user_id):
+        due = _deadline(t)
+        if due and due <= today:
+            out.append(t)
+        elif t.get("priority") == "P0":
+            out.append(t)
+
+    def _key(t):
+        due = _deadline(t)
+        # 沒設日期的 P0 排最後：它沒有時效性，只是重要
+        return (0, due) if due else (1, today)
+
+    out.sort(key=_key)
+    return out
+
+
+def format_today_todos(user_id, today=None):
+    """每日信的待辦區塊。沒東西回 None（呼叫端據此整塊不放）。
+
+    刻意跟 format_todos 分開：那支給 LINE 的「待辦」指令用，要顯示全部。
+    共用一支會讓「信裡安靜」與「查詢看得到」互相打架。
+    """
+    if today is None:
+        today = now_tpe().date()
+
+    items = todos_due_today(user_id, today)
+    if not items:
+        return None
+
+    lines = []
+    for t in items:
+        due = _deadline(t)
+        priority = t.get("priority")
+        if due and due < today:
+            mark = f"⚠️ 逾期 {(today - due).days} 天"
+        elif due:
+            mark = "今天"
+        else:
+            # 沒日期的一定是 P0（否則不會被 todos_due_today 選進來）
+            mark = priority or ""
+        suffix = f"（{mark}）" if mark else ""
+        # 逾期 / 今天的行才另外標優先度；沒日期那行的 mark 已經是 P0 了
+        if priority and due:
+            suffix += f"　{priority}"
+        lines.append(f"⬜ [{t['id']}] {t['text']}{suffix}")
+
+    return chr(10).join(lines)
+
+
 # ════════════════════════════════════════
 # 提醒
 # ════════════════════════════════════════
