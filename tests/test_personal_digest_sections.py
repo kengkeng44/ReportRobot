@@ -183,3 +183,27 @@ def test_monthly_line_items_are_gone():
 
     assert "💳 本月消費明細" not in titles
     assert "🧾 最新消費" not in titles
+
+
+# ── 持倉今日漲跌（2026-09-05）──────────
+
+def test_stock_moves_go_after_spending_and_before_weather():
+    """財務三塊排在一起（分布 → 近三天 → 股票），天氣永遠壓最後。"""
+    sections = dr._build_personal_sections(
+        phrases=None, todos="x", reminders=None, monthly_chart=None,
+        recent_days="■ 9/05", stocks="▲ A　1　1.0%", weather="晴",
+    )
+    titles = _titles(sections)
+
+    assert titles.index("📈 持倉今日漲跌") > titles.index("🧾 近三天消費")
+    assert titles.index("📈 持倉今日漲跌") < titles.index("🌤️ 天氣")
+
+
+def test_stock_section_dropped_when_empty():
+    """沒持倉或全部抓不到價時，這塊整個不放。"""
+    sections = dr._build_personal_sections(
+        phrases=None, todos="x", reminders=None, monthly_chart=None,
+        recent_days=None, stocks=None, weather=None,
+    )
+
+    assert not any("持倉" in t for t in _titles(sections))

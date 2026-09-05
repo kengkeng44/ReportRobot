@@ -45,7 +45,7 @@ def _as_html(text):
     return escape(str(text)).replace("\n", "<br>")
 
 
-def build_digest_html(date_str, blocks):
+def build_digest_html(date_str, blocks, generated_at=None):
     """blocks: [(標題, 內容純文字)] 或 [(標題, 內容, cid)]，照給的順序渲染。
 
     三元組的 cid 對應 mailer 內嵌圖片的 Content-ID，渲染成
@@ -78,9 +78,13 @@ def build_digest_html(date_str, blocks):
         f'<div style="font-size:20px;font-weight:800;color:{_HEADING};'
         f'padding:4px 2px 16px;">🌅 早安 · {_as_html(date_str)}</div>'
     )
+    # 2026-09-05：標上資料抓取時間。那天有一整批資料因為 Notion 建了
+    # 重複的表而靜悄悄消失，信上完全看不出來 —— 至少要知道這封信是
+    # 什麼時候的快照。
+    stamp = f"　·　資料 {_as_html(generated_at)}" if generated_at else ""
     footer = (
         f'<div style="font-size:12px;color:{_FOOTER};text-align:center;'
-        f'padding:8px 2px 0;">ReportRobot · 每日自動寄送</div>'
+        f'padding:8px 2px 0;">ReportRobot · 每日自動寄送{stamp}</div>'
     )
     return (
         f'<div style="margin:0;padding:20px;background:{_BG};font-family:{_FONT};">'

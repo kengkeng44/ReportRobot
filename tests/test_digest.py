@@ -134,3 +134,21 @@ def test_image_is_responsive():
     html = digest.build_digest_html("2026-09-01", [("📊 分布", "合計", "pie")])
 
     assert "max-width:100%" in html
+
+
+# ── 信尾資料時間（2026-09-05）────────────
+
+def test_footer_shows_the_data_time():
+    """今天那種「資料惄悄消失」的狀況，從信上看不出來。
+    標上抓取時間至少知道這封信是什麼時候的快照。"""
+    html = digest.build_digest_html("2026-09-05", [("A", "x")],
+                                    generated_at="2026-09-05 15:02")
+
+    assert "2026-09-05 15:02" in html
+
+
+def test_footer_without_a_time_stays_as_before():
+    """沒給就維持原樣，既有呼叫端不受影響。"""
+    html = digest.build_digest_html("2026-09-05", [("A", "x")])
+
+    assert "ReportRobot" in html

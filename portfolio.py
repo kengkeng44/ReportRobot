@@ -106,6 +106,37 @@ def get_live_price(ticker):
         return None
 
 
+def get_price_and_prev(ticker):
+    """回 (現價, 前一日收盤)。抓不到的那一項是 None。
+
+    Yahoo 的 meta 本來就同時帶這兩個值，所以算今日漲跌不必多打一次 API
+    （get_live_price 只是丟掉了 previousClose）。
+
+    黃金存摺 / 手動價 / 興櫃沒有「前一日收盤」這個概念，一律回
+    (價格, None) —— 呼叫端據此把它們排除，而不是顯示成 0.0%。
+    """
+    t = (ticker or "").upper()
+    if t in _MANUAL_PRICES or t.startswith("AU") or _is_special_security(ticker):
+        return get_live_price(ticker), None
+
+    symbol = _to_yahoo_symbol(ticker)
+    try:
+        resp = http_utils.get(
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+            params={"interval": "1d", "range": "1d"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10,
+        )
+        result = ((resp.json().get("chart", {}) or {}).get("result") or [])
+        if not result:
+            return None, None
+        meta = result[0].get("meta", {}) or {}
+        return meta.get("regularMarketPrice"), meta.get("previousClose")
+    except Exception as e:
+        print(f"  Yahoo 漲跌失敗 {symbol}：{e}")
+        return None, None
+
+
 def _get_usd_twd():
     """抓即時 USD/TWD 匯率（Yahoo TWD=X），失敗回 None。"""
     try:

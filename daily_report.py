@@ -24,7 +24,7 @@ from flex_builder import daily_report_carousel
 from line_sender import push_message
 from premarket import build_premarket_report
 from stock_news import get_cnyes_news
-from tz_utils import today_tpe
+from tz_utils import now_tpe, today_tpe
 from weather import PERSONAL_WEATHER_LOCATIONS, get_weather_report
 
 
@@ -88,7 +88,7 @@ CHART_CID = "spending"
 
 
 def _build_personal_sections(todos, reminders, recent_days, weather,
-                             phrases=None, monthly_chart=None):
+                             phrases=None, monthly_chart=None, stocks=None):
     """個人版每日信的區塊與順序。
 
     待辦 → 今日三句 → 財務 → 天氣（使用者指定順序 2026-08-26）。
@@ -116,6 +116,8 @@ def _build_personal_sections(todos, reminders, recent_days, weather,
         ("⏰ 進行中提醒", reminders),
         ("🗣️ 今日三句", phrases),
         ("🧾 近三天消費", recent_days),
+        # 財務三塊排在一起（分布 → 近三天 → 股票），天氣永遠壓最後
+        ("📈 持倉今日漲跌", stocks),
         ("🌤️ 天氣", weather),
     ]
     out = [(title, text) for title, text in candidates if text]
@@ -188,8 +190,18 @@ def _email_personal_report(today):
         )
         return (path, summary) if path else None
 
+    def _stock_moves():
+        """持倉今日漲跌。持倉從 Notion 讀，不從 Gmail 重算 ——
+        重算要解析對帳單，那是每日信裡最貴的一段，而漲跌只需要代號。"""
+        import notion_db
+        if not notion_db.is_configured():
+            return None
+        import stock_moves
+        return stock_moves.daily_moves()
+
     todos_text = _safe("個人版待辦", _personal_todos)
     reminders_text = _safe("個人版提醒", _personal_reminders)
+    stocks_text = _safe("個人版持倉漲跌", _stock_moves)
     chart = _safe("個人版消費圓餅圖", _monthly_chart)
     chart_path, chart_summary = chart if chart else (None, None)
 
@@ -206,6 +218,7 @@ def _email_personal_report(today):
         weather=weather_text,
         phrases=phrases_text,
         monthly_chart=(chart_summary, CHART_CID) if chart_path else None,
+        stocks=stocks_text,
     )
     if not sections:
         # 全部區塊都沒東西 → 不寄空信
@@ -213,7 +226,10 @@ def _email_personal_report(today):
         return
 
     import digest
-    html = digest.build_digest_html(today, sections)
+    # 信尾標抓取時間：2026-09-05 有一整批資料因為 Notion 建了重複的表
+    # 而靜悄悄消失，信上完全看不出來。至少要知道這是什麼時候的快照。
+    html = digest.build_digest_html(
+        today, sections, generated_at=now_tpe().strftime("%m/%d %H:%M"))
     # 純文字版是給不吃 HTML 的收信端看的，內容一樣、沒有版型
     plain = SEP.join(f"{s[0]}{NL}{s[1]}" for s in sections)
 
