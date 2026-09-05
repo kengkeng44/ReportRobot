@@ -381,7 +381,17 @@ def get_or_create_section_page(title):
                 print(f"[notion] 重用既有區塊頁：{title} → {r['id']}")
                 return r["id"]
     except Exception as e:
-        print(f"[notion] search 區塊頁失敗 {title}：{e}")
+        # 搜尋失敗 ≠ 沒有這一頁。往下建新的會複製整個區塊。
+        #
+        # 2026-09-05 真的發生了：匯入 360 句金句之後緊接著部署，Notion 對
+        # 這顆 integration 限流，search 拿到 429 → 這裡吞掉 → 建了第二份
+        # 「財務中心」，底下六張空表。get_or_create_db 是用「父頁面是誰」
+        # 比對的，於是整個月的交易資料從信裡消失，而且不會報任何錯。
+        #
+        # 寧可這一天沒有這個區塊（呼叫端拿到 None 就整段跳過），
+        # 也不要把資料裂成兩半 —— 後者要人工合併，前者隔天自己會好。
+        print(f"[notion] search 區塊頁失敗 {title}：{e}　→ 這次不建，跳過")
+        return None
 
     with _lock:
         if title in _section_page_cache:
@@ -452,7 +462,10 @@ def get_or_create_db(name):
                 print(f"[notion] 重用既有 DB：{name} → {db_id}")
                 break
     except Exception as e:
-        print(f"[notion] search DB 失敗：{e}")
+        # 同 get_or_create_section_page：搜尋失敗不代表這張表不存在。
+        # 建一張空表比完全不建更難發現 —— 不會報錯，只會安靜地讀到 0 筆。
+        print(f"[notion] search DB 失敗：{name}：{e}　→ 這次不建，跳過")
+        return None
 
     # 2. 建立新 DB（第一階段：只帶非 relation 欄位）
     if db_id is None:

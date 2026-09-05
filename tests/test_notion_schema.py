@@ -534,3 +534,55 @@ def test_quote_schema_keeps_theme_tags():
     目前程式不用它,但資料丟了就回不來 —— 搬的時候一起帶進來。
     """
     assert notion_db._SCHEMAS["金句庫"]["主題"] == {"multi_select": {"options": []}}
+
+
+# ── 搜尋失敗不準建新的（2026-09-05 事故）──────
+
+def test_section_page_search_failure_never_creates(monkeypatch):
+    """Notion 搜尋被 429 打掛時，舊版會把「搜尋失敗」當成「沒有這頁」，然後建一份新的。
+
+    2026-09-05 真的發生了：匠入 360 句金句之後緊接著部署，搜尋被限流，
+    於是又长出一份空的「財務中心」，整個月的交易資料從信裡消失。
+    寧可這一天沒有這個區塊，也不要把資料裂成兩半。
+    """
+    calls = []
+
+    class _Client:
+        def search(self, **kw):
+            raise RuntimeError("429 rate limited")
+
+        class pages:
+            @staticmethod
+            def create(**kw):
+                calls.append(kw)
+                raise AssertionError("搜尋失敗時不得建立區塊頁")
+
+    monkeypatch.setattr(notion_db, "_get_client", lambda: _Client())
+    monkeypatch.setattr(notion_db, "_section_page_cache", {})
+
+    assert notion_db.get_or_create_section_page("財務中心") is None
+    assert calls == []
+
+
+def test_db_search_failure_never_creates(monkeypatch):
+    """同上，表這一層也一樣。建一張空表比完全不建更難發現——
+    不會報錯，只會安靜地讀到 0 筆。
+    """
+    calls = []
+
+    class _Client:
+        def search(self, **kw):
+            raise RuntimeError("429 rate limited")
+
+        class databases:
+            @staticmethod
+            def create(**kw):
+                calls.append(kw)
+                raise AssertionError("搜尋失敗時不得建立區塊頁2")
+
+    monkeypatch.setattr(notion_db, "_get_client", lambda: _Client())
+    monkeypatch.setattr(notion_db, "_db_id_cache", {})
+    monkeypatch.setattr(notion_db, "get_or_create_section_page", lambda t: "sec-id")
+
+    assert notion_db.get_or_create_db("交易明細") is None
+    assert calls == []
