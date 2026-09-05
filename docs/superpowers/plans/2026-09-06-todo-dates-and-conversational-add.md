@@ -124,7 +124,7 @@ cd C:/Users/acer/projects/ReportRobot && python -m pytest -q
 
 零 I/O、零 mock：所有案例直接餵字串斷言結果。
 
-基準日一律用固定的 date(2026, 9, 5)（**週五**）而不是 today() ——
+基準日一律用固定的 date(2026, 9, 5)（**週六**，本週一 = 8/31）而不是 today() ——
 會隨時間漂移的測試等於沒有測試。跨月、跨年的案例另外寫死自己的基準日。
 """
 
@@ -132,10 +132,10 @@ from datetime import date
 
 import todo_parse
 
-FRI = date(2026, 9, 5)          # 2026-09-05 是週五
+SAT = date(2026, 9, 5)          # 2026-09-05 是**週六**（本週一 = 8/31）
 
 
-def _d(text, today=FRI):
+def _d(text, today=SAT):
     """只取日期，讓斷言短一點。"""
     start, end, _rest = todo_parse.parse_dates(text, today)
     return start, end
@@ -177,7 +177,7 @@ def test_no_date_at_all():
 def test_date_token_is_removed_from_the_text():
     """留著「明天」兩個字會讓待辦顯示成「明天交資料」——
     隔天再看就是錯的。"""
-    _s, _e, rest = todo_parse.parse_dates("明天交資料", FRI)
+    _s, _e, rest = todo_parse.parse_dates("明天交資料", SAT)
     assert rest == "交資料"
 ```
 
@@ -321,27 +321,27 @@ MSG
 # 下週一 = 本週一 + 7，再加 (X-1) 天。跨月跨年由 date 型別自己處理。
 
 def test_this_week_monday_can_be_in_the_past():
-    """週五講「這週一」指的是已經過去的 9/01，不是下週。"""
-    assert _d("這週一交資料") == (date(2026, 9, 1), None)
-    assert _d("本週一交資料") == (date(2026, 9, 1), None)
+    """週六講「這週一」指的是已經過去的 8/31，不是下週。"""
+    assert _d("這週一交資料") == (date(2026, 8, 31), None)
+    assert _d("本週一交資料") == (date(2026, 8, 31), None)
 
 
 def test_next_week_monday():
-    assert _d("下週一交資料") == (date(2026, 9, 8), None)
-    assert _d("下禮拜一交資料") == (date(2026, 9, 8), None)
-    assert _d("下星期一交資料") == (date(2026, 9, 8), None)
+    assert _d("下週一交資料") == (date(2026, 9, 7), None)
+    assert _d("下禮拜一交資料") == (date(2026, 9, 7), None)
+    assert _d("下星期一交資料") == (date(2026, 9, 7), None)
 
 
 def test_bare_weekday_takes_the_next_occurrence():
-    """沒講這週下週時取「下一次」——週五講「週一」是下週一。"""
-    assert _d("週一交資料") == (date(2026, 9, 8), None)
+    """沒講這週下週時取「下一次」——週六講「週一」是下週一。"""
+    assert _d("週一交資料") == (date(2026, 9, 7), None)
 
 
 def test_bare_weekday_today_means_today():
-    """週五講「週五」就是今天，不是下週五。
+    """週六講「週六」就是今天，不是下週六。
     「今天要交」是最常見的說法，推到七天後等於漏掉。"""
-    assert _d("週五交資料") == (date(2026, 9, 5), None)
-    assert _d("禮拜五交資料") == (date(2026, 9, 5), None)
+    assert _d("週六交資料") == (date(2026, 9, 5), None)
+    assert _d("禮拜六交資料") == (date(2026, 9, 5), None)
 
 
 def test_weekday_seven_is_sunday():
@@ -361,7 +361,7 @@ def test_next_week_across_year_boundary():
 
 
 def test_weekday_token_is_removed():
-    _s, _e, rest = todo_parse.parse_dates("下週一交社宅資料", FRI)
+    _s, _e, rest = todo_parse.parse_dates("下週一交社宅資料", SAT)
     assert rest == "交社宅資料"
 ```
 
@@ -522,7 +522,7 @@ def test_range_across_year():
 
 
 def test_range_token_is_removed():
-    _s, _e, rest = todo_parse.parse_dates("9/1-9/10 出差", FRI)
+    _s, _e, rest = todo_parse.parse_dates("9/1-9/10 出差", SAT)
     assert rest == "出差"
 ```
 
@@ -740,18 +740,18 @@ MSG
 # ── parse()：組合器 + AI 補位 ─────────────────────────────
 
 def test_parse_combines_everything():
-    out = todo_parse.parse("P0 下週一交社宅資料", FRI)
+    out = todo_parse.parse("P0 下週一交社宅資料", SAT)
 
     assert out == {
         "text": "交社宅資料",
-        "start": date(2026, 9, 8),
+        "start": date(2026, 9, 7),
         "end": None,
         "priority": "P0",
     }
 
 
 def test_parse_without_date_or_priority():
-    out = todo_parse.parse("交社宅資料", FRI)
+    out = todo_parse.parse("交社宅資料", SAT)
 
     assert out["text"] == "交社宅資料"
     assert out["start"] is None
@@ -763,7 +763,7 @@ def test_rules_win_and_ai_is_never_called(monkeypatch):
     called = []
     monkeypatch.setattr(todo_parse, "_ai", lambda prompt: called.append(prompt))
 
-    todo_parse.parse("明天交資料", FRI)
+    todo_parse.parse("明天交資料", SAT)
 
     assert called == []
 
@@ -772,7 +772,7 @@ def test_ai_fills_in_what_rules_cannot(monkeypatch):
     """「中秋前」這種規則吃不下來的說法才呼叫 AI。"""
     monkeypatch.setattr(todo_parse, "_ai", lambda prompt: "2026-09-25")
 
-    out = todo_parse.parse("中秋前交資料", FRI)
+    out = todo_parse.parse("中秋前交資料", SAT)
 
     assert out["start"] == date(2026, 9, 25)
 
@@ -780,7 +780,7 @@ def test_ai_fills_in_what_rules_cannot(monkeypatch):
 def test_ai_can_return_a_range(monkeypatch):
     monkeypatch.setattr(todo_parse, "_ai", lambda prompt: "2026-09-25~2026-09-28")
 
-    out = todo_parse.parse("中秋連假出遊", FRI)
+    out = todo_parse.parse("中秋連假出遊", SAT)
 
     assert out["start"] == date(2026, 9, 25)
     assert out["end"] == date(2026, 9, 28)
@@ -789,7 +789,7 @@ def test_ai_can_return_a_range(monkeypatch):
 def test_ai_saying_none_means_no_date(monkeypatch):
     monkeypatch.setattr(todo_parse, "_ai", lambda prompt: "NONE")
 
-    out = todo_parse.parse("交社宅資料", FRI)
+    out = todo_parse.parse("交社宅資料", SAT)
 
     assert out["start"] is None
 
@@ -801,7 +801,7 @@ def test_ai_failure_does_not_lose_the_todo(monkeypatch):
         raise RuntimeError("API 掛了")
     monkeypatch.setattr(todo_parse, "_ai", _boom)
 
-    out = todo_parse.parse("中秋前交資料", FRI)
+    out = todo_parse.parse("中秋前交資料", SAT)
 
     assert out["text"] == "中秋前交資料"
     assert out["start"] is None
@@ -811,7 +811,7 @@ def test_ai_garbage_is_ignored(monkeypatch):
     """AI 回了不是日期的東西時當作沒解析到，不要讓它污染資料。"""
     monkeypatch.setattr(todo_parse, "_ai", lambda prompt: "我覺得是下週吧")
 
-    out = todo_parse.parse("中秋前交資料", FRI)
+    out = todo_parse.parse("中秋前交資料", SAT)
 
     assert out["start"] is None
 
@@ -820,7 +820,7 @@ def test_ai_is_not_called_for_empty_text(monkeypatch):
     called = []
     monkeypatch.setattr(todo_parse, "_ai", lambda prompt: called.append(prompt))
 
-    todo_parse.parse("   ", FRI)
+    todo_parse.parse("   ", SAT)
 
     assert called == []
 
@@ -831,7 +831,7 @@ def test_prompt_carries_todays_date(monkeypatch):
     monkeypatch.setattr(todo_parse, "_ai",
                         lambda prompt: seen.append(prompt) or "NONE")
 
-    todo_parse.parse("中秋前交資料", FRI)
+    todo_parse.parse("中秋前交資料", SAT)
 
     assert "2026-09-05" in seen[0]
 ```
@@ -2347,7 +2347,7 @@ cd C:/Users/acer/projects/ReportRobot && python -m pytest tests/test_pending_tod
 _TODO_DUE_CHOICES = (
     ("今天", "today"),
     ("明天", "tomorrow"),
-    ("本週五", "friday"),
+    ("週五", "friday"),
     ("下週一", "next_monday"),
     ("不設", "none"),
 )
@@ -2596,32 +2596,38 @@ def test_reply_shows_the_date_that_was_set():
 
 # ── _due_from_key（純邏輯）────────────────────────────────
 
-FRI = date(2026, 9, 5)
+SAT = date(2026, 9, 5)
 
 
 def test_key_today():
-    assert cr._due_from_key("today", FRI) == FRI
+    assert cr._due_from_key("today", SAT) == SAT
 
 
 def test_key_tomorrow():
-    assert cr._due_from_key("tomorrow", FRI) == FRI + timedelta(days=1)
+    assert cr._due_from_key("tomorrow", SAT) == SAT + timedelta(days=1)
 
 
-def test_key_friday_today_counts():
-    """週五按「本週五」就是今天，不是下週五。"""
-    assert cr._due_from_key("friday", FRI) == FRI
+def test_key_friday_takes_the_next_friday():
+    """週六按「週五」→ 下一個週五 9/11，不是已經過去的 9/04。
+    按鈕設出一個昨天的截止日，等於一按就逾期。"""
+    assert cr._due_from_key("friday", SAT) == date(2026, 9, 11)
+
+
+def test_key_friday_on_a_friday_is_today():
+    """在週五按「週五」就是今天 —— 「今天要交」是最常見的說法。"""
+    assert cr._due_from_key("friday", date(2026, 9, 11)) == date(2026, 9, 11)
 
 
 def test_key_next_monday():
-    assert cr._due_from_key("next_monday", FRI) == date(2026, 9, 8)
+    assert cr._due_from_key("next_monday", SAT) == date(2026, 9, 7)
 
 
 def test_key_none():
-    assert cr._due_from_key("none", FRI) is None
+    assert cr._due_from_key("none", SAT) is None
 
 
 def test_unknown_key():
-    assert cr._due_from_key("whatever", FRI) is None
+    assert cr._due_from_key("whatever", SAT) is None
 ```
 
 - [ ] **Step 2: 跑測試確認 RED**
@@ -2652,8 +2658,9 @@ def _due_from_key(key, today):
     if key == "tomorrow":
         return today + timedelta(days=1)
     if key == "friday":
-        # 「本週五」在週五按就是今天 —— 「今天要交」是最常見的說法
-        return todo_parse._weekday_date(today, "本", 4)
+        # 下一個週五，今天是週五就取今天。**不能用「本週」**：
+        # 週六按下去會得到昨天，一按就逾期。
+        return todo_parse._weekday_date(today, None, 4)
     if key == "next_monday":
         return todo_parse._weekday_date(today, "下", 0)
     return None
@@ -3132,7 +3139,7 @@ for p in files:
 3. **驗證步驟：**
    - LINE 打「待辦」→ 卡片底部應該有一顆 **➕ 加一件事**
    - 按 ➕ → 機器人回「請說。」
-   - 打 `P0 下週一交社宅資料` → 回「✅ 已記下：交社宅資料 / 📅 9/xx（一）　P0」
+   - 打 `P0 下週一交社宅資料` → 回「✅ 已記下：交社宅資料 / 📅 9/xx（一）　P0」（日期是下週一）
    - 打 `隨便一件事`（不講日期）→ 回「已記下」+ 一排日期按鈕
    - 按 ➕ 之後改按「快過期」→ 回「已取消新增待辦。」+ 快過期的結果
    - 觸發一次每日信（`/admin/run-personal`）→ 待辦卡只有今天到期的與 P0

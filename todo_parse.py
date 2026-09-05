@@ -43,6 +43,45 @@ _OFFSET_DAYS = (
 )
 
 
+# 週一=0 … 週日=6（對齊 date.weekday()）
+_WEEKDAYS = {
+    "一": 0, "1": 0,
+    "二": 1, "2": 1,
+    "三": 2, "3": 2,
+    "四": 3, "4": 3,
+    "五": 4, "5": 4,
+    "六": 5, "6": 5,
+    "日": 6, "天": 6, "七": 6, "7": 6,
+}
+
+_WEEK_WORD = r"(?:週|周|星期|禮拜)"
+_WEEKDAY_CHARS = "".join(_WEEKDAYS)
+_WEEKDAY_RE = re.compile(
+    r"(下下|下|這|本)?" + _WEEK_WORD + r"([" + _WEEKDAY_CHARS + r"])"
+)
+
+
+def _weekday_date(today, qualifier, weekday):
+    """qualifier: '下下' / '下' / '這' / '本' / None。
+
+    一律先算本週一（today - today.weekday()）再位移 —— 直接對 today
+    加減天數在跨週時會錯，而那正是最常用的情境。
+    """
+    monday = today - timedelta(days=today.weekday())
+    if qualifier == "下":
+        return monday + timedelta(days=7 + weekday)
+    if qualifier == "下下":
+        return monday + timedelta(days=14 + weekday)
+    if qualifier in ("這", "本"):
+        # 本週已經過去的日子也算本週：使用者說「這週一」就是指那天
+        return monday + timedelta(days=weekday)
+    # 沒講這週下週 → 取下一次，今天符合就是今天
+    candidate = monday + timedelta(days=weekday)
+    if candidate < today:
+        candidate += timedelta(days=7)
+    return candidate
+
+
 def parse_dates(text, today):
     """text → (start, end, 去掉日期字樣的 text)。
 
@@ -68,5 +107,14 @@ def parse_dates(text, today):
         if n is not None:
             return (today + timedelta(weeks=n), None,
                     (rest[:m.start()] + rest[m.end():]).strip())
+
+    # 星期排在「N 週後」之後：先讓「2 禮拜後」整段被吃掉，
+    # 免得剩下的字尾再被星期規則咬到
+    m = _WEEKDAY_RE.search(rest)
+    if m:
+        weekday = _WEEKDAYS.get(m.group(2))
+        if weekday is not None:
+            found = _weekday_date(today, m.group(1), weekday)
+            return found, None, (rest[:m.start()] + rest[m.end():]).strip()
 
     return None, None, rest
