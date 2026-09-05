@@ -72,6 +72,9 @@ _TEXT = '#5b4636'
 _COLORS = ['#c96f4a', '#d9a05b', '#8fa87d', '#6d8fa8',
            '#9b7aa8', '#c98fa0', '#b0a89b']
 
+# 圖例字級。matplotlib 預設 10，在手機上開信讀不出來。
+_LEGEND_FONTSIZE = 16
+
 
 def build_pie(txns, month, top_n=TOP_N):
     """畫當月消費圓餅圖。回 (png 路徑, 摘要文字);沒資料回 (None, None)。
@@ -109,6 +112,13 @@ def build_pie(txns, month, top_n=TOP_N):
         f"{name}　NT${_money(amount)}（{amount / total * 100:.0f}%）"
         for name, amount in slices
     ]
+    # 圖例字級寫死 16：預設 10 在手機上讀不出來（2026-09-05 使用者回報）。
+    # prop 帶著中文字型，size 得一起設在同一個 FontProperties 上 ——
+    # 另外傳 fontsize 會被 prop 蓋掉。
+    if font is not None:
+        font = font.copy()
+        font.set_size(_LEGEND_FONTSIZE)
+
     ax.legend(
         wedges, legend_labels,
         loc='center left', bbox_to_anchor=(1.0, 0.5),

@@ -16,7 +16,6 @@
 """
 
 import os
-import re
 import traceback
 
 import humor
@@ -83,22 +82,9 @@ SEP = NL * 2
 CHART_CID = "spending"
 
 
-# 從圓餅圖的摘要文字裡把金額挖出來塞進標題。摘要的格式是
-# 「本月合計 NT$12,345（共 87 筆）」（spending_chart.build_pie）。
-_SUBJECT_AMOUNT_RE = re.compile(r"NT\$[\d,]+")
-
-
-def _subject(today, chart_summary):
-    """信件標題。有金額就帶上 —— 手機通知列直接看到，不用點開。
-
-    抓不到金額就退回原本的標題：標題是每天都會出現的東西，寧可少一段
-    資訊，也不要因為摘要格式變了就產出半句話。
-    """
-    base = f"📮 每日個人報 {today}"
-    if not chart_summary:
-        return base
-    m = _SUBJECT_AMOUNT_RE.search(chart_summary)
-    return f"{base} · 本月 {m.group(0)}" if m else base
+# 2026-09-04 試過標題帶本月金額（📮 每日個人報 2026-09-05 · 本月 NT$338），
+# 使用者看了實際效果之後要求拿掉：標題只要日期。
+# 守門測試見 tests/test_personal_report.py 的「標題只放日期」那一段。
 
 
 def _build_personal_sections(todos, reminders, recent_days, weather,
@@ -232,7 +218,7 @@ def _email_personal_report(today):
     plain = SEP.join(f"{s[0]}{NL}{s[1]}" for s in sections)
 
     mailer.send_email(
-        _subject(today, chart_summary), plain, html=html,
+        f"📮 每日個人報 {today}", plain, html=html,
         images={CHART_CID: chart_path} if chart_path else None,
     )
 

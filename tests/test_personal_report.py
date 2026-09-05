@@ -257,20 +257,34 @@ def test_no_chart_means_no_images(monkeypatch, _mailed_full):
     assert "<img" not in _mailed_full[0]["html"]
 
 
-# ── 標題帶本月金額（2026-09-04）───────────────
+# ── 標題只放日期（2026-09-05）─────────────
+#
+# 2026-09-04 試過「標題帶本月金額」，使用者看了實際效果之後要求拿掉。
+# 標題只要日期。
 
-def test_subject_carries_the_month_total():
-    """手機通知列直接看到數字，不用點開。"""
-    out = daily_report._subject("2026-09-01", "本月合計 NT$12,345（共 87 筆）")
+def test_subject_is_date_only():
+    """標題就是「每日個人報 + 日期」，不接任何東西。"""
+    import inspect
 
-    assert out == "📮 每日個人報 2026-09-01 · 本月 NT$12,345"
-
-
-def test_subject_falls_back_without_a_summary():
-    assert daily_report._subject("2026-09-01", None) == "📮 每日個人報 2026-09-01"
+    src = inspect.getsource(daily_report._email_personal_report)
+    assert 'f"📮 每日個人報 {today}"' in src
 
 
-def test_subject_falls_back_when_summary_has_no_amount():
-    """摘要格式變了也不能產出半句話的標題。"""
-    assert daily_report._subject(
-        "2026-09-01", "本月沒有消費") == "📮 每日個人報 2026-09-01"
+def test_no_subject_helper_left_behind():
+    """拿掉就要真的拿掉 —— 同 test_daily_kitchen.py 那一套精神。
+    留著沒人叫的 helper 會讓下一個人以為還能用。
+    """
+    assert not hasattr(daily_report, "_subject")
+    assert not hasattr(daily_report, "_SUBJECT_AMOUNT_RE")
+
+
+def test_sent_subject_carries_no_amount(monkeypatch, _mailed_full):
+    """端到端：就算 build_pie 有回摘要，標題也不得帶上。
+    """
+    import spending_chart
+    monkeypatch.setattr(spending_chart, "build_pie",
+                        lambda txns, month: ("C:/tmp/pie.png", "SUMMARY"))
+
+    daily_report._email_personal_report("2026-09-05")
+
+    assert _mailed_full[0]["subject"] == "📮 每日個人報 2026-09-05"

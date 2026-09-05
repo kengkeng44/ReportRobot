@@ -56,12 +56,40 @@ def _env_list_or(name, default):
 PERSONAL_WEATHER_LOCATIONS = _env_list_or("PERSONAL_WEATHER_LOCATIONS", ["板橋區"])
 
 # 嘗試使用中文字體
+# 先查檔案路徑再查家族名。這個順序是 2026-09-05 換來的：
+# 容器裡其實有中文字型（nixpacks.toml 為了 Rich Menu 裝了 fonts-wqy-zenhei），
+# 但舊清單只寫「WenQuanYi Micro Hei」—— 那是 fonts-wqy-**microhei** 的家族名，
+# 跟裝的那顆對不上，於是圓餅圖的圖例整排變成豆腐方塊 □□。
+#
+# setup_richmenu 一直是用路徑找的（所以選單有字）。這份清單跟它同源，
+# 改 nixpacks 的字型時兩邊都要動 —— tests/test_chart_font.py 會擋。
+_FONT_PATHS = [
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
+    "C:\\Windows\\Fonts\\msjh.ttc",
+    "C:\\Windows\\Fonts\\NotoSansTC-VF.ttf",
+]
+
+
 def get_chinese_font():
-    """找到可用的中文字體（fallback_to_default=False 才不會被 mpl 偷偷塞 DejaVu Sans）"""
+    """找到可用的中文字體（fallback_to_default=False 才不會被 mpl 偷偷塞 DejaVu Sans）
+
+    路徑優先：findfont 依賴 matplotlib 自己的字型快取，容器剛建好時
+    不一定即時；os.path.exists 沒有這個問題。
+    """
+    for path in _FONT_PATHS:
+        if os.path.exists(path):
+            return fm.FontProperties(fname=path)
+
     font_candidates = [
         'Noto Sans CJK TC', 'Noto Sans TC', 'Noto Sans CJK SC',
-        'Microsoft JhengHei', 'Microsoft YaHei',
-        'PingFang TC', 'WenQuanYi Micro Hei', 'SimHei', 'Arial Unicode MS',
+        'Microsoft JhengHei', 'Microsoft YaHei', 'PingFang TC',
+        'WenQuanYi Zen Hei', 'WenQuanYi Micro Hei',
+        'SimHei', 'Arial Unicode MS',
     ]
     for font_name in font_candidates:
         try:
