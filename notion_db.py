@@ -352,6 +352,40 @@ _RELATIONS = {
 }
 
 
+def _find_child(children_api, parent_id, title, kind):
+    """列出 parent_id 底下的子項目，回第一個標題相符的 id；沒有就回 None。
+
+    kind 是 "child_page" 或 "child_database"。這兩種區塊的 block id
+    就是頁面 / 資料庫本身的 id，不用再查一次。
+
+    刻意不用 client.search()：那是**全文搜尋**，只回第一頁 100 筆、
+    排序不保證、索引有延遲。拿它來判斷「這個東西存在嗎」，會在最壞的
+    時候答錯 —— 2026-09-05 就是這樣連續長出三份「財務中心」，
+    每份底下六張空表，整個月的交易資料從信裡消失且不報錯。
+
+    列子項目是確定性的：問的是「這一頁底下有什麼」，不經過搜尋索引。
+
+    重複時取第一個：子項目按文件順序回傳，新建的附在最後，所以第一個
+    就是原本那一份（有資料的那份）。
+    """
+    cursor = None
+    while True:
+        res = children_api.list(block_id=parent_id, start_cursor=cursor,
+                                page_size=100)
+        for block in res.get("results", []) or []:
+            if block.get("type") != kind:
+                continue
+            if (block.get(kind, {}) or {}).get("title") == title:
+                return block["id"]
+        # 單頁上限 100。不分頁就會在第 101 個之後變成「找不到」，
+        # 然後建一份新的 —— 跟舊版靠 search 同一種死法。
+        if not res.get("has_more"):
+            return None
+        cursor = res.get("next_cursor")
+        if not cursor:
+            return None
+
+
 def get_or_create_section_page(title):
     """在根頁底下找 / 建一個區塊子頁（財務中心、煮飯模板）。回 page_id 或 None。"""
     if title in _section_page_cache:
@@ -361,25 +395,14 @@ def get_or_create_section_page(title):
     if not client:
         return None
 
-    parent_norm = _normalize_id(_PARENT_PAGE)
-
     # 先找既有同名子頁，避免每次部署都長出一個新的
     try:
-        res = client.search(
-            query=title,
-            filter={"value": "page", "property": "object"},
-        )
-        for r in res.get("results", []):
-            parent = r.get("parent", {}) or {}
-            if parent.get("type") != "page_id":
-                continue
-            if _normalize_id(parent.get("page_id", "")) != parent_norm:
-                continue
-            blocks = ((r.get("properties", {}) or {}).get("title", {}) or {}).get("title", []) or []
-            if "".join(b.get("plain_text", "") for b in blocks) == title:
-                _section_page_cache[title] = r["id"]
-                print(f"[notion] 重用既有區塊頁：{title} → {r['id']}")
-                return r["id"]
+        found = _find_child(client.blocks.children, _PARENT_PAGE,
+                            title, "child_page")
+        if found:
+            _section_page_cache[title] = found
+            print(f"[notion] 重用既有區塊頁：{title} → {found}")
+            return found
     except Exception as e:
         # 搜尋失敗 ≠ 沒有這一頁。往下建新的會複製整個區塊。
         #
@@ -411,15 +434,19 @@ def get_or_create_section_page(title):
 
 
 def _parent_for(name):
-    """這個 DB 該掛在哪一頁底下。
+    """這個 DB 該掛在哪一頁底下。區塊頁拿不到就回 None。
 
-    區塊 DB 收進自己的子頁；子頁建不出來時退回根頁 ——
-    有地方放總比整個功能失效好。
+    2026-09-05 之前這裡是「子頁建不出來就退回根頁」，理由是「有地方放
+    總比整個功能失效好」。那個理由在事故之後不成立了：退回根頁會在根頁
+    長出一張同名的空表，而 transactions_load 讀到空表只會安靜地回 0 筆
+    —— 不報錯、不通知，只是整個月的消費從信裡消失。
+
+    現在寧可整段跳過（呼叫端拿到 None 就不放這個區塊），隔天自己會好。
     """
     section = _DB_SECTION.get(name)
     if not section:
         return _PARENT_PAGE
-    return get_or_create_section_page(section) or _PARENT_PAGE
+    return get_or_create_section_page(section)
 
 
 def get_or_create_db(name):
@@ -440,27 +467,18 @@ def get_or_create_db(name):
         return None
 
     parent_page = _parent_for(name)
-    parent_norm = _normalize_id(parent_page)
+    if not parent_page:
+        # 區塊頁找不到（例如上面那層跳過了）→ 這裡也不能亂建，
+        # 否則會建在根頁底下，變成另一種孤兒。
+        return None
     db_id = None
 
-    # 1. 先 search 同名 DB（已建過就重用）
+    # 1. 先找同名 DB（已建過就重用）
     try:
-        res = client.search(
-            query=name,
-            filter={"value": "database", "property": "object"},
-        )
-        for r in res.get("results", []):
-            parent = r.get("parent", {}) or {}
-            if parent.get("type") != "page_id":
-                continue
-            if _normalize_id(parent.get("page_id", "")) != parent_norm:
-                continue
-            title_blocks = r.get("title", []) or []
-            db_title = "".join(b.get("plain_text", "") for b in title_blocks)
-            if db_title == name:
-                db_id = r["id"]
-                print(f"[notion] 重用既有 DB：{name} → {db_id}")
-                break
+        db_id = _find_child(client.blocks.children, parent_page,
+                            name, "child_database")
+        if db_id:
+            print(f"[notion] 重用既有 DB：{name} → {db_id}")
     except Exception as e:
         # 同 get_or_create_section_page：搜尋失敗不代表這張表不存在。
         # 建一張空表比完全不建更難發現 —— 不會報錯，只會安靜地讀到 0 筆。

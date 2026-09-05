@@ -78,12 +78,50 @@ class FakePages:
         return {"id": page_id}
 
 
+def _db_title(db):
+    """假資料兩種寫法都要吃：預建的用 plain_text，create() 存的是 text.content。"""
+    out = []
+    for b in db.get("title", []) or []:
+        out.append(b.get("plain_text") or b.get("text", {}).get("content", ""))
+    return "".join(out)
+
+
+class FakeBlockChildren:
+    """blocks.children.list —— 列出某一頁底下的子頁與子 DB。
+
+    2026-09-05 之後 notion_db 改用這個而不是 client.search()：
+    search 是全文搜尋，只回第一頁、排序不保證、索引有延遲，拿來判斷
+    「這個東西存在嗎」會在最壞的時候答錯（連續長出三份「財務中心」）。
+    """
+
+    def __init__(self, client):
+        self._c = client
+
+    def list(self, block_id, start_cursor=None, page_size=100):
+        out = []
+        for page in self._c._pages.values():
+            if (page.get("parent") or {}).get("page_id") == block_id:
+                out.append({"id": page["id"], "type": "child_page",
+                            "child_page": {"title": _page_title(page)}})
+        for db in self._c._store.values():
+            if (db.get("parent") or {}).get("page_id") == block_id:
+                out.append({"id": db["id"], "type": "child_database",
+                            "child_database": {"title": _db_title(db)}})
+        return {"results": out, "has_more": False, "next_cursor": None}
+
+
+class FakeBlocks:
+    def __init__(self, client):
+        self.children = FakeBlockChildren(client)
+
+
 class FakeClient:
     def __init__(self, parent_page, preexisting=None, preexisting_pages=None):
         self._store = dict(preexisting or {})
         self._pages = dict(preexisting_pages or {})
         self.databases = FakeDatabases(self._store)
         self.pages = FakePages(self._pages)
+        self.blocks = FakeBlocks(self)
         self._parent_page = parent_page
 
     def search(self, query, filter=None):
@@ -354,14 +392,21 @@ def test_existing_section_page_is_reused(monkeypatch):
     assert client.pages.created == [], "已存在的區塊頁不該重建"
 
 
-def test_section_page_failure_falls_back_to_root(notion):
-    """建子頁失敗時，DB 還是要能建出來，只是退回根頁。"""
+def test_section_page_failure_does_not_create_at_root(notion):
+    """建子頁失敗時，整段跳過，**不准**退回根頁建表。
+
+    2026-09-05 之前的行為是退回根頁（「有地方放總比整個功能失效好」）。
+    那次事故證明反了：根頁多一張同名空表，transactions_load 讀到 0 筆
+    只會安靜地讓整個月的消費從信裡消失 —— 不報錯、不通知、沒人發現。
+
+    整段跳過是可見的（那天信裡少一塊），而且隔天自己會好。
+    """
     notion.pages.fail_create_for.add("財務中心")
 
     db_id = notion_db.get_or_create_db("帳戶")
 
-    assert db_id is not None
-    assert notion.db_parent_of(db_id) == notion._parent_page
+    assert db_id is None
+    assert notion.databases.create_calls == []
 
 
 def test_read_select_tolerates_missing_property():
@@ -586,3 +631,76 @@ def test_db_search_failure_never_creates(monkeypatch):
 
     assert notion_db.get_or_create_db("交易明細") is None
     assert calls == []
+
+
+# ── 找子項目不靠 search（2026-09-05）──────────
+
+
+class _FakeChildren:
+    """假的 blocks.children.list，支援分頁。"""
+
+    def __init__(self, pages):
+        self.pages = pages          # [[block, ...], ...]
+        self.calls = []
+
+    def list(self, block_id, start_cursor=None, page_size=100):
+        self.calls.append((block_id, start_cursor))
+        idx = 0 if start_cursor is None else int(start_cursor)
+        results = self.pages[idx]
+        has_more = idx + 1 < len(self.pages)
+        return {"results": results, "has_more": has_more,
+                "next_cursor": str(idx + 1) if has_more else None}
+
+
+def _child_page(pid, title):
+    return {"id": pid, "type": "child_page", "child_page": {"title": title}}
+
+
+def _child_db(pid, title):
+    return {"id": pid, "type": "child_database", "child_database": {"title": title}}
+
+
+def test_finds_child_page_by_title():
+    kids = _FakeChildren([[_child_page("p1", "AAA"), _child_page("p2", "BBB")]])
+
+    got = notion_db._find_child(kids, "parent", "BBB", "child_page")
+
+    assert got == "p2"
+
+
+def test_takes_the_first_match_when_duplicated():
+    """重複時取最舊的那一個。
+
+    子項目是按文件順序回的，新建的會附在最後，所以第一個就是原本那一個。
+    2026-09-05 事故裡連續長出三份「財務中心」，有資料的是最早那份。
+    """
+    kids = _FakeChildren([[_child_page("old", "AAA"), _child_page("new", "AAA")]])
+
+    assert notion_db._find_child(kids, "parent", "AAA", "child_page") == "old"
+
+
+def test_walks_every_page_before_giving_up():
+    """子項目單頁上限 100。不分頁就會在第 101 個之後變成「找不到」，
+    然後建一份新的 —— 跟舊版靠 search 同一種死法。
+    """
+    kids = _FakeChildren([
+        [_child_page("x", "XXX")] * 3,
+        [_child_page("hit", "AAA")],
+    ])
+
+    assert notion_db._find_child(kids, "parent", "AAA", "child_page") == "hit"
+    assert len(kids.calls) == 2
+
+
+def test_child_database_and_child_page_do_not_mix():
+    """同名的頁與表可以共存，不能互相誤認。"""
+    kids = _FakeChildren([[_child_db("db1", "AAA"), _child_page("pg1", "AAA")]])
+
+    assert notion_db._find_child(kids, "p", "AAA", "child_database") == "db1"
+    assert notion_db._find_child(kids, "p", "AAA", "child_page") == "pg1"
+
+
+def test_missing_title_returns_none():
+    kids = _FakeChildren([[_child_page("p1", "AAA")]])
+
+    assert notion_db._find_child(kids, "parent", "ZZZ", "child_page") is None
