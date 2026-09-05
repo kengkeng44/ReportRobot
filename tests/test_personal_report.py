@@ -288,3 +288,46 @@ def test_sent_subject_carries_no_amount(monkeypatch, _mailed_full):
     daily_report._email_personal_report("2026-09-05")
 
     assert _mailed_full[0]["subject"] == "📮 每日個人報 2026-09-05"
+
+
+# ── 待辦要抓誰的（2026-09-06）──────────────────
+#
+# 2026-09-05 使用者在 LINE 新增了待辦，信裡却沒出現。原因不是待辦沒存
+# 進 Notion，而是這兩個區塊要看 PERSONAL_USER_ID 才知道要抓誰的，
+# 而那個變數從來沒設過。
+
+def test_personal_user_id_falls_back_to_admin_id(monkeypatch):
+    """PERSONAL_USER_ID 沒設時用 ADMIN_LINE_USER_ID。
+
+    這兩個變數在這台 bot 裡永遠是同一個人 —— 個人版每日信
+    就是寄給 admin 自己。要使用者把同一串 U... 貼兩次，只會有一次
+    忘了貼，然後待辦區塊靜悄悄消失。
+    """
+    monkeypatch.delenv("PERSONAL_USER_ID", raising=False)
+    monkeypatch.setenv("ADMIN_LINE_USER_ID", "Uadmin")
+
+    assert daily_report._personal_user_id() == "Uadmin"
+
+
+def test_explicit_personal_user_id_wins(monkeypatch):
+    """明設了就以明設為準 —— fallback 只是補位，不是接管。"""
+    monkeypatch.setenv("PERSONAL_USER_ID", "Uother")
+    monkeypatch.setenv("ADMIN_LINE_USER_ID", "Uadmin")
+
+    assert daily_report._personal_user_id() == "Uother"
+
+
+def test_blank_personal_user_id_is_treated_as_unset(monkeypatch):
+    """Infisical 裡建了變數但值是空白是常見的手滑。"""
+    monkeypatch.setenv("PERSONAL_USER_ID", "   ")
+    monkeypatch.setenv("ADMIN_LINE_USER_ID", "Uadmin")
+
+    assert daily_report._personal_user_id() == "Uadmin"
+
+
+def test_no_ids_at_all_means_no_todo_section(monkeypatch):
+    """兩個都沒設就跳過待辦 / 提醒，其他區塊照寄。"""
+    monkeypatch.delenv("PERSONAL_USER_ID", raising=False)
+    monkeypatch.delenv("ADMIN_LINE_USER_ID", raising=False)
+
+    assert daily_report._personal_user_id() is None

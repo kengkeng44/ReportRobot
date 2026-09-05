@@ -561,7 +561,7 @@ ReportRobot（根頁,NOTION_PARENT_PAGE_ID）
 | `REPORT_EMAIL_TO` | 個人報收件者 | 沒設就寄給 `GMAIL_USER` 自己 |
 | `TW_HOLDINGS` | 台股起始庫存**備援** `代號:股數@均價`,逗號分隔 | 無 —— 正常走 Notion「起始庫存」表,這個只在 Notion 讀不到時生效 |
 | `TW_HOLDINGS_ASOF` | 上面那份備援庫存的基準日 `YYYY-MM-DD` | 無 —— **沒設則整份 TW_HOLDINGS 失效** |
-| `PERSONAL_USER_ID` | 個人版每日信要放誰的待辦 / 提醒(LINE user id) | 無 —— 沒設就跳過這兩個區塊,其他照寄 |
+| `PERSONAL_USER_ID` | 個人版每日信要放誰的待辦 / 提醒(LINE user id) | **退回 `ADMIN_LINE_USER_ID`**(同一個人);兩個都沒設才跳過這兩個區塊,其他照寄 |
 
 > ⚠️ `TW_HOLDINGS_ASOF` 是必填不是選填。`build_portfolio` 會跳過基準日以前的成交
 > (已含在庫存裡),基準日錯了就是少算或雙重計算,而且錯得無聲無息。

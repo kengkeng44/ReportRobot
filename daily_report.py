@@ -137,6 +137,23 @@ def _build_personal_sections(todos, reminders, recent_days, weather,
     return out
 
 
+def _personal_user_id():
+    """個人版每日信要抓誰的待辦 / 提醒。兩個都沒設回 None。
+
+    PERSONAL_USER_ID 優先，沒設就退回 ADMIN_LINE_USER_ID —— 這兩個
+    在這台 bot 上永遠是同一個人：個人版信就是寄給 admin 自己。
+
+    2026-09-05 使用者在 LINE 新增了待辦，信裡卻沒出現。待辦有存進
+    Notion，問題出在這裡只認 PERSONAL_USER_ID，而那個變數從來沒設過 ——
+    要人把同一串 U... 貼兩次，只會有一次忘了貼，然後整個區塊靜悄悄消失。
+    """
+    for name in ("PERSONAL_USER_ID", "ADMIN_LINE_USER_ID"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return None
+
+
 def _email_personal_report(today):
     """個人版：待辦 + 今日三句 + 財務 + 板橋天氣，寄 Gmail 給自己。
 
@@ -167,14 +184,14 @@ def _email_personal_report(today):
     spending_text = _safe("個人版消費", _spending_recent)
 
     def _personal_todos():
-        user_id = os.environ.get("PERSONAL_USER_ID", "").strip()
+        user_id = _personal_user_id()
         if not user_id:
             return None          # 沒設就跳過這區塊，跟 mailer 的 gate 同一套
         import personal
         return personal.format_todos(user_id)
 
     def _personal_reminders():
-        user_id = os.environ.get("PERSONAL_USER_ID", "").strip()
+        user_id = _personal_user_id()
         if not user_id:
             return None
         import personal
