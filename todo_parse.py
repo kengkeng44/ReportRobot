@@ -188,3 +188,97 @@ def parse_priority(text):
         return None, (text or "").strip()
     rest = (text[:m.start()] + " " + text[m.end():]).strip()
     return m.group(1).upper(), rest
+
+
+_WEEKDAY_NAMES = ("週一", "週二", "週三", "週四", "週五", "週六", "週日")
+
+_ISO_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
+
+
+def _parse_iso(token):
+    """'2026-09-25' → date。認不出來回 None。"""
+    m = _ISO_RE.fullmatch((token or "").strip())
+    if not m:
+        return None
+    try:
+        return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        return None
+
+
+def _ai_dates(text, today):
+    """規則吃不下來時問 AI。回 (start, end)，任何問題都回 (None, None)。
+
+    AI 失敗不該讓整件事沒記到 —— 呼叫端拿到 (None, None) 之後
+    照樣把內容寫進 Notion，再跳防呆按鈕讓使用者補日期。
+    """
+    from prompts import TODO_DATE_PROMPT
+
+    prompt = TODO_DATE_PROMPT.format(
+        today=today.isoformat(),
+        weekday=_WEEKDAY_NAMES[today.weekday()],
+        text=text,
+    )
+    try:
+        answer = (_ai(prompt) or "").strip()
+    except Exception as e:
+        print(f"[todo_parse] AI 解析日期失敗：{e}")
+        return None, None
+
+    if answer.upper() == "NONE":
+        return None, None
+
+    parts = [p for p in answer.split("~") if p.strip()]
+    start = _parse_iso(parts[0]) if parts else None
+    end = _parse_iso(parts[1]) if len(parts) > 1 else None
+    if not start:
+        return None, None
+    return start, end
+
+
+def parse(text, today):
+    """一句話 → {text, start, end, priority}。
+
+    規則先跑；規則認不出日期才問 AI。AI 失敗或回垃圾時 start/end 留 None，
+    內容照樣回 —— 呼叫端據此把事情記下來再跳防呆按鈕。
+    """
+    priority, rest = parse_priority(text or "")
+    start, end, rest = parse_dates(rest, today)
+
+    if start is None and rest.strip():
+        start, end = _ai_dates(rest, today)
+
+    return {
+        "text": rest.strip(),
+        "start": start,
+        "end": end,
+        "priority": priority,
+    }
+
+
+# ─────────────────────────────────────────────────────────
+# I/O 邊界：上面全是純邏輯，以下開始碰 Anthropic
+#
+# _ai 存在的唯一理由是讓測試整個換掉它 —— phrasebook.py 同一套手法。
+# ─────────────────────────────────────────────────────────
+
+AI_MODEL = "claude-haiku-4-5-20251001"
+
+
+def _ai(prompt, max_tokens=64):
+    """這是一次格式固定、零創意的抽取任務，而且它擋在使用者面前
+    （他按了 ➕ 正在等回覆），所以用最快的模型 + temperature=0：
+    同一句話每次都要得到同一個日期。"""
+    import anthropic
+    import usage_tracker
+    from humor import _env
+
+    client = anthropic.Anthropic(api_key=_env("ANTHROPIC_API_KEY"))
+    message = client.messages.create(
+        model=AI_MODEL,
+        max_tokens=max_tokens,
+        temperature=0,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    usage_tracker.track(AI_MODEL, message)
+    return message.content[0].text.strip()

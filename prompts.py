@@ -192,3 +192,16 @@ AVOID_PHRASE_BLOCK = """
 不要只是換個單字）:
 {recent}
 """
+
+
+TODO_DATE_PROMPT = """今天是 {today}（{weekday}）。
+
+使用者說了這句話，請判斷他指的截止日期：
+
+{text}
+
+只回日期，格式 YYYY-MM-DD。
+如果是一段期間，回 YYYY-MM-DD~YYYY-MM-DD。
+如果句子裡完全沒有時間資訊，只回 NONE。
+
+不要解釋，不要加任何其他文字。"""

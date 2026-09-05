@@ -200,3 +200,102 @@ def test_natural_language_urgency_is_not_a_priority():
 def test_priority_inside_a_word_is_not_matched():
     """「買P3手機殼」的 P3 是產品型號，不是優先度。"""
     assert todo_parse.parse_priority("買P3手機殼") == (None, "買P3手機殼")
+
+
+# ── parse()：組合器 + AI 補位 ─────────────────────────────
+
+def test_parse_combines_everything():
+    out = todo_parse.parse("P0 下週一交社宅資料", SAT)
+
+    assert out == {
+        "text": "交社宅資料",
+        "start": date(2026, 9, 7),
+        "end": None,
+        "priority": "P0",
+    }
+
+
+def test_parse_without_date_or_priority():
+    out = todo_parse.parse("交社宅資料", SAT)
+
+    assert out["text"] == "交社宅資料"
+    assert out["start"] is None
+    assert out["priority"] is None
+
+
+def test_rules_win_and_ai_is_never_called(monkeypatch):
+    """規則認得的說法不該花錢。每加一筆待辦就打一次 API 是不可接受的。"""
+    called = []
+    monkeypatch.setattr(todo_parse, "_ai", lambda prompt: called.append(prompt))
+
+    todo_parse.parse("明天交資料", SAT)
+
+    assert called == []
+
+
+def test_ai_fills_in_what_rules_cannot(monkeypatch):
+    """「中秋前」這種規則吃不下來的說法才呼叫 AI。"""
+    monkeypatch.setattr(todo_parse, "_ai", lambda prompt: "2026-09-25")
+
+    out = todo_parse.parse("中秋前交資料", SAT)
+
+    assert out["start"] == date(2026, 9, 25)
+
+
+def test_ai_can_return_a_range(monkeypatch):
+    monkeypatch.setattr(todo_parse, "_ai", lambda prompt: "2026-09-25~2026-09-28")
+
+    out = todo_parse.parse("中秋連假出遊", SAT)
+
+    assert out["start"] == date(2026, 9, 25)
+    assert out["end"] == date(2026, 9, 28)
+
+
+def test_ai_saying_none_means_no_date(monkeypatch):
+    monkeypatch.setattr(todo_parse, "_ai", lambda prompt: "NONE")
+
+    out = todo_parse.parse("交社宅資料", SAT)
+
+    assert out["start"] is None
+
+
+def test_ai_failure_does_not_lose_the_todo(monkeypatch):
+    """AI 掛掉時照樣回內容，讓呼叫端把事情記下來再跳防呆按鈕。
+    因為解析日期失敗就整件事不記，是待辦最不能發生的事。"""
+    def _boom(prompt):
+        raise RuntimeError("API 掛了")
+    monkeypatch.setattr(todo_parse, "_ai", _boom)
+
+    out = todo_parse.parse("中秋前交資料", SAT)
+
+    assert out["text"] == "中秋前交資料"
+    assert out["start"] is None
+
+
+def test_ai_garbage_is_ignored(monkeypatch):
+    """AI 回了不是日期的東西時當作沒解析到，不要讓它污染資料。"""
+    monkeypatch.setattr(todo_parse, "_ai", lambda prompt: "我覺得是下週吧")
+
+    out = todo_parse.parse("中秋前交資料", SAT)
+
+    assert out["start"] is None
+
+
+def test_ai_is_not_called_for_empty_text(monkeypatch):
+    called = []
+    monkeypatch.setattr(todo_parse, "_ai", lambda prompt: called.append(prompt))
+
+    todo_parse.parse("   ", SAT)
+
+    assert called == []
+
+
+def test_prompt_carries_todays_date(monkeypatch):
+    """AI 得知道今天幾號才算得出「中秋前」。"""
+    seen = []
+    monkeypatch.setattr(todo_parse, "_ai",
+                        lambda prompt: seen.append(prompt) or "NONE")
+
+    todo_parse.parse("中秋前交資料", SAT)
+
+    assert "2026-09-05" in seen[0]
