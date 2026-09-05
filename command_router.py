@@ -862,11 +862,128 @@ def _handle_finance(kind, arg):
     return None
 
 
+# 換行字元。直接寫字面量在這個專案的編輯流程裡踩過雷，
+# daily_report.py 也是同一個寫法。
+_NL = chr(10)
+
+_TODO_DUE_CHOICES = (
+    ("今天", "today"),
+    ("明天", "tomorrow"),
+    ("週五", "friday"),
+    ("下週一", "next_monday"),
+    ("不設", "none"),
+)
+
+
+def _format_due(start, end):
+    """(date, date|None) → '9/08（一）' 或 '9/01（二） → 9/10（四）'。"""
+    names = "一二三四五六日"
+
+    def _one(d):
+        return f"{d.month}/{d.day:02d}（{names[d.weekday()]}）"
+
+    return _one(start) + (f" → {_one(end)}" if end else "")
+
+
+def _record_spoken_todo(user_id, text):
+    """待命中收到的自由文字 → 記成待辦。回覆給 reply_message。
+
+    **內容先寫進 Notion，才問缺的欄位。** 順序是刻意的：使用者中途跑掉、
+    或 LINE 連線斷了，至少那件事已經記住了。先問再存的話，中斷等於
+    整件事沒記到 —— 那正是待辦最不能發生的事。
+    """
+    import personal
+    import todo_parse
+    from tz_utils import today_tpe
+
+    parsed = todo_parse.parse(text, today_tpe())
+    content = parsed["text"]
+    if not content:
+        return "沒聽到內容，取消新增。"
+
+    tid = personal.add_todo(
+        user_id, content,
+        start=parsed["start"], end=parsed["end"], priority=parsed["priority"],
+    )
+
+    lines = [f"✅ 已記下：{content}"]
+    if parsed["start"]:
+        tail = f"📅 {_format_due(parsed['start'], parsed['end'])}"
+        if parsed["priority"]:
+            tail += f"　{parsed['priority']}"
+        lines.append(tail)
+        return _NL.join(lines)
+
+    lines.append("⚠️ 還沒設截止日")
+    from flex_builder import todo_due_prompt_flex
+    # 兩個都缺時只問截止日，優先度留空。連問兩輪按鈕會讓
+    # 「按一下就好」變成「按三下」；優先度可以事後在 Notion 上改，
+    # 截止日不補則會從信裡消失 —— 後果不對等。
+    return [_NL.join(lines), todo_due_prompt_flex(tid, _TODO_DUE_CHOICES)]
+
+
+# 「解除待命，但那個指令照常跑」的哨兵。用一個獨一無二的物件而不是
+# None / False：那兩個都是合法的回覆值。
+_PENDING_CANCELLED = object()
+
+
+def _intercept_pending_todo(text, ctx, parsed):
+    """待命中的訊息處理。
+
+    回傳語意有三種：
+      None                → 不在待命，照常處理
+      _PENDING_CANCELLED  → 解除待命，但那個指令要照常執行
+      其他                → 已記成待辦，這一輪結束
+    """
+    import personal
+
+    user_id = (ctx or {}).get("user_id")
+    if not user_id or not _is_personal_chat(ctx):
+        return None
+    if not personal.is_pending_todo(user_id):
+        return None
+
+    personal.clear_pending_todo(user_id)
+
+    if parsed:
+        return _PENDING_CANCELLED
+    if not (text or "").strip():
+        return "沒聽到內容，取消新增。"
+    return _record_spoken_todo(user_id, text)
+
+
 def handle(text, ctx=None):
-    """parse + dispatch；回字串（給 reply_message 直接送）或 None。
+    """parse + dispatch；回字串 / dict / list（給 reply_message 直接送）或 None。
     ctx={'source_type': 'user'/'group'/'room', 'user_id': ..., 'group_id': ...}
-    個人指令只在 source_type=='user' 才執行。"""
+    個人指令只在 source_type=='user' 才執行。
+
+    待命攔截排在最前面：使用者按了 ➕ 之後講的話，只要不是已知指令
+    就記成待辦。已知指令則解除待命、回一句「已取消」，然後照常執行 ——
+    Rich Menu 的按鈕送的是**文字訊息**且不一定有斜線（`記一筆` 就沒有），
+    所以「以 / 開頭才解除」行不通。
+
+    攔截必須排在所有指令分派之前（否則使用者講的「待辦」「快過期」
+    會先被指令吃掉），但在 parse 之後（否則已知指令會被記成待辦）。
+    """
     parsed = parse(text)
+    intercepted = _intercept_pending_todo(text, ctx, parsed)
+
+    if intercepted is not None and intercepted is not _PENDING_CANCELLED:
+        return intercepted
+
+    result = _dispatch(text, ctx, parsed)
+
+    if intercepted is _PENDING_CANCELLED:
+        note = "已取消新增待辦。"
+        if result is None:
+            return note
+        return [note] + (result if isinstance(result, list) else [result])
+    return result
+
+
+def _dispatch(text, ctx, parsed):
+    """指令分派本體（原本的 handle）。parsed 由呼叫端傳入 ——
+    待命攔截需要先看過 parse 結果才能決定要不要解除待命。"""
     if not parsed:
         return None
 
