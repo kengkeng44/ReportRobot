@@ -331,3 +331,16 @@ def test_no_ids_at_all_means_no_todo_section(monkeypatch):
     monkeypatch.delenv("ADMIN_LINE_USER_ID", raising=False)
 
     assert daily_report._personal_user_id() is None
+
+
+# ── 每日信只放今日待辦（2026-09-06）──────────────────────
+
+def test_daily_email_uses_the_filtered_todo_list():
+    """信裡那張卡標題是「📋 今日待辦」。在此之前它顯示的是**全部**
+    未完成待辦 —— 「今日」兩個字是假的。"""
+    import inspect
+
+    src = inspect.getsource(daily_report._email_personal_report)
+
+    assert "format_today_todos" in src
+    assert "personal.format_todos(" not in src

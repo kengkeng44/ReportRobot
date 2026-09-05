@@ -188,7 +188,10 @@ def _email_personal_report(today):
         if not user_id:
             return None          # 沒設就跳過這區塊，跟 mailer 的 gate 同一套
         import personal
-        return personal.format_todos(user_id)
+        # 只放「截止日 <= 今天 或 P0」——在此之前這張卡顯示的是全部
+        # 未完成待辦，標題的「今日」兩個字是假的。
+        # LINE 打「待辦」仍然看得到全部（personal.format_todos）。
+        return personal.format_today_todos(user_id, today_tpe())
 
     def _personal_reminders():
         user_id = _personal_user_id()
