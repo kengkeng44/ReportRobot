@@ -82,12 +82,54 @@ def _weekday_date(today, qualifier, weekday):
     return candidate
 
 
+# 明確日期。**一定要有分隔符**（/ - . 月）：裸數字不視為日期，
+# 「買915號的東西」不該變成 9/15 到期。猜錯憑空長出一個截止日，
+# 比猜不到（跳防呆按鈕）糟得多。
+_MD = r"(\d{1,2})\s*(?:/|-|\.|月)\s*(\d{1,2})\s*(?:日|號)?"
+_YMD = r"(?:(\d{4})\s*(?:/|-|\.|年)\s*)?"
+_DATE_RE = re.compile(_YMD + _MD)
+_RANGE_RE = re.compile(_YMD + _MD + r"\s*(?:-|~|到|至)\s*" + _YMD + _MD)
+
+# 明確日期沒講年份時，往回容忍幾天才判定是「明年」。
+# 補登上個月的事情很常見，回到去年則幾乎不會發生。
+_PAST_TOLERANCE_DAYS = 30
+
+
+def _resolve(year, month, day, today, anchor=None):
+    """(年, 月, 日) → date。年份沒講時自己推。無效日期回 None。
+
+    anchor 有值時（區間的結束日）用它當基準：結束比開始早就滾到下一年。
+    """
+    base = anchor or today
+    for candidate_year in ([int(year)] if year else [base.year, base.year + 1]):
+        try:
+            found = date(candidate_year, int(month), int(day))
+        except ValueError:
+            return None                      # 2月30日這種
+        if year:
+            return found
+        if anchor:
+            if found >= anchor:
+                return found
+        elif found >= today - timedelta(days=_PAST_TOLERANCE_DAYS):
+            return found
+    return None
+
+
 def parse_dates(text, today):
     """text → (start, end, 去掉日期字樣的 text)。
 
     認不出日期時回 (None, None, 原 text)。
     """
     rest = text
+
+    m = _RANGE_RE.search(rest)
+    if m:
+        y1, m1, d1, y2, m2, d2 = m.groups()
+        start = _resolve(y1, m1, d1, today)
+        end = _resolve(y2, m2, d2, today, anchor=start) if start else None
+        if start and end:
+            return start, end, (rest[:m.start()] + rest[m.end():]).strip()
 
     for word, offset in _OFFSET_DAYS:
         if word in rest:
@@ -115,6 +157,13 @@ def parse_dates(text, today):
         weekday = _WEEKDAYS.get(m.group(2))
         if weekday is not None:
             found = _weekday_date(today, m.group(1), weekday)
+            return found, None, (rest[:m.start()] + rest[m.end():]).strip()
+
+
+    m = _DATE_RE.search(rest)
+    if m:
+        found = _resolve(*m.groups(), today)
+        if found:
             return found, None, (rest[:m.start()] + rest[m.end():]).strip()
 
     return None, None, rest

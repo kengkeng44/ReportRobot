@@ -108,3 +108,62 @@ def test_next_week_across_year_boundary():
 def test_weekday_token_is_removed():
     _s, _e, rest = todo_parse.parse_dates("下週一交社宅資料", SAT)
     assert rest == "交社宅資料"
+
+
+# ── 明確日期與區間 ────────────────────────────────────────
+
+def test_slash_date():
+    assert _d("9/15 交資料") == (date(2026, 9, 15), None)
+
+
+def test_chinese_date():
+    assert _d("9月15日交資料") == (date(2026, 9, 15), None)
+    assert _d("9月15號交資料") == (date(2026, 9, 15), None)
+
+
+def test_date_with_year():
+    assert _d("2027/1/5 交資料") == (date(2027, 1, 5), None)
+
+
+def test_recent_past_date_stays_in_this_year():
+    """9/05 講「9/01」是四天前，不是明年 —— 補登昨天忘了記的事很常見。"""
+    assert _d("9/1 交資料") == (date(2026, 9, 1), None)
+
+
+def test_long_past_date_rolls_to_next_year():
+    """12/20 講「1/5」指的是明年一月，不是十一個月前。
+
+    分界線是 30 天：超過就往後滾一年。任何分界線都會有錯的個案，
+    但「補登上個月」比「回到去年」常見得多。
+    """
+    assert _d("1/5 交資料", today=date(2026, 12, 20)) == (date(2027, 1, 5), None)
+
+
+def test_bare_digits_are_never_a_date():
+    """「買915號的東西」不該變成 9/15 到期。
+
+    裸數字沒有任何分隔符，猜錯的代價（憑空長出一個截止日）
+    比猜不到（跳防呆按鈕讓使用者按一下）大得多。
+    """
+    assert _d("買915號的東西") == (None, None)
+    assert _d("繳 3000 元") == (None, None)
+
+
+def test_range_with_dash():
+    assert _d("9/1-9/10 出差") == (date(2026, 9, 1), date(2026, 9, 10))
+
+
+def test_range_with_chinese_to():
+    assert _d("9/1到9/10 出差") == (date(2026, 9, 1), date(2026, 9, 10))
+    assert _d("9/1~9/10 出差") == (date(2026, 9, 1), date(2026, 9, 10))
+
+
+def test_range_across_year():
+    """12/28-1/5：結束比開始早就把結束滾到下一年。"""
+    assert _d("12/28-1/5 出差", today=date(2026, 12, 1)) == (
+        date(2026, 12, 28), date(2027, 1, 5))
+
+
+def test_range_token_is_removed():
+    _s, _e, rest = todo_parse.parse_dates("9/1-9/10 出差", SAT)
+    assert rest == "出差"
