@@ -141,6 +141,12 @@ _SCHEMAS = {
         "LocalId": {"number": {"format": "number"}},            # 對應 in-memory 編號（給 user 看）
         # 三大分類。既有 DB 會由 _ensure_properties 自動補上這欄。
         "分類": _select(("工作", "blue"), ("生活", "green"), ("我的專案", "purple")),
+        # 起訖日。Notion 原生 date property 支援 start+end，頁面上顯示成
+        # 「9月1日 → 9月10日」，排序與篩選吃同一個型別。
+        # 既有 DB 由 _ensure_properties 自動補上，現有資料一筆都不會動到。
+        "期間": {"date": {}},
+        "優先度": _select(("P0", "red"), ("P1", "orange"),
+                          ("P2", "yellow"), ("P3", "gray")),
     },
     "Reminders": {
         "Name": {"title": {}},                                  # 提醒內容
@@ -1046,27 +1052,54 @@ def normalize_todo_category(raw):
     return aliases.get(text, TODO_CATEGORY_DEFAULT)
 
 
-def todos_create(user_id, text, local_id, category=None):
+TODO_PRIORITIES = ("P0", "P1", "P2", "P3")
+
+
+def _prop_date_range(start, end):
+    """(date, date|None) → Notion date property，或 None（表示整個欄位不送）。
+
+    Notion 的 date property 不接受 start=None，硬送整筆 create 會失敗。
+    所以「沒有日期」的表示法是**不送這個欄位**，不是送一個空的。
+    """
+    if not start:
+        return None
+    return {"date": {"start": start.isoformat(),
+                     "end": end.isoformat() if end else None}}
+
+
+def todos_create(user_id, text, local_id, category=None,
+                 start=None, end=None, priority=None):
     """建立一筆待辦。回 page_id 或 None。
 
     category 未指定時歸到「生活」—— 寧可分錯也不要留空，
     留空的話 Notion 上的分類檢視會漏掉這筆。
+
+    start/end/priority 相反：沒設就**不送那個欄位**。「沒設截止日」
+    跟「設成今天」是兩件不同的事，偷偷補預設值會讓隨手記的事
+    隔天就變成逾期紅字。
     """
     db_id = get_or_create_db("Todos")
     client = _get_client()
     if not db_id or not client:
         return None
+
+    props = {
+        "Name": {"title": [{"text": {"content": text}}]},
+        "UserId": {"rich_text": [{"text": {"content": user_id}}]},
+        "Done": {"checkbox": False},
+        "LocalId": {"number": int(local_id)},
+        "分類": {"select": {"name": normalize_todo_category(category)}},
+    }
+    period = _prop_date_range(start, end)
+    if period:
+        props["期間"] = period
+    # 不在白名單內的值直接丟掉：Notion 遇到未定義的 select 值會擴充
+    # schema 而不是報錯，那種偏移完全沒有訊號（同 _SPEND_CATEGORIES）
+    if priority in TODO_PRIORITIES:
+        props["優先度"] = {"select": {"name": priority}}
+
     try:
-        page = client.pages.create(
-            parent={"database_id": db_id},
-            properties={
-                "Name": {"title": [{"text": {"content": text}}]},
-                "UserId": {"rich_text": [{"text": {"content": user_id}}]},
-                "Done": {"checkbox": False},
-                "LocalId": {"number": int(local_id)},
-                "分類": {"select": {"name": normalize_todo_category(category)}},
-            },
-        )
+        page = client.pages.create(parent={"database_id": db_id}, properties=props)
         return page["id"]
     except Exception as e:
         print(f"[notion] todos_create 失敗：{e}")
