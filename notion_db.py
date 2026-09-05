@@ -982,12 +982,16 @@ def todos_load_for_user(user_id):
             text = "".join(b.get("plain_text", "") for b in name_blocks)
             local_id = (props.get("LocalId", {}) or {}).get("number") or 0
             done = (props.get("Done", {}) or {}).get("checkbox", False)
+            start, end = _read_date_range(props, "期間")
             out.append({
                 "page_id": r["id"],
                 "local_id": int(local_id),
                 "text": text,
                 "done": bool(done),
                 "category": _read_select(props, "分類"),
+                "start": start,
+                "end": end,
+                "priority": _read_select(props, "優先度") or None,
             })
         return out
     except Exception as e:
@@ -1018,12 +1022,16 @@ def todos_load_all_users():
             name_blocks = (props.get("Name", {}) or {}).get("title", []) or []
             text = "".join(b.get("plain_text", "") for b in name_blocks)
             local_id = (props.get("LocalId", {}) or {}).get("number") or 0
+            start, end = _read_date_range(props, "期間")
             out.setdefault(user_id, []).append({
                 "page_id": r["id"],
                 "local_id": int(local_id),
                 "text": text,
                 "done": False,
                 "category": _read_select(props, "分類"),
+                "start": start,
+                "end": end,
+                "priority": _read_select(props, "優先度") or None,
             })
         return out
     except Exception as e:
@@ -1067,6 +1075,30 @@ def _prop_date_range(start, end):
                      "end": end.isoformat() if end else None}}
 
 
+def _read_date_range(props, name):
+    """Notion date property → (start, end)。兩個都是 datetime.date 或 None。
+
+    遷移前建立的資料列沒有這個欄位，所以必須容忍缺欄位 ——
+    這裡炸掉的話所有既有待辦會一起消失。
+
+    使用者在 Notion 上可能連時間一起選，存成
+    '2026-09-08T09:00:00.000+08:00'，所以取前 10 個字元。
+    """
+    from datetime import date as _date
+
+    def _one(value):
+        if not value:
+            return None
+        try:
+            y, m, d = str(value)[:10].split("-")
+            return _date(int(y), int(m), int(d))
+        except (ValueError, TypeError):
+            return None
+
+    raw = (props.get(name, {}) or {}).get("date") or {}
+    return _one(raw.get("start")), _one(raw.get("end"))
+
+
 def todos_create(user_id, text, local_id, category=None,
                  start=None, end=None, priority=None):
     """建立一筆待辦。回 page_id 或 None。
@@ -1104,6 +1136,32 @@ def todos_create(user_id, text, local_id, category=None,
     except Exception as e:
         print(f"[notion] todos_create 失敗：{e}")
         return None
+
+
+def todos_update_fields(page_id, start=None, end=None, priority=None):
+    """補上截止日或優先度。回 True/False。
+
+    只送有給的欄位 —— 補截止日時不該順手覆蓋優先度。
+    什麼都沒給就不打 API：空的 update 是一次白花的往返。
+    """
+    props = {}
+    period = _prop_date_range(start, end)
+    if period:
+        props["期間"] = period
+    if priority in TODO_PRIORITIES:
+        props["優先度"] = {"select": {"name": priority}}
+    if not props:
+        return False
+
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        client.pages.update(page_id=page_id, properties=props)
+        return True
+    except Exception as e:
+        print(f"[notion] todos_update_fields 失敗：{e}")
+        return False
 
 
 def todos_delete(page_id):

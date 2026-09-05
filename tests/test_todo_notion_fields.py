@@ -129,3 +129,121 @@ def test_existing_fields_still_sent(monkeypatch):
     assert props["LocalId"] == {"number": 7}
     assert props["Done"] == {"checkbox": False}
     assert "分類" in props
+
+
+# ── 讀回 ──────────────────────────────────────────────────
+
+class FakeDatabases:
+    def __init__(self, results):
+        self._results = results
+
+    def query(self, **kwargs):
+        return {"results": self._results}
+
+
+def _row(text="交資料", local_id=1, period=None, priority=None):
+    props = {
+        "Name": {"title": [{"plain_text": text}]},
+        "UserId": {"rich_text": [{"plain_text": "U1"}]},
+        "LocalId": {"number": local_id},
+        "Done": {"checkbox": False},
+    }
+    if period is not None:
+        props["期間"] = {"date": period}
+    if priority is not None:
+        props["優先度"] = {"select": {"name": priority}}
+    return {"id": f"page-{local_id}", "properties": props}
+
+
+def _install_query(monkeypatch, rows):
+    client = FakeClient()
+    client.databases = FakeDatabases(rows)
+    monkeypatch.setattr(notion_db, "_get_client", lambda: client)
+    monkeypatch.setattr(notion_db, "get_or_create_db", lambda name: "db-1")
+    return client
+
+
+def test_load_reads_the_date_range(monkeypatch):
+    _install_query(monkeypatch, [
+        _row(period={"start": "2026-09-01", "end": "2026-09-10"})])
+
+    row = notion_db.todos_load_for_user("U1")[0]
+
+    assert row["start"] == date(2026, 9, 1)
+    assert row["end"] == date(2026, 9, 10)
+
+
+def test_load_reads_a_single_day(monkeypatch):
+    _install_query(monkeypatch, [_row(period={"start": "2026-09-08", "end": None})])
+
+    row = notion_db.todos_load_for_user("U1")[0]
+
+    assert row["start"] == date(2026, 9, 8)
+    assert row["end"] is None
+
+
+def test_old_rows_without_the_field_still_load(monkeypatch):
+    """遷移前建立的資料列完全沒有這兩個欄位。
+    這裡炸掉的話所有既有待辦會一起消失。"""
+    _install_query(monkeypatch, [_row()])
+
+    row = notion_db.todos_load_for_user("U1")[0]
+
+    assert row["start"] is None
+    assert row["end"] is None
+    assert row["priority"] is None
+
+
+def test_load_reads_priority(monkeypatch):
+    _install_query(monkeypatch, [_row(priority="P0")])
+
+    assert notion_db.todos_load_for_user("U1")[0]["priority"] == "P0"
+
+
+def test_datetime_start_is_truncated_to_a_date(monkeypatch):
+    """使用者在 Notion 上手動選日期時可能連時間一起選，
+    存成 '2026-09-08T09:00:00.000+08:00'。"""
+    _install_query(monkeypatch,
+                   [_row(period={"start": "2026-09-08T09:00:00.000+08:00"})])
+
+    assert notion_db.todos_load_for_user("U1")[0]["start"] == date(2026, 9, 8)
+
+
+def test_garbage_date_does_not_kill_the_row(monkeypatch):
+    _install_query(monkeypatch, [_row(period={"start": "not-a-date"})])
+
+    row = notion_db.todos_load_for_user("U1")[0]
+
+    assert row["start"] is None
+    assert row["text"] == "交資料"
+
+
+# ── todos_update_fields ───────────────────────────────────
+
+def test_update_sends_the_date_range(monkeypatch):
+    client = _install(monkeypatch)
+
+    notion_db.todos_update_fields("page-1", start=date(2026, 9, 8))
+
+    page_id, kwargs = client.pages.updated[0]
+    assert page_id == "page-1"
+    assert kwargs["properties"]["期間"] == {
+        "date": {"start": "2026-09-08", "end": None}
+    }
+
+
+def test_update_sends_only_what_changed(monkeypatch):
+    """補截止日時不該順手覆蓋優先度。"""
+    client = _install(monkeypatch)
+
+    notion_db.todos_update_fields("page-1", start=date(2026, 9, 8))
+
+    assert "優先度" not in client.pages.updated[0][1]["properties"]
+
+
+def test_update_with_nothing_does_not_call_notion(monkeypatch):
+    """空的 update 是一次白花的 API 往返。"""
+    client = _install(monkeypatch)
+
+    assert notion_db.todos_update_fields("page-1") is False
+    assert client.pages.updated == []
