@@ -400,6 +400,31 @@ async def trigger_daily(request: Request, force: int = 0):
     return {"ok": True, "force_premarket": bool(force)}
 
 
+@app.post("/admin/run-personal")
+async def trigger_personal(request: Request):
+    """只寄個人信，不推群組。
+
+    /admin/run-daily 會連群組推播一起送，驗證信件內容時家人會在
+    非正常時間多收到一則今日情報。這支只跑個人版那一半 ——
+    要驗版面、圓餅圖、今日三句時用這支。
+
+    刻意不呼叫 run_daily_report：那支的第一段就是 push_message，
+    包在裡面沒辦法只跳過群組（見 tests/test_admin_personal.py）。
+    """
+    admin_token = os.environ.get("ADMIN_TOKEN", "")
+    if not admin_token:
+        raise HTTPException(status_code=503, detail="Admin trigger disabled")
+    if request.headers.get("X-Admin-Token") != admin_token:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    from daily_report import _email_personal_report
+    from tz_utils import today_tpe
+
+    today = today_tpe().strftime("%Y-%m-%d")
+    _email_personal_report(today)
+    return {"ok": True, "date": today, "group_push": False}
+
+
 @app.post("/admin/finance-sync")
 async def trigger_finance_sync(request: Request, days: int = 7):
     """手動觸發財務同步（排程是每天台灣 15:30，這個給即時驗證用）。

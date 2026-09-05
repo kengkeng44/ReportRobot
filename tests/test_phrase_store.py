@@ -333,3 +333,18 @@ def test_quote_add_refuses_empty_sentence(monkeypatch):
 
     assert notion_db.quote_add("", day=D) is False
     assert pages.created == []
+
+
+# ── 庫容量上限（2026-09-05）───────────────
+
+def test_library_ceiling_is_high_enough_to_never_truncate():
+    """撑不下時不會報錯，只會安靜地少擈 —— 那是最難查的壞法。
+
+    超過上限的那些句子永遠不會被挑到，使用者只會覺得「怎麼都是同一批」。
+    _query_all 抓到沒資料就停，所以上限拉高不會多花 API 呼叫。
+    """
+    import inspect
+
+    for fn in (notion_db.quotes_load, notion_db.phrases_load):
+        limit = inspect.signature(fn).parameters["limit"].default
+        assert limit >= 10000, fn.__name__

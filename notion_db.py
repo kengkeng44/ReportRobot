@@ -749,7 +749,7 @@ def _query_all(db_id, client, limit, **extra):
     return out
 
 
-def phrases_load(language, limit=500):
+def phrases_load(language, limit=10000):
     """撈某語言的全部句子。到期判斷交給 phrasebook.pick_due。
 
     刻意不在 Notion 端 filter 到期日:「下次出現為空」要寫成 is_empty
@@ -841,8 +841,14 @@ def phrase_add(sentence, language, meaning="", note="",
         return False
 
 
-def quotes_load(limit=500):
-    """撈全部中文金句。挑選交給 phrasebook.pick_quote。"""
+def quotes_load(limit=10000):
+    """撈全部中文金句。挑選交給 phrasebook.pick_quote。
+
+    上限 10000 是「實際上等於沒有上限」。撈不完不會報錯，只會安靜地
+    少撈 —— 超過上限的句子永遠不會被 pick_quote 看到，使用者只會覺得
+    「怎麼都是同一批」。_query_all 抓到沒資料就停，所以把上限拉高
+    不會多花 API 呼叫：360 筆仍然只跑 4 次分頁。
+    """
     db_id = get_or_create_db("金句庫")
     client = _get_client()
     if not db_id or not client:
