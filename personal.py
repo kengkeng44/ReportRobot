@@ -27,6 +27,19 @@ _TODOS_LOADED_USERS = set()  # 已從 Notion load 過的 user_id
 _REMINDERS = {}
 _REMINDER_NEXT_ID = {}
 
+# ────────────────────────────────────────
+# 待辦「待命」狀態：使用者按了 ➕，下一句話就是待辦內容
+#
+# user_id → 按下 ➕ 的時間。**不進 Notion**：壽命只有幾秒，
+# 為它多一次 API 往返不划算，Railway 重啟丟掉的代價只是重按一次。
+# ────────────────────────────────────────
+
+_PENDING_TODO = {}
+
+# 沒有逾時的話，一個忘掉的待命狀態會把使用者隔天隨口講的
+# 任何一句話變成待辦。
+PENDING_TODO_TIMEOUT_MINUTES = 10
+
 
 def _notion_enabled():
     try:
@@ -56,6 +69,9 @@ def _ensure_todos_loaded(user_id):
                     "done": False,
                     "created_at": datetime.now(),
                     "page_id": r["page_id"],
+                    "start": r.get("start"),
+                    "end": r.get("end"),
+                    "priority": r.get("priority"),
                 })
                 max_local_id = max(max_local_id, r["local_id"])
             _TODO_NEXT_ID[user_id] = max_local_id
@@ -71,7 +87,37 @@ def _ensure_todos_loaded(user_id):
 # 待辦清單
 # ════════════════════════════════════════
 
-def add_todo(user_id, text):
+def start_pending_todo(user_id):
+    """進入待命：下一句話當待辦內容。按兩次就重新計時，不報錯。"""
+    with _LOCK:
+        _PENDING_TODO[user_id] = now_tpe()
+
+
+def clear_pending_todo(user_id):
+    """離開待命。不在待命中也不會炸。"""
+    with _LOCK:
+        _PENDING_TODO.pop(user_id, None)
+
+
+def is_pending_todo(user_id):
+    """待命中且未逾時回 True。逾時的順手掃掉，不然 dict 會一直長。"""
+    with _LOCK:
+        started = _PENDING_TODO.get(user_id)
+        if not started:
+            return False
+        if now_tpe() - started > timedelta(minutes=PENDING_TODO_TIMEOUT_MINUTES):
+            _PENDING_TODO.pop(user_id, None)
+            return False
+        return True
+
+
+def add_todo(user_id, text, start=None, end=None, priority=None):
+    """新增一筆待辦，回 local id。
+
+    start/end/priority 都是選填 —— 既有的 `/待辦 加 X` 不帶它們。
+    沒給就留 None，**不補預設值**：隨手記的事被預設成今天到期，
+    隔天信裡就是一行紅字。
+    """
     _ensure_todos_loaded(user_id)
     with _LOCK:
         next_id = _TODO_NEXT_ID.get(user_id, 0) + 1
@@ -80,19 +126,48 @@ def add_todo(user_id, text):
             "id": next_id, "text": text, "done": False,
             "created_at": datetime.now(),
             "page_id": None,
+            "start": start, "end": end, "priority": priority,
         }
         _TODOS.setdefault(user_id, []).append(item)
     # Notion 寫在 lock 外（避免持鎖打網路 IO）
     if _notion_enabled():
         try:
             import notion_db
-            page_id = notion_db.todos_create(user_id, text, next_id)
+            page_id = notion_db.todos_create(
+                user_id, text, next_id,
+                start=start, end=end, priority=priority,
+            )
             if page_id:
                 with _LOCK:
                     item["page_id"] = page_id
         except Exception as e:
             print(f"[personal/todos] Notion create 失敗：{e}")
     return next_id
+
+
+def set_todo_due(user_id, todo_id, start, end=None):
+    """事後補上截止日（防呆按鈕走這裡）。找不到編號回 False。
+
+    記憶體先更新再打 Notion —— 跟 add_todo 同一套：Notion 掛掉時
+    使用者這一輪看到的東西仍然是對的。
+    """
+    _ensure_todos_loaded(user_id)
+    page_id = None
+    with _LOCK:
+        for t in _TODOS.get(user_id, []):
+            if t["id"] == todo_id:
+                t["start"], t["end"] = start, end
+                page_id = t.get("page_id")
+                break
+        else:
+            return False
+    if page_id and _notion_enabled():
+        try:
+            import notion_db
+            notion_db.todos_update_fields(page_id, start=start, end=end)
+        except Exception as e:
+            print(f"[personal/todos] Notion 補截止日失敗：{e}")
+    return True
 
 
 def list_todos(user_id):
@@ -159,6 +234,74 @@ def format_todos(user_id):
     for t in items:
         lines.append(f"  ⬜ [{t['id']}] {t['text']}")
     return "\n".join(lines)
+
+
+def _deadline(item):
+    """待辦的截止日：end 有值就用 end，沒有就用 start。
+
+    單日待辦（只講「明天交」）不需要被迫填兩個日期，所以 end 常常是
+    None；一段期間的待辦則是 end 那天才到期。
+    """
+    return item.get("end") or item.get("start")
+
+
+def todos_due_today(user_id, today):
+    """每日信要顯示的待辦：**截止日 <= 今天 或 優先度 = P0**。
+
+    兩個維度刻意不合併：截止日回答「什麼時候該做」，P0 回答「不管什麼
+    時候都得盯著」。只用日期篩，沒設日期的重要事情會消失；只用優先度篩，
+    時效性就沒了。
+
+    排序：逾期最久的最前面 → 今天到期 → P0 且沒設日期。
+    """
+    out = []
+    for t in list_todos(user_id):
+        due = _deadline(t)
+        if due and due <= today:
+            out.append(t)
+        elif t.get("priority") == "P0":
+            out.append(t)
+
+    def _key(t):
+        due = _deadline(t)
+        # 沒設日期的 P0 排最後：它沒有時效性，只是重要
+        return (0, due) if due else (1, today)
+
+    out.sort(key=_key)
+    return out
+
+
+def format_today_todos(user_id, today=None):
+    """每日信的待辦區塊。沒東西回 None（呼叫端據此整塊不放）。
+
+    刻意跟 format_todos 分開：那支給 LINE 的「待辦」指令用，要顯示全部。
+    共用一支會讓「信裡安靜」與「查詢看得到」互相打架。
+    """
+    if today is None:
+        today = now_tpe().date()
+
+    items = todos_due_today(user_id, today)
+    if not items:
+        return None
+
+    lines = []
+    for t in items:
+        due = _deadline(t)
+        priority = t.get("priority")
+        if due and due < today:
+            mark = f"⚠️ 逾期 {(today - due).days} 天"
+        elif due:
+            mark = "今天"
+        else:
+            # 沒日期的一定是 P0（否則不會被 todos_due_today 選進來）
+            mark = priority or ""
+        suffix = f"（{mark}）" if mark else ""
+        # 逾期 / 今天的行才另外標優先度；沒日期那行的 mark 已經是 P0 了
+        if priority and due:
+            suffix += f"　{priority}"
+        lines.append(f"⬜ [{t['id']}] {t['text']}{suffix}")
+
+    return chr(10).join(lines)
 
 
 # ════════════════════════════════════════

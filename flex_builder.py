@@ -79,6 +79,81 @@ def _wrap(bubble, alt):
 # 待辦清單
 # ════════════════════════════════════════
 
+_TODO_WEEKDAY_NAMES = "一二三四五六日"
+
+
+def _due_label(item):
+    """待辦的日期與優先度標籤。兩個都沒有回空字串。
+
+    既有待辦兩欄都是空的，所以每個欄位都要容忍缺值 ——
+    這裡炸掉的話清單整個打不開。
+    """
+    parts = []
+    start, end = item.get("start"), item.get("end")
+    if start:
+        label = (f"{start.month}/{start.day:02d}"
+                 f"（{_TODO_WEEKDAY_NAMES[start.weekday()]}）")
+        if end:
+            label += f" → {end.month}/{end.day:02d}"
+        parts.append(f"📅 {label}")
+    if item.get("priority"):
+        parts.append(item["priority"])
+    return "　".join(parts)
+
+
+def _add_todo_button():
+    """清單卡片底部的「➕ 加一件事」。
+
+    刻意不改 Rich Menu 加一格：那要重產選單圖 + 重跑 setup-richmenu，
+    而清單卡片上這顆已經夠用（使用者本來就是先按「待辦」看清單）。
+    """
+    return {
+        "type": "box", "layout": "vertical",
+        "paddingAll": "md", "backgroundColor": _LIGHT_BG,
+        "contents": [{
+            "type": "button",
+            "style": "primary", "color": _BROWN, "height": "sm",
+            "action": {
+                "type": "postback",
+                "label": "➕ 加一件事",
+                "data": _postback("todo_add_start"),
+                "displayText": "➕ 加一件事",
+            },
+        }],
+    }
+
+
+def todo_due_prompt_flex(todo_id, choices):
+    """「還沒設截止日」的按鈕卡。choices: ((顯示字, key), ...)。
+
+    用 postback 而不是 message 型按鈕：message 會在對話裡留下一句
+    「今天」，而且那句話會再被指令解析（甚至待命攔截）處理一次。
+    """
+    buttons = [{
+        "type": "button",
+        "style": "secondary", "height": "sm", "margin": "sm",
+        "action": {
+            "type": "postback",
+            "label": label,
+            "data": _postback("todo_set_due", id=todo_id, d=key),
+            "displayText": f"📅 {label}",
+        },
+    } for label, key in choices]
+
+    bubble = {
+        "type": "bubble", "size": "kilo",
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "sm",
+            "backgroundColor": _LIGHT_BG, "paddingAll": "lg",
+            "contents": [
+                {"type": "text", "text": "什麼時候要做？",
+                 "size": "sm", "weight": "bold", "color": _TEXT_DARK},
+            ] + buttons,
+        },
+    }
+    return _wrap(bubble, alt="選一個截止日")
+
+
 def todo_list_flex(items):
     """items: [{'id': int, 'text': str}, ...]"""
     if not items:
@@ -98,7 +173,7 @@ def todo_list_flex(items):
                      "margin": "sm"},
                 ],
             },
-            "footer": _footer_tip("新增：/待辦 加 [內容]"),
+            "footer": _add_todo_button(),
         }
         return _wrap(bubble, alt="📋 沒有待辦事項")
 
@@ -107,15 +182,23 @@ def todo_list_flex(items):
         if i > 0:
             rows.append(_separator())
         text_preview = t["text"][:40]
+        due = _due_label(t)
+        row_texts = [{
+            "type": "text", "text": f"⬜ {t['text']}",
+            "size": "sm", "color": _TEXT_DARK,
+            "wrap": True,
+        }]
+        if due:
+            row_texts.append({
+                "type": "text", "text": due,
+                "size": "xs", "color": _TEXT_LIGHT, "margin": "xs",
+            })
         rows.append({
             "type": "box", "layout": "horizontal",
             "spacing": "md", "alignItems": "center",
             "contents": [
-                {
-                    "type": "text", "text": f"⬜ {t['text']}",
-                    "size": "sm", "color": _TEXT_DARK,
-                    "wrap": True, "flex": 5,
-                },
+                {"type": "box", "layout": "vertical", "flex": 5,
+                 "contents": row_texts},
                 {
                     "type": "button",
                     "style": "primary", "color": _GREEN,
@@ -138,7 +221,7 @@ def todo_list_flex(items):
             "backgroundColor": _LIGHT_BG, "paddingAll": "lg",
             "contents": rows,
         },
-        "footer": _footer_tip("新增：/待辦 加 [內容]"),
+        "footer": _add_todo_button(),
     }
     return _wrap(bubble, alt=f"📋 待辦清單（{len(items)} 筆）")
 

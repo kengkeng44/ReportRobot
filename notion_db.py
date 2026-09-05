@@ -141,6 +141,12 @@ _SCHEMAS = {
         "LocalId": {"number": {"format": "number"}},            # 對應 in-memory 編號（給 user 看）
         # 三大分類。既有 DB 會由 _ensure_properties 自動補上這欄。
         "分類": _select(("工作", "blue"), ("生活", "green"), ("我的專案", "purple")),
+        # 起訖日。Notion 原生 date property 支援 start+end，頁面上顯示成
+        # 「9月1日 → 9月10日」，排序與篩選吃同一個型別。
+        # 既有 DB 由 _ensure_properties 自動補上，現有資料一筆都不會動到。
+        "期間": {"date": {}},
+        "優先度": _select(("P0", "red"), ("P1", "orange"),
+                          ("P2", "yellow"), ("P3", "gray")),
     },
     "Reminders": {
         "Name": {"title": {}},                                  # 提醒內容
@@ -976,12 +982,16 @@ def todos_load_for_user(user_id):
             text = "".join(b.get("plain_text", "") for b in name_blocks)
             local_id = (props.get("LocalId", {}) or {}).get("number") or 0
             done = (props.get("Done", {}) or {}).get("checkbox", False)
+            start, end = _read_date_range(props, "期間")
             out.append({
                 "page_id": r["id"],
                 "local_id": int(local_id),
                 "text": text,
                 "done": bool(done),
                 "category": _read_select(props, "分類"),
+                "start": start,
+                "end": end,
+                "priority": _read_select(props, "優先度") or None,
             })
         return out
     except Exception as e:
@@ -1012,12 +1022,16 @@ def todos_load_all_users():
             name_blocks = (props.get("Name", {}) or {}).get("title", []) or []
             text = "".join(b.get("plain_text", "") for b in name_blocks)
             local_id = (props.get("LocalId", {}) or {}).get("number") or 0
+            start, end = _read_date_range(props, "期間")
             out.setdefault(user_id, []).append({
                 "page_id": r["id"],
                 "local_id": int(local_id),
                 "text": text,
                 "done": False,
                 "category": _read_select(props, "分類"),
+                "start": start,
+                "end": end,
+                "priority": _read_select(props, "優先度") or None,
             })
         return out
     except Exception as e:
@@ -1046,31 +1060,108 @@ def normalize_todo_category(raw):
     return aliases.get(text, TODO_CATEGORY_DEFAULT)
 
 
-def todos_create(user_id, text, local_id, category=None):
+TODO_PRIORITIES = ("P0", "P1", "P2", "P3")
+
+
+def _prop_date_range(start, end):
+    """(date, date|None) → Notion date property，或 None（表示整個欄位不送）。
+
+    Notion 的 date property 不接受 start=None，硬送整筆 create 會失敗。
+    所以「沒有日期」的表示法是**不送這個欄位**，不是送一個空的。
+    """
+    if not start:
+        return None
+    return {"date": {"start": start.isoformat(),
+                     "end": end.isoformat() if end else None}}
+
+
+def _read_date_range(props, name):
+    """Notion date property → (start, end)。兩個都是 datetime.date 或 None。
+
+    遷移前建立的資料列沒有這個欄位，所以必須容忍缺欄位 ——
+    這裡炸掉的話所有既有待辦會一起消失。
+
+    使用者在 Notion 上可能連時間一起選，存成
+    '2026-09-08T09:00:00.000+08:00'，所以取前 10 個字元。
+    """
+    from datetime import date as _date
+
+    def _one(value):
+        if not value:
+            return None
+        try:
+            y, m, d = str(value)[:10].split("-")
+            return _date(int(y), int(m), int(d))
+        except (ValueError, TypeError):
+            return None
+
+    raw = (props.get(name, {}) or {}).get("date") or {}
+    return _one(raw.get("start")), _one(raw.get("end"))
+
+
+def todos_create(user_id, text, local_id, category=None,
+                 start=None, end=None, priority=None):
     """建立一筆待辦。回 page_id 或 None。
 
     category 未指定時歸到「生活」—— 寧可分錯也不要留空，
     留空的話 Notion 上的分類檢視會漏掉這筆。
+
+    start/end/priority 相反：沒設就**不送那個欄位**。「沒設截止日」
+    跟「設成今天」是兩件不同的事，偷偷補預設值會讓隨手記的事
+    隔天就變成逾期紅字。
     """
     db_id = get_or_create_db("Todos")
     client = _get_client()
     if not db_id or not client:
         return None
+
+    props = {
+        "Name": {"title": [{"text": {"content": text}}]},
+        "UserId": {"rich_text": [{"text": {"content": user_id}}]},
+        "Done": {"checkbox": False},
+        "LocalId": {"number": int(local_id)},
+        "分類": {"select": {"name": normalize_todo_category(category)}},
+    }
+    period = _prop_date_range(start, end)
+    if period:
+        props["期間"] = period
+    # 不在白名單內的值直接丟掉：Notion 遇到未定義的 select 值會擴充
+    # schema 而不是報錯，那種偏移完全沒有訊號（同 _SPEND_CATEGORIES）
+    if priority in TODO_PRIORITIES:
+        props["優先度"] = {"select": {"name": priority}}
+
     try:
-        page = client.pages.create(
-            parent={"database_id": db_id},
-            properties={
-                "Name": {"title": [{"text": {"content": text}}]},
-                "UserId": {"rich_text": [{"text": {"content": user_id}}]},
-                "Done": {"checkbox": False},
-                "LocalId": {"number": int(local_id)},
-                "分類": {"select": {"name": normalize_todo_category(category)}},
-            },
-        )
+        page = client.pages.create(parent={"database_id": db_id}, properties=props)
         return page["id"]
     except Exception as e:
         print(f"[notion] todos_create 失敗：{e}")
         return None
+
+
+def todos_update_fields(page_id, start=None, end=None, priority=None):
+    """補上截止日或優先度。回 True/False。
+
+    只送有給的欄位 —— 補截止日時不該順手覆蓋優先度。
+    什麼都沒給就不打 API：空的 update 是一次白花的往返。
+    """
+    props = {}
+    period = _prop_date_range(start, end)
+    if period:
+        props["期間"] = period
+    if priority in TODO_PRIORITIES:
+        props["優先度"] = {"select": {"name": priority}}
+    if not props:
+        return False
+
+    client = _get_client()
+    if not client:
+        return False
+    try:
+        client.pages.update(page_id=page_id, properties=props)
+        return True
+    except Exception as e:
+        print(f"[notion] todos_update_fields 失敗：{e}")
+        return False
 
 
 def todos_delete(page_id):
