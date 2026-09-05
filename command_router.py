@@ -922,6 +922,29 @@ def _record_spoken_todo(user_id, text):
     return [_NL.join(lines), todo_due_prompt_flex(tid, _TODO_DUE_CHOICES)]
 
 
+def _due_from_key(key, today):
+    """防呆按鈕的 key → date。'none' 與認不出來的 key 都回 None。
+
+    複用 todo_parse 的星期演算法，不要在這裡重寫一次 —— 那支已經有
+    跨月跨年的測試守著。
+    """
+    from datetime import timedelta
+
+    import todo_parse
+
+    if key == "today":
+        return today
+    if key == "tomorrow":
+        return today + timedelta(days=1)
+    if key == "friday":
+        # 下一個週五，今天是週五就取今天。**不能用「本週」**：
+        # 週六按下去會得到昨天，一按就逾期。
+        return todo_parse._weekday_date(today, None, 4)
+    if key == "next_monday":
+        return todo_parse._weekday_date(today, "下", 0)
+    return None
+
+
 # 「解除待命，但那個指令照常跑」的哨兵。用一個獨一無二的物件而不是
 # None / False：那兩個都是合法的回覆值。
 _PENDING_CANCELLED = object()
@@ -1161,6 +1184,32 @@ def handle_postback(data, user_id):
             return default
 
     try:
+        if action == "todo_add_start":
+            import personal
+            personal.start_pending_todo(user_id)
+            return ("請說。" + _NL + _NL
+                    + "可以一句話講完，例如：" + _NL
+                    + "　P0 下週一交社宅資料" + _NL + _NL
+                    + "（10 分鐘內沒說就自動取消）")
+
+        if action == "todo_set_due":
+            tid = _int_param("id")
+            key = (parsed.get("d") or [""])[0]
+            import personal
+            from tz_utils import today_tpe
+
+            due = _due_from_key(key, today_tpe())
+            if due is None:
+                # 「不設」不是「設成今天」——沒有截止日的待辦仍然存在，
+                # 只是不會進每日信。LINE 打「待辦」照樣看得到。
+                if key == "none":
+                    return "好，這筆不設截止日。（LINE 打「待辦」還是看得到）"
+                return "認不出那個日期選項。"
+
+            if not personal.set_todo_due(user_id, tid, due):
+                return f"找不到編號 {tid} 的待辦。"
+            return "✅ 已設截止日" + _NL + f"📅 {_format_due(due, None)}"
+
         if action == "todo_complete":
             tid = _int_param("id")
             import personal
