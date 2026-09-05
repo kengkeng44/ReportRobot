@@ -167,3 +167,36 @@ def test_range_across_year():
 def test_range_token_is_removed():
     _s, _e, rest = todo_parse.parse_dates("9/1-9/10 出差", SAT)
     assert rest == "出差"
+
+# ── 優先度 ────────────────────────────────────────────────
+
+def test_priority_token():
+    assert todo_parse.parse_priority("P0 交社宅資料") == ("P0", "交社宅資料")
+
+
+def test_priority_is_case_insensitive():
+    assert todo_parse.parse_priority("p2 買菜") == ("P2", "買菜")
+
+
+def test_priority_can_be_at_the_end():
+    assert todo_parse.parse_priority("交社宅資料 P1") == ("P1", "交社宅資料")
+
+
+def test_no_priority():
+    assert todo_parse.parse_priority("交社宅資料") == (None, "交社宅資料")
+
+
+def test_p4_is_not_a_priority():
+    """只認 P0-P3。P4 留在內容裡，不要自作主張收斂。"""
+    assert todo_parse.parse_priority("P4 交資料") == (None, "P4 交資料")
+
+
+def test_natural_language_urgency_is_not_a_priority():
+    """「很急」「重要」是主觀詞，猜錯會讓使用者對整個功能失去信任，
+    而防呆按鈕點一下就解決了。"""
+    assert todo_parse.parse_priority("很急 交社宅資料") == (None, "很急 交社宅資料")
+
+
+def test_priority_inside_a_word_is_not_matched():
+    """「買P3手機殼」的 P3 是產品型號，不是優先度。"""
+    assert todo_parse.parse_priority("買P3手機殼") == (None, "買P3手機殼")

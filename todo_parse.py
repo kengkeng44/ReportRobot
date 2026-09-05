@@ -167,3 +167,24 @@ def parse_dates(text, today):
             return found, None, (rest[:m.start()] + rest[m.end():]).strip()
 
     return None, None, rest
+
+
+PRIORITIES = ("P0", "P1", "P2", "P3")
+
+# 左右邊界自己界定，不用 ：中文字元在 re 裡算 \w，所以
+# 「買P3手機殼」的 P3 兩側  判定會跟直覺相反。
+# 這裡要求左邊是開頭或空白、右邊是結尾或空白。
+_PRIORITY_RE = re.compile(r"(?:^|\s)([Pp][0-3])(?=\s|$)")
+
+
+def parse_priority(text):
+    """text → (優先度 或 None, 去掉優先度 token 的 text)。
+
+    只認 P0-P3 這個 token。「很急」「重要」刻意不解析：那是主觀詞，
+    猜錯會讓使用者對整個功能失去信任，而防呆按鈕點一下就解決了。
+    """
+    m = _PRIORITY_RE.search(text or "")
+    if not m:
+        return None, (text or "").strip()
+    rest = (text[:m.start()] + " " + text[m.end():]).strip()
+    return m.group(1).upper(), rest
