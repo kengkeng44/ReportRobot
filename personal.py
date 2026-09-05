@@ -27,6 +27,19 @@ _TODOS_LOADED_USERS = set()  # 已從 Notion load 過的 user_id
 _REMINDERS = {}
 _REMINDER_NEXT_ID = {}
 
+# ────────────────────────────────────────
+# 待辦「待命」狀態：使用者按了 ➕，下一句話就是待辦內容
+#
+# user_id → 按下 ➕ 的時間。**不進 Notion**：壽命只有幾秒，
+# 為它多一次 API 往返不划算，Railway 重啟丟掉的代價只是重按一次。
+# ────────────────────────────────────────
+
+_PENDING_TODO = {}
+
+# 沒有逾時的話，一個忘掉的待命狀態會把使用者隔天隨口講的
+# 任何一句話變成待辦。
+PENDING_TODO_TIMEOUT_MINUTES = 10
+
 
 def _notion_enabled():
     try:
@@ -56,6 +69,9 @@ def _ensure_todos_loaded(user_id):
                     "done": False,
                     "created_at": datetime.now(),
                     "page_id": r["page_id"],
+                    "start": r.get("start"),
+                    "end": r.get("end"),
+                    "priority": r.get("priority"),
                 })
                 max_local_id = max(max_local_id, r["local_id"])
             _TODO_NEXT_ID[user_id] = max_local_id
@@ -71,7 +87,37 @@ def _ensure_todos_loaded(user_id):
 # 待辦清單
 # ════════════════════════════════════════
 
-def add_todo(user_id, text):
+def start_pending_todo(user_id):
+    """進入待命：下一句話當待辦內容。按兩次就重新計時，不報錯。"""
+    with _LOCK:
+        _PENDING_TODO[user_id] = now_tpe()
+
+
+def clear_pending_todo(user_id):
+    """離開待命。不在待命中也不會炸。"""
+    with _LOCK:
+        _PENDING_TODO.pop(user_id, None)
+
+
+def is_pending_todo(user_id):
+    """待命中且未逾時回 True。逾時的順手掃掉，不然 dict 會一直長。"""
+    with _LOCK:
+        started = _PENDING_TODO.get(user_id)
+        if not started:
+            return False
+        if now_tpe() - started > timedelta(minutes=PENDING_TODO_TIMEOUT_MINUTES):
+            _PENDING_TODO.pop(user_id, None)
+            return False
+        return True
+
+
+def add_todo(user_id, text, start=None, end=None, priority=None):
+    """新增一筆待辦，回 local id。
+
+    start/end/priority 都是選填 —— 既有的 `/待辦 加 X` 不帶它們。
+    沒給就留 None，**不補預設值**：隨手記的事被預設成今天到期，
+    隔天信裡就是一行紅字。
+    """
     _ensure_todos_loaded(user_id)
     with _LOCK:
         next_id = _TODO_NEXT_ID.get(user_id, 0) + 1
@@ -80,19 +126,48 @@ def add_todo(user_id, text):
             "id": next_id, "text": text, "done": False,
             "created_at": datetime.now(),
             "page_id": None,
+            "start": start, "end": end, "priority": priority,
         }
         _TODOS.setdefault(user_id, []).append(item)
     # Notion 寫在 lock 外（避免持鎖打網路 IO）
     if _notion_enabled():
         try:
             import notion_db
-            page_id = notion_db.todos_create(user_id, text, next_id)
+            page_id = notion_db.todos_create(
+                user_id, text, next_id,
+                start=start, end=end, priority=priority,
+            )
             if page_id:
                 with _LOCK:
                     item["page_id"] = page_id
         except Exception as e:
             print(f"[personal/todos] Notion create 失敗：{e}")
     return next_id
+
+
+def set_todo_due(user_id, todo_id, start, end=None):
+    """事後補上截止日（防呆按鈕走這裡）。找不到編號回 False。
+
+    記憶體先更新再打 Notion —— 跟 add_todo 同一套：Notion 掛掉時
+    使用者這一輪看到的東西仍然是對的。
+    """
+    _ensure_todos_loaded(user_id)
+    page_id = None
+    with _LOCK:
+        for t in _TODOS.get(user_id, []):
+            if t["id"] == todo_id:
+                t["start"], t["end"] = start, end
+                page_id = t.get("page_id")
+                break
+        else:
+            return False
+    if page_id and _notion_enabled():
+        try:
+            import notion_db
+            notion_db.todos_update_fields(page_id, start=start, end=end)
+        except Exception as e:
+            print(f"[personal/todos] Notion 補截止日失敗：{e}")
+    return True
 
 
 def list_todos(user_id):
