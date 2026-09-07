@@ -520,6 +520,24 @@ def _is_postback_owner(user_id):
     return (not admin_id) or user_id == admin_id
 
 
+# 子命令關鍵字。第一個詞落在這裡但整串沒被前面的分支接走，
+# 就是打錯了 —— 不要把它記成一件待辦。
+_TODO_SUBCOMMANDS = {
+    "加", "新增", "add", "完成", "做完", "done",
+    "刪", "刪除", "del", "remove", "清空", "全清", "clear",
+}
+
+
+TODO_USAGE = (
+    "用法：" + chr(10)
+    + "　待辦 P0 下週一交社宅資料　新增（可帶日期與 P0-P3）" + chr(10)
+    + "　/待辦　　　　只列 P0" + chr(10)
+    + "　/待辦 全部　　完整清單" + chr(10)
+    + "　/待辦 完成 3　完成（自動移除）" + chr(10)
+    + "　/待辦 刪 3　　刪除"
+)
+
+
 def _handle_todo_subcmd(user_id, body):
     """處理 /待辦 加|完成|刪|清完成 子命令；用 regex 支援「加X」黏在一起。"""
     import personal
@@ -530,9 +548,9 @@ def _handle_todo_subcmd(user_id, body):
     if m:
         item = m.group(1).strip()
         if not item:
-            return "用法：/待辦 加 [內容]"
-        tid = personal.add_todo(user_id, item)
-        return f"✅ 已新增待辦 [{tid}] {item}"
+            return TODO_USAGE
+        # 走完整解析，跟預填鍵盤同一條路 —— 兩種寫法得到同樣的結果
+        return _record_spoken_todo(user_id, item)
 
     # 完成（= 直接刪除，不留勾在清單裡）
     m = re.match(r"^(?:完成|做完|done)\s*(\d+)$", body, re.IGNORECASE)
@@ -557,9 +575,23 @@ def _handle_todo_subcmd(user_id, body):
             personal.delete_todo(user_id, t["id"])
         return f"🧹 已清空 {len(items)} 筆待辦"
 
-    # 不認得 → 列清單卡片
-    from flex_builder import todo_list_flex
-    return todo_list_flex(personal.list_todos(user_id))
+    # 全部待辦（Rich Menu 的「全部待辦」格送這個）
+    if body in ("全部", "所有", "all"):
+        from flex_builder import todo_list_flex
+        return todo_list_flex(personal.list_todos(user_id))
+
+    # 打錯的子命令不該變成一件待辦。「待辦 完成 abc」是手滑，
+    # 不是一件叫「完成 abc」的事。比對第一個詞而不是用 regex 詞界：
+    # 詞界符號在中文旁邊的行為跟直覺相反（中文字元也算文字字元）。
+    words = body.split()
+    if words and words[0].lower() in _TODO_SUBCOMMANDS:
+        return TODO_USAGE
+
+    # 其餘一律當成新待辦的內容 —— Rich Menu 的「加 P0」會預填
+    # 「待辦 P0 」，使用者補完內容送出後就走到這裡。
+    if not body:
+        return TODO_USAGE
+    return _record_spoken_todo(user_id, body)
 
 
 def _handle_preview(user_id):
@@ -1115,7 +1147,10 @@ def _dispatch(text, ctx, parsed):
         if kind == "todo_list":
             import personal
             from flex_builder import todo_list_flex
-            return todo_list_flex(personal.list_todos(ctx["user_id"]))
+            # 只列 P0（使用者 2026-09-07 指定）。其餘走「全部待辦」，
+            # 清單卡片底部也放了那顆按鈕。
+            return todo_list_flex(personal.todos_important(ctx["user_id"]),
+                                  only_important=True)
 
         if kind == "todo":
             return _handle_todo_subcmd(ctx["user_id"], arg)

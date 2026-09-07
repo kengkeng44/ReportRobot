@@ -58,7 +58,7 @@ MENUS = {
             ("財務", "FINANCE", "#A0826D", ("switch", "finance")),
             ("煮飯", "KITCHEN", "#88B07A", ("switch", "kitchen")),
             ("投資", "INVEST",  "#D9534F", ("switch", "invest")),
-            ("待辦", "TODO",    "#5B8DA6", ("message", "/待辦")),
+            ("待辦", "TODO",    "#5B8DA6", ("switch", "todo")),
             ("今日", "TODAY",   "#F0AD4E", ("message", "/預覽")),
             ("更多", "MORE",    "#8A7A6E", ("switch", "more")),
         ],
@@ -101,6 +101,25 @@ MENUS = {
             ("比較",   "COMPARE",   "#E0645F", ("prompt",  "/比較 ")),
             ("盤前",   "PREMARKET", "#B33F3B", ("message", "/盤前")),  # → premarket
             ("大盤",   "MARKET",    "#EC7370", ("message", "/大盤")),  # → markets（免費）
+            _BACK,
+        ],
+    },
+    "todo": {
+        "name": "全能大管家 待辦",
+        "chat_bar": "待辦",
+        "cells": [
+            # prompt 開鍵盤並預填「待辦 P0 」，使用者補完內容才送出。
+            # 比 postback 待命少一步，而且沒有隱藏狀態 —— 看得到鍵盤裡
+            # 填了什麼，不會發生「按了 ➕ 然後忘記自己在待命中」。
+            ("加 P0",    "ADD P0", "#4A7A92", ("prompt",  "待辦 P0 ")),
+            # 不帶優先度 = 一般事項。P1/P2/P3 在系統裡行為完全一樣
+            # （只有 P0 會被每日信抓出來），各佔一格是浪費版面。
+            ("加待辦",   "ADD",    "#5B8DA6", ("prompt",  "待辦 ")),
+            ("重要清單", "P0",     "#6B9CB5", ("message", "/待辦")),
+            ("全部待辦", "ALL",    "#7DAEC4", ("message", "/待辦 全部")),
+            # 提醒跟待辦是同一類事，放在一起比埋在「更多」裡好找。
+            # 「更多」那格刻意留著 —— 兩個入口不衝突，也不花任何成本。
+            ("提醒",     "REMIND", "#3E6A80", ("message", "/提醒")),
             _BACK,
         ],
     },

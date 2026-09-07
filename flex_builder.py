@@ -154,18 +154,47 @@ def todo_due_prompt_flex(todo_id, choices):
     return _wrap(bubble, alt="選一個截止日")
 
 
-def todo_list_flex(items):
-    """items: [{'id': int, 'text': str}, ...]"""
+def _see_all_button():
+    """「看全部」。只有 P0 清單需要它 —— 非 P0 的待辦在信裡看不到，
+    清單再濾掉就完全消失了。"""
+    return {
+        "type": "button",
+        "style": "secondary", "height": "sm", "margin": "sm",
+        "action": {
+            "type": "message",
+            "label": "看全部待辦",
+            "text": "/待辦 全部",
+        },
+    }
+
+
+def _todo_footer(only_important):
+    box = _add_todo_button()
+    if only_important:
+        box["contents"].append(_see_all_button())
+    return box
+
+
+def todo_list_flex(items, only_important=False):
+    """items: [{'id': int, 'text': str}, ...]
+
+    only_important=True 表示這是「只列 P0」的檢視：空狀態的文案不同
+    （說「沒有重要待辦」而不是「沒有待辦事項」—— 你可能有十筆普通的），
+    而且底部多一顆「看全部」。
+    """
     if not items:
         bubble = {
             "type": "bubble", "size": "mega",
-            "header": _header("📋 待辦清單", "全部清空"),
+            "header": _header("📋 待辦清單",
+                              "重要的都清完了" if only_important else "全部清空"),
             "body": {
                 "type": "box", "layout": "vertical", "spacing": "md",
                 "backgroundColor": _LIGHT_BG, "paddingAll": "xl",
                 "contents": [
                     {"type": "text", "text": "🎉", "size": "3xl", "align": "center"},
-                    {"type": "text", "text": "目前沒有待辦事項",
+                    {"type": "text",
+                     "text": ("沒有重要待辦" if only_important
+                              else "目前沒有待辦事項"),
                      "size": "md", "align": "center", "color": _TEXT_DARK,
                      "weight": "bold", "margin": "md"},
                     {"type": "text", "text": "辛苦了！",
@@ -173,9 +202,10 @@ def todo_list_flex(items):
                      "margin": "sm"},
                 ],
             },
-            "footer": _add_todo_button(),
+            "footer": _todo_footer(only_important),
         }
-        return _wrap(bubble, alt="📋 沒有待辦事項")
+        return _wrap(bubble, alt=("📋 沒有重要待辦" if only_important
+                                  else "📋 沒有待辦事項"))
 
     rows = []
     for i, t in enumerate(items):
@@ -215,15 +245,18 @@ def todo_list_flex(items):
 
     bubble = {
         "type": "bubble", "size": "mega",
-        "header": _header("📋 待辦清單", f"共 {len(items)} 筆待完成"),
+        "header": _header("📋 待辦清單",
+                          f"重要 {len(items)} 筆" if only_important
+                          else f"共 {len(items)} 筆待完成"),
         "body": {
             "type": "box", "layout": "vertical", "spacing": "sm",
             "backgroundColor": _LIGHT_BG, "paddingAll": "lg",
             "contents": rows,
         },
-        "footer": _add_todo_button(),
+        "footer": _todo_footer(only_important),
     }
-    return _wrap(bubble, alt=f"📋 待辦清單（{len(items)} 筆）")
+    return _wrap(bubble, alt=(f"📋 重要待辦（{len(items)} 筆）" if only_important
+                              else f"📋 待辦清單（{len(items)} 筆）"))
 
 
 # ════════════════════════════════════════

@@ -236,6 +236,16 @@ def format_todos(user_id):
     return "\n".join(lines)
 
 
+def todos_important(user_id):
+    """只有 P0 的待辦。LINE 的「待辦」清單用這支。
+
+    2026-09-07 使用者要求清單只列 P0。非 P0 的仍然存在，走
+    「全部待辦」看得到 —— 清單卡片底部也放了那顆按鈕，
+    否則它們在 LINE 上就完全消失了（信裡本來就看不到）。
+    """
+    return [t for t in list_todos(user_id) if t.get("priority") == "P0"]
+
+
 def _deadline(item):
     """待辦的截止日：end 有值就用 end，沒有就用 start。
 
