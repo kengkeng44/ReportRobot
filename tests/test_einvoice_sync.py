@@ -245,3 +245,44 @@ def test_missing_headers_do_not_crash():
 
     assert len(rows) == 1
     assert mails[0]["from"] == ""
+
+
+# ── 查詢收窄（2026-09-07 收到第一封真實信件後）──────────────
+#
+# 實際寄件人：einvoice@einvoice.nat.gov.tw
+# 實際主旨：財政部電子發票整合服務平台[手機條碼]-消費發票彙整通知，
+#           手機條碼: /EK***VW(每月)(E-invoice Platform of Ministry of Finance…)
+
+def test_query_pins_the_real_sender():
+    """收窄前是「寬鬆猜」——每次都要把一堆無關的信抓下來拆附件。
+
+    現在寄件人確定了，就該把它釘死：省下無謂的下載，也不會誤抓到
+    別人轉寄的同名主旨。
+    """
+    assert "from:einvoice@einvoice.nat.gov.tw" in einvoice_sync.QUERY
+
+
+def test_query_keeps_the_proven_subject_keyword():
+    """主旨那段是實際命中過的，不要順手改掉。
+
+    真實主旨帶 [手機條碼] 前綴與英文對照，寫死全文會在財政部
+    改版時整批漏掉。
+    """
+    assert "消費發票彙整通知" in einvoice_sync.QUERY
+    assert "has:attachment" in einvoice_sync.QUERY
+
+
+# ── 一次性回報已功成身退 ────────────────────────────────────
+
+def test_sync_no_longer_pushes_an_identity_report():
+    """那則通知的用途是「跟使用者要寄件人與主旨」，已經拿到了。
+
+    留著會每個月誤報一次：彙整通知每月一封，新的一封 added>0
+    就會再推一則叫「首次命中」、而且類型標成 Error 的訊息。
+    """
+    import inspect
+
+    src = inspect.getsource(einvoice_sync)
+
+    assert "_report_mail_identity" not in src
+    assert "首次命中" not in src
