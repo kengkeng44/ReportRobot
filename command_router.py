@@ -873,8 +873,10 @@ def _handle_finance(kind, arg):
     if kind == "fin_spending":
         from tz_utils import today_tpe
         month = today_tpe().strftime("%Y-%m")
+        # 用月份查而不是「最近 200 筆」：後者只在「200 大於那個月的
+        # 筆數」時碰巧正確，而三餐補記上線後那個前提會失效。
         return finance_report.format_monthly_spending(
-            notion_db.transactions_load(), month)
+            notion_db.transactions_load_month(month), month)
 
     if kind == "fin_recent":
         return finance_report.format_recent(notion_db.transactions_load())

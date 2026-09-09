@@ -204,10 +204,11 @@ def _email_personal_report(today):
         """圓餅圖 + 摘要文字。當月沒有 TWD 支出時回 None。"""
         import notion_db
         import spending_chart
-        txns = notion_db.transactions_load(limit=400)
-        path, summary = spending_chart.build_pie(
-            txns, today_tpe().strftime("%Y-%m")
-        )
+        month = today_tpe().strftime("%Y-%m")
+        # 同 /本月支出：圓餅圖畫的是整個月，用筆數上限去逼近它，
+        # 會在某個月特別勤快記帳時默默少畫一塊。
+        txns = notion_db.transactions_load_month(month)
+        path, summary = spending_chart.build_pie(txns, month)
         return (path, summary) if path else None
 
     def _stock_moves():

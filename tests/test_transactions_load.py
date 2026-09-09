@@ -196,3 +196,163 @@ def test_old_rows_without_split_columns_default_to_personal(monkeypatch):
 
     assert row["split_type"] == "個人"
     assert row["total"] == 361
+
+
+# ── since：按日期查，不要按筆數截斷 ──────────────────────
+
+def _capture_queries(monkeypatch, results=None):
+    """把 Notion client 換成假的，回傳收到的 query kwargs 清單。"""
+    import notion_db
+
+    calls = []
+
+    class _FakeDatabases:
+        def query(self, **kwargs):
+            calls.append(kwargs)
+            return {"results": results or [], "has_more": False}
+
+    class _FakeClient:
+        databases = _FakeDatabases()
+
+    monkeypatch.setattr(notion_db, "get_or_create_db", lambda name: "db1")
+    monkeypatch.setattr(notion_db, "_get_client", lambda: _FakeClient())
+    return calls
+
+
+def test_since_sends_a_date_filter(monkeypatch):
+    """月報要的是「完整的一個月」。用「最近 200 筆」去逼近它，
+    在一個月的筆數逼近上限時會靜靜地少算。"""
+    import notion_db
+
+    calls = _capture_queries(monkeypatch)
+    notion_db.transactions_load(since="2026-09-01")
+
+    assert calls[0]["filter"] == {
+        "property": "日期",
+        "date": {"on_or_after": "2026-09-01"},
+    }
+
+
+def test_no_since_sends_no_filter(monkeypatch):
+    """沒給 since 就維持既有行為 —— 六處呼叫端都還在用預設值。"""
+    import notion_db
+
+    calls = _capture_queries(monkeypatch)
+    notion_db.transactions_load()
+
+    assert "filter" not in calls[0]
+
+
+def test_since_still_respects_limit(monkeypatch):
+    """limit 仍然是安全閥：日期篩過頭（例如 since 給了 2020）也不會
+    把整個資料庫拖下來。"""
+    import notion_db
+
+    calls = _capture_queries(monkeypatch)
+    notion_db.transactions_load(limit=50, since="2026-09-01")
+
+    assert calls[0]["page_size"] == 50
+
+
+def test_since_paginates(monkeypatch):
+    """一個月超過 100 筆時要續撈 —— Notion 單頁上限就是 100。"""
+    import notion_db
+
+    page = {"properties": {
+        "日期": {"date": {"start": "2026-09-08"}},
+        "金額": {"number": 60},
+    }}
+
+    calls = []
+
+    class _FakeDatabases:
+        def query(self, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                return {"results": [page] * 100, "has_more": True,
+                        "next_cursor": "c2"}
+            return {"results": [page] * 20, "has_more": False}
+
+    class _FakeClient:
+        databases = _FakeDatabases()
+
+    monkeypatch.setattr(notion_db, "get_or_create_db", lambda name: "db1")
+    monkeypatch.setattr(notion_db, "_get_client", lambda: _FakeClient())
+
+    rows = notion_db.transactions_load(limit=500, since="2026-09-01")
+
+    assert len(rows) == 120
+    assert calls[1]["start_cursor"] == "c2"
+    # 第二頁也要帶著同一個篩選條件，否則會把更早的資料混進來
+    assert calls[1]["filter"] == calls[0]["filter"]
+
+
+# ── until 與 transactions_load_month ────────────────────
+
+def test_until_sends_an_on_or_before_filter(monkeypatch):
+    import notion_db
+
+    calls = _capture_queries(monkeypatch)
+    notion_db.transactions_load(until="2026-09-30")
+
+    assert calls[0]["filter"] == {
+        "property": "日期",
+        "date": {"on_or_before": "2026-09-30"},
+    }
+
+
+def test_both_bounds_are_combined_with_and(monkeypatch):
+    import notion_db
+
+    calls = _capture_queries(monkeypatch)
+    notion_db.transactions_load(since="2026-09-01", until="2026-09-30")
+
+    assert calls[0]["filter"] == {"and": [
+        {"property": "日期", "date": {"on_or_after": "2026-09-01"}},
+        {"property": "日期", "date": {"on_or_before": "2026-09-30"}},
+    ]}
+
+
+def test_load_month_clamps_both_ends(monkeypatch):
+    """查上個月時只給起點是不夠的：資料新到舊排序，上個月排在後面，
+    limit 會先被這個月的新資料填滿，於是上個月看起來沒花多少錢。"""
+    import notion_db
+
+    calls = _capture_queries(monkeypatch)
+    notion_db.transactions_load_month("2026-09")
+
+    assert calls[0]["filter"] == {"and": [
+        {"property": "日期", "date": {"on_or_after": "2026-09-01"}},
+        {"property": "日期", "date": {"on_or_before": "2026-09-30"}},
+    ]}
+
+
+def test_load_month_knows_month_lengths(monkeypatch):
+    """2 月有 28 天，閏年 29 天。寫死 31 會讓篩選條件多包一天，
+    那一天剛好是下個月 1 號的消費。"""
+    import notion_db
+
+    calls = _capture_queries(monkeypatch)
+    notion_db.transactions_load_month("2026-02")
+    assert calls[0]["filter"]["and"][1]["date"]["on_or_before"] == "2026-02-28"
+
+    calls = _capture_queries(monkeypatch)
+    notion_db.transactions_load_month("2028-02")
+    assert calls[0]["filter"]["and"][1]["date"]["on_or_before"] == "2028-02-29"
+
+    calls = _capture_queries(monkeypatch)
+    notion_db.transactions_load_month("2026-12")
+    assert calls[0]["filter"]["and"][1]["date"]["on_or_before"] == "2026-12-31"
+
+
+def test_load_month_uses_a_generous_limit(monkeypatch):
+    """一個月的筆數會隨著記帳變勤快而長。這支函式的用途全都是
+    「這個月總共花多少」，少一筆就是錯的。"""
+    import notion_db
+
+    calls = _capture_queries(monkeypatch)
+    notion_db.transactions_load_month("2026-09")
+
+    assert calls[0]["page_size"] == 100      # 單頁上限
+    # limit 夠大才不會在第二頁停下來
+    assert notion_db.transactions_load_month.__defaults__[0] >= 1000

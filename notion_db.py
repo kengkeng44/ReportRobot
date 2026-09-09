@@ -16,6 +16,7 @@ Notion 持久化基礎設施。
   否則 API 會回 object_not_found / forbidden。
 """
 
+import calendar
 import os
 import threading
 
@@ -1484,12 +1485,24 @@ def starting_holdings_load():
     return out
 
 
-def transactions_load(limit=200):
+def transactions_load(limit=200, since=None, until=None):
     """撈交易明細（新到舊）。回 list of dict，欄位名對齊 finance_report。
 
     要真的撈到 limit 筆就必須分頁：Notion 單頁上限是 100，超過得用
     next_cursor 續撈。原本只查一次就回，limit 傳 200 也只拿得到 100 筆 ——
     而且不會報錯，本月支出只是靜靜變小，看起來就像那個月比較省。
+
+    since（ISO 日期字串）讓 Notion 幫忙篩，而不是撈一堆回來在 Python
+    端丟掉。「這個月花多少」問的是一段期間，用「最近 N 筆」去逼近它
+    只在「N 大於那個月的筆數」時才碰巧正確 —— 而那個前提會隨著記帳
+    變勤快而失效，失效時不報錯，只是金額變小。
+
+    until（ISO 日期字串）是另一端。查「上個月」時非有不可：資料是
+    新到舊排序，上個月排在後面，只給 since 的話 limit 會在撈到它之前
+    就把新資料填滿 —— 於是上個月看起來沒花多少錢。
+
+    limit 在有 since 時仍然是安全閥：since 給了很早的日期也不會把整個
+    資料庫拖下來。
     """
     db_id = get_or_create_db("交易明細")
     client = _get_client()
@@ -1504,6 +1517,19 @@ def transactions_load(limit=200):
                 "sorts": [{"property": "日期", "direction": "descending"}],
                 "page_size": min(limit - len(out), 100),
             }
+            # 篩選條件每一頁都要重新帶上 —— 少帶的話第二頁會把更早的
+            # 資料混進來，而且看起來只是「那個月比較多筆」。
+            bounds = []
+            if since:
+                bounds.append({"property": "日期",
+                               "date": {"on_or_after": since}})
+            if until:
+                bounds.append({"property": "日期",
+                               "date": {"on_or_before": until}})
+            if len(bounds) == 1:
+                kwargs["filter"] = bounds[0]
+            elif bounds:
+                kwargs["filter"] = {"and": bounds}
             if cursor:
                 kwargs["start_cursor"] = cursor
             res = client.databases.query(**kwargs)
@@ -1542,6 +1568,21 @@ def transactions_load(limit=200):
         print(f"[notion] transactions_load 失敗（已取得 {len(out)} 筆）：{e}")
         return out
 
+
+def transactions_load_month(month, limit=1000):
+    """撈某一個月的交易。month 格式 YYYY-MM。
+
+    兩端都夾住，不是只給起點：資料新到舊排序，查上個月時只給起點的話
+    limit 會先被這個月的新資料填滿，上個月於是看起來沒花多少錢 ——
+    不報錯，只是數字變小。
+
+    limit 預設 1000 而不是 200：一個月的筆數會隨著記帳變勤快而長，
+    而這支函式的用途全都是「這個月總共花多少」，少一筆就是錯的。
+    """
+    last_day = calendar.monthrange(int(month[:4]), int(month[5:7]))[1]
+    return transactions_load(limit=limit,
+                             since=f"{month}-01",
+                             until=f"{month}-{last_day:02d}")
 
 def card_statements_load():
     db_id = get_or_create_db("信用卡帳單")
