@@ -112,7 +112,7 @@ git -C C:/Users/acer/projects/ReportRobot checkout -b feat/meal-tracking-reminde
 def test_transaction_schema_has_time_and_meal():
     """時間與餐別要在 schema 裡，_ensure_properties 才會補到既有 DB 上。"""
     import notion_db
-    props = notion_db.DB_SCHEMAS["交易明細"]
+    props = notion_db._SCHEMAS["交易明細"]
     assert "時間" in props
     assert "餐別" in props
     names = [o["name"] for o in props["餐別"]["select"]["options"]]
