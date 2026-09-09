@@ -1328,37 +1328,59 @@ def pantry_add(item):
         return None
 
 
-def pantry_load(status="在庫"):
-    """載入庫存。回 list of dict {page_id, name, qty, unit, days_left, category}。"""
+def pantry_load(status="在庫", limit=1000):
+    """載入庫存。回 list of dict {page_id, name, qty, unit, days_left, category}。
+
+    必須分頁：Notion 單頁上限是 100，而在庫已經超過 1,100 筆（載具發票
+    每次同步都會新增，沒人按「已用掉」的就一直留著）。原本只查一次就回，
+    等於從 8% 的樣本裡挑「快過期」——不會報錯，庫存只是靜靜變小。
+
+    這跟 transactions_load 當初被修掉的是同一個 bug。修在一處、另一處
+    照舊，正是它能活這麼久的原因。
+
+    limit 是安全閥：庫存長到上萬筆時不該把整個資料庫拉進記憶體。
+    """
     db_id = get_or_create_db("食材庫存")
     client = _get_client()
     if not db_id or not client:
         return []
+    out = []
+    cursor = None
     try:
-        res = client.databases.query(
-            database_id=db_id,
-            filter={"property": "狀態", "select": {"equals": status}},
-            page_size=100,
-        )
-        out = []
-        for r in res.get("results", []):
-            props = r.get("properties", {}) or {}
-            out.append({
-                "page_id": r["id"],
-                "name": _read_title(props, "名稱"),
-                "qty": _read_number(props, "數量"),
-                "unit": _read_select(props, "單位"),
-                "category": _read_select(props, "分類"),
-                "grams": _read_number(props, "重量克"),
-                "days_left": _read_formula_number(props, "剩餘天數"),
-                # 匯入腳本靠 (名稱, 購買日) 去重 —— 少了這個,重跑會寫出兩份
-                "bought": _read_date(props, "購買日"),
-                "source": _read_select(props, "來源"),
-            })
+        while len(out) < limit:
+            kwargs = {
+                "database_id": db_id,
+                # 篩選條件每一頁都要帶 —— 少帶的話第二頁會把「用完」的混進來
+                "filter": {"property": "狀態", "select": {"equals": status}},
+                "page_size": min(limit - len(out), 100),
+            }
+            if cursor:
+                kwargs["start_cursor"] = cursor
+            res = client.databases.query(**kwargs)
+            for r in res.get("results", []):
+                props = r.get("properties", {}) or {}
+                out.append({
+                    "page_id": r["id"],
+                    "name": _read_title(props, "名稱"),
+                    "qty": _read_number(props, "數量"),
+                    "unit": _read_select(props, "單位"),
+                    "category": _read_select(props, "分類"),
+                    "grams": _read_number(props, "重量克"),
+                    "days_left": _read_formula_number(props, "剩餘天數"),
+                    # 匯入腳本靠 (名稱, 購買日) 去重 —— 少了這個,重跑會寫出兩份
+                    "bought": _read_date(props, "購買日"),
+                    "source": _read_select(props, "來源"),
+                })
+            if not res.get("has_more"):
+                break
+            cursor = res.get("next_cursor")
+            if not cursor:
+                break
         return out
     except Exception as e:
-        print(f"[notion] pantry_load 失敗：{e}")
-        return []
+        # 已經撈到的先回去，總比整個變空好
+        print(f"[notion] pantry_load 失敗（已取得 {len(out)} 筆）：{e}")
+        return out
 
 
 # ─────────────────────────────────────────────────────────

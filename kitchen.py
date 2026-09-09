@@ -448,10 +448,25 @@ def format_added(added, unknown):
     return "\n".join(lines)
 
 
-def expiring_soon(pantry, threshold_days=3):
-    """挑出 days_left <= threshold 的食材，最急的排前面（含已過期的負值）。"""
+# 過期超過這麼多天就不再提醒。不是「不重要」，是**已經不可行動**：
+# 三週前的絞肉不會因為今天看到它而被吃掉，只會把明天要壞的那兩樣
+# 擠出畫面。真正該做的是去 Notion 標「用完」，而那不是提醒的工作。
+STALE_DAYS = 14
+
+
+def expiring_soon(pantry, threshold_days=3, stale_days=STALE_DAYS):
+    """挑出快到期的食材，最急的排前面。含已過期的，但不含過期太久的。
+
+    下限（stale_days）存在的理由：載具發票每次同步都會新增庫存，而
+    沒人會回頭按「已用掉」，於是 7 月買的飯糰會永遠躺在清單上。實測
+    2026-09-10 時 expiring_soon 回 64 筆，**全部都已經過期**，其中 47 筆
+    過期超過兩週，而真正 0~3 天內到期的是 0 筆 —— 這個功能等於全是噪音。
+
+    邊界含兩端：剛好 -14 天的仍然列出。邊界上少列一樣東西，使用者
+    不會發現，而多列一樣的代價只是多一行。
+    """
     hits = [p for p in pantry if p.get("days_left") is not None
-            and p["days_left"] <= threshold_days]
+            and -stale_days <= p["days_left"] <= threshold_days]
     return sorted(hits, key=lambda p: p["days_left"])
 
 

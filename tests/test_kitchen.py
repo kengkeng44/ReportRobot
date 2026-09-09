@@ -237,3 +237,31 @@ def test_expiring_soon_filters_and_sorts():
     got = kitchen.expiring_soon(pantry, threshold_days=3)
 
     assert [p["name"] for p in got] == ["D", "B", "C"]
+
+
+def test_expiring_soon_ignores_long_expired_items():
+    """過期 35 天的東西不是「快過期」，是「早就該丟了」。列進來會把
+    真正明天要壞掉的那兩樣擠出畫面 —— 而那是這個功能唯一的用途。"""
+    pantry = _pantry(("早該丟的", -35), ("昨天過期", -1), ("明天到期", 1))
+
+    got = kitchen.expiring_soon(pantry, threshold_days=3)
+
+    assert [p["name"] for p in got] == ["昨天過期", "明天到期"]
+
+
+def test_expiring_soon_stale_bound_is_configurable():
+    pantry = _pantry(("上週過期", -8), ("昨天過期", -1))
+
+    assert [p["name"] for p in kitchen.expiring_soon(
+        pantry, threshold_days=3, stale_days=14)] == ["上週過期", "昨天過期"]
+    assert [p["name"] for p in kitchen.expiring_soon(
+        pantry, threshold_days=3, stale_days=3)] == ["昨天過期"]
+
+
+def test_expiring_soon_boundary_is_inclusive():
+    """剛好等於下限的仍然列出 —— 邊界上少列一樣東西，使用者不會發現。"""
+    pantry = _pantry(("剛好 14 天", -14), ("15 天", -15))
+
+    got = kitchen.expiring_soon(pantry, threshold_days=3, stale_days=14)
+
+    assert [p["name"] for p in got] == ["剛好 14 天"]
