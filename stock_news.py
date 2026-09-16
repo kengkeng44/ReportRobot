@@ -590,10 +590,9 @@ def get_fundamentals_block(stock_id, name):
         f"- 禁止開場白與結語，第一個字必須是 emoji 或「無」"
     )
     try:
-        # 照格式整理搜尋結果,effort low;思考也吃 max_tokens,留足空間
+        # 照格式整理搜尋結果,Haiku 就夠(2026-09-16 實測 Haiku 4.5 可用 web_search)
         msg = sonnet_client.create(
-            ANTHROPIC_API_KEY, prompt,
-            max_tokens=3000, effort="low",
+            ANTHROPIC_API_KEY, prompt, max_tokens=1200, model=sonnet_client.HAIKU,
             tools=[sonnet_client.web_search_tool(3)],
         )
         text = ""

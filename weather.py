@@ -399,6 +399,9 @@ def _strip_to_bullets(text):
     started = False
     for line in lines:
         stripped = line.lstrip()
+        if not stripped:
+            # 空行跳過:Sonnet 5 習慣在 bullet 之間空一行,遇空行就停會只剩第一條
+            continue
         if stripped.startswith(("•", "・", "-", "*")):
             bullets.append(stripped)
             started = True
@@ -450,37 +453,76 @@ def _drop_past_events(text, today):
     return "\n".join(kept)
 
 
+# 同名但不在新北的地點。2026-09-16 實測 Haiku 被明講要排除「金山灣區」仍會列出來,改用程式擋。
+EVENT_EXCLUDE_WORDS = ("灣區", "舊金山", "僑社", "僑胞")
+
+
+def _clean_event_lines(text):
+    """統一分隔符號成全形「｜」、濾掉海外同名地點、同名活動只留第一筆。"""
+    kept, seen = [], set()
+    for line in text.splitlines():
+        line = line.replace("|", "｜")
+        if any(w in line for w in EVENT_EXCLUDE_WORDS):
+            continue
+        name = re.sub(r"\W+", "", line.split("｜")[0])
+        if name in seen:
+            continue
+        seen.add(name)
+        kept.append(line)
+    return "\n".join(kept)
+
+
 def _fetch_local_events(locations, today):
-    """實際打 web_search。成功回 bullets 文字(沒活動回 ""),失敗回 None(不寫快取)。"""
+    """抓新聞標題給 Haiku 篩活動。成功回 bullets 文字(沒活動回 ""),失敗回 None(不寫快取)。
+
+    不用 web_search:程式自己抓 Google News RSS(免費),模型只做篩選 + 排版。
+    標題常有同名雜訊(例:「金山灣區」是舊金山),交給模型依地點判斷。
+    """
+    from stock_news import _google_news_rss
+
     today_s = today.strftime("%Y-%m-%d")
     locs = "、".join(locations)
     days = EVENTS_LOOKAHEAD_DAYS
+    seen, lines = set(), []
+    for loc in locations:
+        name = loc[:-1] if loc.endswith("區") else loc
+        for q in (f"{name} 活動 when:{days}d", f"{name} 市集 OR 展覽 OR 音樂節 OR 藝術節 when:{days}d"):
+            for it in _google_news_rss(q, limit=8):
+                title = (it.get("title") or "").strip()
+                if not title or title in seen:
+                    continue
+                seen.add(title)
+                ts = it.get("published") or 0
+                pub = datetime.fromtimestamp(ts).strftime("%Y-%m-%d") if ts else "日期不明"
+                lines.append(f"- （{pub} 發布）{title}")
+    if not lines:
+        return ""
+
     prompt = (
-        f"今天是 {today_s}（台北時間）。\n"
-        f"請用網路搜尋「{locs}」（位於新北市）今天 {today_s} 起未來 {days} 天內仍會舉辦的活動。\n"
-        f"活動類型包含節慶、市集、表演、展覽、廟會、馬拉松等。\n\n"
+        f"今天是 {today_s}（台北時間）。以下是跟「{locs}」（新北市）有關的新聞標題：\n"
+        + "\n".join(lines) + "\n\n"
+        f"請從中挑出「在{locs}舉辦、且 {today_s} 起未來 {days} 天內仍會舉辦」的活動"
+        f"（節慶、市集、表演、展覽、廟會、馬拉松等）。\n\n"
         f"嚴格規則（必遵守）：\n"
-        f"1. 只列出「{today_s} 當日或之後」舉辦的活動。已結束（結束日早於 {today_s}）的活動絕對不能列。\n"
-        f"2. 第一個字元必須是「•」或「無」。禁止任何開場白、解釋過程、引用敘述。\n"
-        f"3. 找不到符合「未來 {days} 天」的活動 → 只輸出兩個字：「無」（不加句點、不加其他字）。\n"
-        f"4. 找到的話最多 5 個，依日期先後排序，每個一行，格式：\n"
-        f"   • 活動名稱｜日期（YYYY-MM-DD 或 MM/DD-MM/DD，有結束日一定要寫）｜地點｜URL\n"
-        f"   URL 用搜尋取得的官方/新聞連結；找不到可靠連結就省略 URL 欄但保留前面三欄。\n"
-        f"5. 禁止結語（不要寫「希望對你有幫助」「請查證」等）。"
+        f"1. 只能根據上面的標題，禁止補充標題裡沒有的活動。地點不在{locs}的（例：金山灣區是舊金山）一律排除。\n"
+        f"2. 已結束（結束日早於 {today_s}）的活動絕對不能列；只是新聞評論、不是活動的也不列。\n"
+        f"3. 第一個字元必須是「•」或「無」。禁止任何開場白、解釋過程。\n"
+        f"4. 沒有符合的 → 只輸出兩個字：「無」（不加句點、不加其他字）。\n"
+        f"5. 有的話最多 5 個，依日期先後排序，每個一行，格式：\n"
+        f"   • 活動名稱｜日期（YYYY-MM-DD 或 MM/DD-MM/DD，標題沒寫日期就寫「日期見新聞」）｜地點\n"
+        f"6. 禁止結語（不要寫「希望對你有幫助」「請查證」等）。"
     )
     try:
-        # 列活動是簡單整理,effort low;思考也吃 max_tokens,留足空間
+        # 只是篩選 + 排版,用 Haiku、不給工具
         message = sonnet_client.create(
-            ANTHROPIC_API_KEY, prompt,
-            max_tokens=4000, effort="low",
-            tools=[sonnet_client.web_search_tool(3)],
+            ANTHROPIC_API_KEY, prompt, max_tokens=800, model=sonnet_client.HAIKU,
         )
         # web_search 是 server-side tool；content 含多個 block，取最後一個 text
         text = ""
         for block in message.content:
             if getattr(block, 'type', None) == 'text':
                 text = block.text
-        return _strip_to_bullets(text.strip())
+        return _clean_event_lines(_strip_to_bullets(text.strip()))
     except Exception as e:
         print(f"近期活動查詢失敗：{e}")
         return None

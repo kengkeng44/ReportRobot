@@ -84,7 +84,9 @@ def answer(query):
 
     if not detailed:
         prompt = _CONCISE_PROMPT.format(q=query, q_clean=query)
-        return _call_claude(prompt, max_tokens=1500, max_uses=3, label="concise")
+        # 精簡版只要 3-5 條重點,Haiku 就夠;詳細版要多情境推論,留 Sonnet 5
+        return _call_claude(prompt, max_tokens=1500, max_uses=3, label="concise",
+                            model=sonnet_client.HAIKU)
 
     prompt = f"""你是首席投資策略師（Chief Investment Strategist），CFA 等級分析。
 使用者問：「{clean_query}」
@@ -177,14 +179,18 @@ C 型｜未來展望／價格預測／趨勢預測（query 含「未來」「預
     return _call_claude(prompt, max_tokens=4096, max_uses=5, label="detailed")
 
 
-def _call_claude(prompt, max_tokens, max_uses, label):
+def _call_claude(prompt, max_tokens, max_uses, label, model=sonnet_client.MODEL):
     """共用：打 Claude API、收集所有 text block、log stop_reason。"""
     try:
-        # 思考也吃 max_tokens:回答額度照舊,另外加 4000 給思考
+        if model == sonnet_client.HAIKU:
+            # Haiku 不思考、不收 effort
+            extra = {"max_tokens": max_tokens}
+        else:
+            # Sonnet 5 的思考也吃 max_tokens:回答額度照舊,另外加 4000 給思考
+            extra = {"max_tokens": max_tokens + 4000, "effort": "medium"}
         msg = sonnet_client.create(
-            ANTHROPIC_API_KEY, prompt,
-            max_tokens=max_tokens + 4000, effort="medium",
-            tools=[sonnet_client.web_search_tool(max_uses)],
+            ANTHROPIC_API_KEY, prompt, model=model,
+            tools=[sonnet_client.web_search_tool(max_uses)], **extra,
         )
         # 蒐集所有 text block（web_search 之間會穿插多個 text，必須全部收）
         texts = []

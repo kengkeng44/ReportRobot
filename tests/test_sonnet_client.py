@@ -69,3 +69,12 @@ def test_pause_turn_gives_up_after_limit(fake_api):
     msg = sonnet_client.create("k", "q", max_tokens=100, effort="low")
     assert len(fake_api.calls) == sonnet_client.MAX_CONTINUATIONS + 1
     assert msg.stop_reason == "pause_turn"
+
+
+def test_haiku_call_has_no_effort_and_tracks_haiku(fake_api):
+    fake_api.replies = [_msg("ok", "end_turn")]
+    sonnet_client.create("k", "q", max_tokens=100, model=sonnet_client.HAIKU)
+    call = fake_api.calls[0]
+    assert call["model"] == sonnet_client.HAIKU
+    assert "output_config" not in call
+    assert fake_api.tracked == [sonnet_client.HAIKU]

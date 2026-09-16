@@ -14,6 +14,8 @@ import anthropic
 import usage_tracker
 
 MODEL = "claude-sonnet-5"
+# 簡單整理用 Haiku 4.5:沒有 effort 參數(帶了會 400)、預設不思考;id 跟 usage_tracker 的價格表對齊
+HAIKU = "claude-haiku-4-5-20251001"
 MAX_CONTINUATIONS = 3
 
 
@@ -21,14 +23,16 @@ def web_search_tool(max_uses):
     return {"type": "web_search_20250305", "name": "web_search", "max_uses": max_uses}
 
 
-def create(api_key, prompt, *, max_tokens, effort, tools=None):
-    """呼叫 Sonnet 5;回傳最後一個 message,content 換成所有回合累積的 blocks。
+def create(api_key, prompt, *, max_tokens, effort=None, tools=None, model=MODEL):
+    """呼叫模型(預設 Sonnet 5);回傳最後一個 message,content 換成所有回合累積的 blocks。
 
     每個回合都各自記進 usage_tracker,呼叫端不用再 track。
     """
     client = anthropic.Anthropic(api_key=api_key)
     messages = [{"role": "user", "content": prompt}]
-    kwargs = {"model": MODEL, "max_tokens": max_tokens, "output_config": {"effort": effort}}
+    kwargs = {"model": model, "max_tokens": max_tokens}
+    if effort:
+        kwargs["output_config"] = {"effort": effort}
     if tools:
         kwargs["tools"] = tools
 
@@ -36,7 +40,7 @@ def create(api_key, prompt, *, max_tokens, effort, tools=None):
     msg = None
     for _ in range(MAX_CONTINUATIONS + 1):
         msg = client.messages.create(messages=messages, **kwargs)
-        usage_tracker.track(MODEL, msg)
+        usage_tracker.track(model, msg)
         blocks.extend(msg.content)
         if msg.stop_reason != "pause_turn":
             break
