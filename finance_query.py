@@ -350,16 +350,12 @@ def format_overview(detailed=False):
     prompt = _build_prompt(today, month_str, raw, len(items), detailed)
 
     try:
-        import anthropic
-        import usage_tracker
+        import sonnet_client
         from premarket import ANTHROPIC_API_KEY
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        msg = client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=3500,
-            messages=[{"role": "user", "content": prompt}],
+        # 整理帳單明細要算數字,effort medium;思考也吃 max_tokens,留足空間
+        msg = sonnet_client.create(
+            ANTHROPIC_API_KEY, prompt, max_tokens=10000, effort="medium",
         )
-        usage_tracker.track("claude-sonnet-4-5", msg)
         text = ""
         for block in msg.content:
             if getattr(block, "type", None) == "text":

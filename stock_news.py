@@ -15,6 +15,7 @@ import feedparser
 import anthropic
 import http_utils
 import usage_tracker
+import sonnet_client
 from bs4 import BeautifulSoup
 from prompts import STOCK_ANALYSIS_PROMPT, FORUM_SUMMARY_PROMPT
 
@@ -589,18 +590,12 @@ def get_fundamentals_block(stock_id, name):
         f"- 禁止開場白與結語，第一個字必須是 emoji 或「無」"
     )
     try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        msg = client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=700,
-            tools=[{
-                "type": "web_search_20250305",
-                "name": "web_search",
-                "max_uses": 3,
-            }],
-            messages=[{"role": "user", "content": prompt}],
+        # 照格式整理搜尋結果,effort low;思考也吃 max_tokens,留足空間
+        msg = sonnet_client.create(
+            ANTHROPIC_API_KEY, prompt,
+            max_tokens=3000, effort="low",
+            tools=[sonnet_client.web_search_tool(3)],
         )
-        usage_tracker.track("claude-sonnet-4-5", msg)
         text = ""
         for block in msg.content:
             if getattr(block, "type", None) == "text":

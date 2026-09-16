@@ -11,6 +11,7 @@ import os
 
 import anthropic
 import usage_tracker
+import sonnet_client
 
 from chips import get_institutional_trades
 from markets import _format_price, get_index_quote
@@ -210,18 +211,13 @@ def _ai_summary_uncached(chip_data=None):
         f"- 直接列出 bullet，禁止開場白與結語"
     )
     try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        message = client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=1500,
-            tools=[{
-                "type": "web_search_20250305",
-                "name": "web_search",
-                "max_uses": 3,  # 法人/收盤等真實數字已先塞進 prompt,搜尋只是補充
-            }],
-            messages=[{"role": "user", "content": prompt}],
+        # 法人/收盤等真實數字已先塞進 prompt,搜尋只是補充,所以 max_uses 3
+        # 整理多來源、要判斷方向,effort 用 medium(約等於舊 sonnet 的 high)
+        message = sonnet_client.create(
+            ANTHROPIC_API_KEY, prompt,
+            max_tokens=6000, effort="medium",
+            tools=[sonnet_client.web_search_tool(3)],
         )
-        usage_tracker.track("claude-sonnet-4-5", message)
         text = ""
         for block in message.content:
             if getattr(block, "type", None) == "text":

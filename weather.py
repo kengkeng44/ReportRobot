@@ -13,6 +13,7 @@ import requests
 import anthropic
 import http_utils
 import usage_tracker
+import sonnet_client
 import matplotlib
 matplotlib.use('Agg')  # 無視窗環境
 import matplotlib.pyplot as plt
@@ -468,18 +469,12 @@ def _fetch_local_events(locations, today):
         f"5. 禁止結語（不要寫「希望對你有幫助」「請查證」等）。"
     )
     try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        message = client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=800,
-            tools=[{
-                "type": "web_search_20250305",
-                "name": "web_search",
-                "max_uses": 3,
-            }],
-            messages=[{"role": "user", "content": prompt}],
+        # 列活動是簡單整理,effort low;思考也吃 max_tokens,留足空間
+        message = sonnet_client.create(
+            ANTHROPIC_API_KEY, prompt,
+            max_tokens=4000, effort="low",
+            tools=[sonnet_client.web_search_tool(3)],
         )
-        usage_tracker.track("claude-sonnet-4-5", message)
         # web_search 是 server-side tool；content 含多個 block，取最後一個 text
         text = ""
         for block in message.content:

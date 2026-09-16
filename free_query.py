@@ -13,6 +13,7 @@ import os
 import re
 import anthropic
 import usage_tracker
+import sonnet_client
 
 
 # 觸發詳細版的關鍵字（含中英文）。Query 含其中之一 → 走詳細版 6 塊；
@@ -179,18 +180,12 @@ C 型｜未來展望／價格預測／趨勢預測（query 含「未來」「預
 def _call_claude(prompt, max_tokens, max_uses, label):
     """共用：打 Claude API、收集所有 text block、log stop_reason。"""
     try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        msg = client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=max_tokens,
-            tools=[{
-                "type": "web_search_20250305",
-                "name": "web_search",
-                "max_uses": max_uses,
-            }],
-            messages=[{"role": "user", "content": prompt}],
+        # 思考也吃 max_tokens:回答額度照舊,另外加 4000 給思考
+        msg = sonnet_client.create(
+            ANTHROPIC_API_KEY, prompt,
+            max_tokens=max_tokens + 4000, effort="medium",
+            tools=[sonnet_client.web_search_tool(max_uses)],
         )
-        usage_tracker.track("claude-sonnet-4-5", msg)
         # 蒐集所有 text block（web_search 之間會穿插多個 text，必須全部收）
         texts = []
         for block in msg.content:
