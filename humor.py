@@ -38,7 +38,8 @@ def _env(name):
     return getattr(config, name)
 
 
-AI_MODEL = "claude-sonnet-4-5"
+# 挑笑話是簡單工作,haiku 夠用,單價約 sonnet 的 1/3
+AI_MODEL = "claude-haiku-4-5-20251001"
 
 # 從 Notion 撈幾則歷史來比對
 HISTORY_LIMIT = 30

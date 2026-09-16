@@ -22,7 +22,7 @@ _STATS = {
 # Anthropic 2025 公定價（每 1M tokens，USD）
 PRICING = {
     "claude-sonnet-4-5": {"input": 3.0, "output": 15.0},
-    "claude-haiku-4-5-20251001": {"input": 0.80, "output": 4.0},
+    "claude-haiku-4-5-20251001": {"input": 1.0, "output": 5.0},
     "claude-opus-4-7": {"input": 15.0, "output": 75.0},
 }
 WEB_SEARCH_PRICE_USD = 0.01  # 每次 web_search 呼叫

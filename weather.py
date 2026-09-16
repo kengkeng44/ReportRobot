@@ -7,6 +7,7 @@
 """
 
 import os
+import re
 import tempfile
 import requests
 import anthropic
@@ -406,22 +407,63 @@ def _strip_to_bullets(text):
     return "\n".join(bullets)
 
 
-def get_local_events(locations):
-    """用 Anthropic web_search 查未來 7 天當地活動，最多 3 個或回 '無'。"""
-    if not locations:
-        return ""
-    today = now_tpe().strftime("%Y-%m-%d")
+# 近期活動一週才查一次:活動不會天天變,而 web_search 是天氣段最貴的部分。
+# 快取在記憶體,重新部署會清掉(清掉就重查一次,不影響功能)。
+# 每次查未來 14 天,之後幾天從快取拿,顯示前把已結束的活動濾掉。
+EVENTS_CACHE_DAYS = 7
+EVENTS_LOOKAHEAD_DAYS = 14
+_EVENTS_CACHE = {}  # {tuple(locations): (查詢日 date, bullets 文字)}
+
+_EVENT_DATE = re.compile(r"(?:(\d{4})[-/.])?(\d{1,2})[-/.](\d{1,2})")
+
+
+def _event_end_date(line, today):
+    """從「• 名稱｜日期｜地點｜URL」取出結束日;解析不到回 None。
+
+    日期欄可能是 2026-09-20、09/20-09/22、2026-09-20~2026-09-22,取最後一個日期當結束日。
+    沒寫年份時用今年;若因此落在半年前,視為跨年(明年)。
+    """
+    fields = line.split("｜")
+    if len(fields) < 2:
+        return None
+    matches = _EVENT_DATE.findall(fields[1])
+    if not matches:
+        return None
+    year, month, day = matches[-1]
+    try:
+        end = datetime(int(year) if year else today.year, int(month), int(day)).date()
+    except ValueError:
+        return None
+    if not year and (today - end).days > 180:
+        end = end.replace(year=end.year + 1)
+    return end
+
+
+def _drop_past_events(text, today):
+    """濾掉結束日早於今天的活動;日期解析不到的保留(寧可多列不要漏)。"""
+    kept = []
+    for line in text.splitlines():
+        end = _event_end_date(line, today)
+        if end is None or end >= today:
+            kept.append(line)
+    return "\n".join(kept)
+
+
+def _fetch_local_events(locations, today):
+    """實際打 web_search。成功回 bullets 文字(沒活動回 ""),失敗回 None(不寫快取)。"""
+    today_s = today.strftime("%Y-%m-%d")
     locs = "、".join(locations)
+    days = EVENTS_LOOKAHEAD_DAYS
     prompt = (
-        f"今天是 {today}（台北時間）。\n"
-        f"請用網路搜尋「{locs}」（位於新北市）今天 {today} 起未來 7 天內仍會舉辦的活動。\n"
+        f"今天是 {today_s}（台北時間）。\n"
+        f"請用網路搜尋「{locs}」（位於新北市）今天 {today_s} 起未來 {days} 天內仍會舉辦的活動。\n"
         f"活動類型包含節慶、市集、表演、展覽、廟會、馬拉松等。\n\n"
         f"嚴格規則（必遵守）：\n"
-        f"1. 只列出「{today} 當日或之後」舉辦的活動。已結束（結束日早於 {today}）的活動絕對不能列。\n"
+        f"1. 只列出「{today_s} 當日或之後」舉辦的活動。已結束（結束日早於 {today_s}）的活動絕對不能列。\n"
         f"2. 第一個字元必須是「•」或「無」。禁止任何開場白、解釋過程、引用敘述。\n"
-        f"3. 找不到符合「未來 7 天」的活動 → 只輸出兩個字：「無」（不加句點、不加其他字）。\n"
-        f"4. 找到的話最多 3 個，每個一行，格式：\n"
-        f"   • 活動名稱｜日期（YYYY-MM-DD 或 MM/DD-MM/DD）｜地點｜URL\n"
+        f"3. 找不到符合「未來 {days} 天」的活動 → 只輸出兩個字：「無」（不加句點、不加其他字）。\n"
+        f"4. 找到的話最多 5 個，依日期先後排序，每個一行，格式：\n"
+        f"   • 活動名稱｜日期（YYYY-MM-DD 或 MM/DD-MM/DD，有結束日一定要寫）｜地點｜URL\n"
         f"   URL 用搜尋取得的官方/新聞連結；找不到可靠連結就省略 URL 欄但保留前面三欄。\n"
         f"5. 禁止結語（不要寫「希望對你有幫助」「請查證」等）。"
     )
@@ -429,7 +471,7 @@ def get_local_events(locations):
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         message = client.messages.create(
             model="claude-sonnet-4-5",
-            max_tokens=600,
+            max_tokens=800,
             tools=[{
                 "type": "web_search_20250305",
                 "name": "web_search",
@@ -446,7 +488,23 @@ def get_local_events(locations):
         return _strip_to_bullets(text.strip())
     except Exception as e:
         print(f"近期活動查詢失敗：{e}")
+        return None
+
+
+def get_local_events(locations):
+    """近期活動(最多 5 個)或 ""。同一組地點 7 天內只打一次 web_search。"""
+    if not locations:
         return ""
+    today = now_tpe().date()
+    key = tuple(locations)
+    cached = _EVENTS_CACHE.get(key)
+    if cached and 0 <= (today - cached[0]).days < EVENTS_CACHE_DAYS:
+        return _drop_past_events(cached[1], today)
+    text = _fetch_local_events(locations, today)
+    if text is None:
+        return ""
+    _EVENTS_CACHE[key] = (today, text)
+    return _drop_past_events(text, today)
 
 
 def get_weather_report(locations=None):

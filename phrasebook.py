@@ -164,7 +164,8 @@ LANGUAGES = ("英文", "西班牙文")
 # 而語句庫本身就是歷史,不需要另建一張表(跟 humor.py 不同)。
 AVOID_IN_PROMPT = 15
 
-AI_MODEL = "claude-sonnet-4-5"
+# 生片語是簡單工作,haiku 夠用,單價約 sonnet 的 1/3
+AI_MODEL = "claude-haiku-4-5-20251001"
 
 
 def _store():

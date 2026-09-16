@@ -29,7 +29,8 @@ def _env(name):
 
 ANTHROPIC_API_KEY = _env("ANTHROPIC_API_KEY")
 
-AI_MODEL = "claude-sonnet-4-5"
+# 標題翻譯 + 新聞摘要分析用 haiku 就夠,單價約 sonnet 的 1/3
+AI_MODEL = "claude-haiku-4-5-20251001"
 
 STOCK_NAMES = {
     "2330": "台積電", "2317": "鴻海", "2454": "聯發科",

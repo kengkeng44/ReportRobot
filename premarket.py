@@ -217,7 +217,7 @@ def _ai_summary_uncached(chip_data=None):
             tools=[{
                 "type": "web_search_20250305",
                 "name": "web_search",
-                "max_uses": 5,
+                "max_uses": 3,  # 法人/收盤等真實數字已先塞進 prompt,搜尋只是補充
             }],
             messages=[{"role": "user", "content": prompt}],
         )
