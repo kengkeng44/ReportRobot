@@ -109,8 +109,8 @@ HELP_TEXT = (
     "\n"
     "📊 大盤與盤前\n"
     "  • /大盤 或 /指數   ← 台股加權、美股、匯率等即時報價（免費）\n"
-    "  • /盤前            ← 跟早上推播同一份盤前報告\n"
-    "    ℹ️ 盤前含 AI 整理那段會計費，但同一天只算一次（早上跑過就重用）\n"
+    "  • /盤前            ← 盤前報告（國際、三大法人 + AI 重點）\n"
+    "    ℹ️ 已不進每日群組推播，想看時再打；AI 那段會計費，但同一天只算一次\n"
     "\n"
     "💼 查仁和持倉\n"
     "  • 仁和持股 / 我的持股 / 持股 / 持倉\n"
@@ -172,7 +172,7 @@ HELP_TEXT = (
     "\n"
     "🧪 預覽每日情報（只在 1 對 1 chat 有效）\n"
     "  • /預覽 或 /preview\n"
-    "  ℹ️ 1-2 分鐘內 push 一份天氣 + 盤前給你（force 強跑、不發群組）\n"
+    "  ℹ️ 1-2 分鐘內 push 一份天氣給你（跟群組推播同內容、不發群組）\n"
     "\n"
     "💳 個人 Gmail 財務查詢（限本人 LINE 帳號）\n"
     "  • /財務     ← 精簡版：持股概況 + 信用卡分類總和 + ⚡ 大筆消費(≥3000)\n"
@@ -191,12 +191,12 @@ HELP_TEXT = (
     "🆘 顯示這個說明\n"
     "  • help / 說明 / 指令 / 功能 / 幫助 / 教學 / ?\n"
     "\n"
-    "📅 每天早上自動推送（橫滑卡片，1 則，只有三張）\n"
+    "📅 每天早上自動推送（橫滑卡片，1 則，只有兩張）\n"
     "  • 💫 今日一則（小知識或笑話 + 節日）\n"
     "  • 🌤️ 淡水區天氣 + 近期活動\n"
-    "  • 📊 盤前報告（週末略過）\n"
-    "  ℹ️ 食材提醒與消費卡片已拿掉，改成想看時自己問：\n"
-    "     打「快過期」看食材（每樣附「已用掉」按鈕），打「最新消費」看花費\n"
+    "  ℹ️ 盤前、食材提醒與消費卡片已拿掉，改成想看時自己問：\n"
+    "     打「盤前」看盤前報告，打「快過期」看食材（每樣附「已用掉」按鈕），\n"
+    "     打「最新消費」看花費\n"
     "\n"
     "ℹ️ 一般聊天不會被當指令，家人聊天不會被打擾。"
 )
@@ -595,8 +595,11 @@ def _handle_todo_subcmd(user_id, body):
 
 
 def _handle_preview(user_id):
-    """/預覽：背景跑天氣 + 盤前 (force) 並 push 給該 user，立即 reply 確認訊息。
-    避免在 reply 路徑內阻塞 30 秒以上把 replyToken 用爆。"""
+    """/預覽：背景跑天氣並 push 給該 user，立即 reply 確認訊息。
+    避免在 reply 路徑內阻塞 30 秒以上把 replyToken 用爆。
+
+    2026-09-18 盤前報告已從每日群組推播拿掉，預覽也跟著只剩天氣，
+    跟群組收到的內容一致。想看盤前請自己打「盤前」。"""
     import threading
     from tz_utils import today_tpe
 
@@ -614,22 +617,11 @@ def _handle_preview(user_id):
                 )
             except Exception as e:
                 push_to_user_sync(user_id, f"⚠️ 預覽天氣失敗：{e}")
-
-            try:
-                from premarket import build_premarket_report
-                pre = build_premarket_report(force=True)  # force=週末也產
-                if pre:
-                    push_to_user_sync(user_id, pre)
-                else:
-                    push_to_user_sync(user_id, "（盤前報告無內容）")
-            except Exception as e:
-                push_to_user_sync(user_id, f"⚠️ 預覽盤前失敗：{e}")
         except Exception as e:
             print(f"預覽背景執行失敗：{e}")
 
     threading.Thread(target=_bg, daemon=True).start()
-    return ("⏳ 預覽生成中，1-2 分鐘內 push 給你（不會發到群組）。\n"
-            "ℹ️ 即使週末也會強跑盤前段。")
+    return "⏳ 預覽生成中，1-2 分鐘內 push 給你（不會發到群組）。"
 
 
 _BUY_USAGE = (

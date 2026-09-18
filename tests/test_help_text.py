@@ -118,17 +118,20 @@ def test_help_mentions_consume_auto_adds_to_shopping():
 # ── 每日推播 ──────────────────────────────────────────────
 
 def test_help_lists_every_daily_bubble():
-    """daily_report_carousel 會出的五種 bubble，說明都要提到。"""
+    """說明要提到這些主題（今日一則、天氣是推播卡，其餘已改成指令）。"""
     for label in ("今日一則", "食材提醒", "天氣", "盤前", "消費"):
-        assert label in cr.HELP_TEXT, f"每日推播漏寫 {label}"
+        assert label in cr.HELP_TEXT, f"說明漏寫 {label}"
 
 
-def test_help_lists_exactly_the_three_push_cards():
-    """2026-08-16 起推播只有三張。說明多列一張就是在騙人。"""
+def test_help_lists_exactly_the_two_push_cards():
+    """2026-09-18 起推播只有兩張（盤前也拿掉）。說明多列一張就是在騙人。"""
     daily = cr.HELP_TEXT.split("📅")[1]
 
-    for card in ("今日一則", "天氣", "盤前"):
+    for card in ("今日一則", "天氣"):
         assert card in daily
+    assert "只有兩張" in daily
+    # 盤前不再是推播卡（改成指向「盤前」指令），也不該再列成卡片
+    assert "📊 盤前報告（週末略過）" not in daily
     assert "🥬 食材提醒（" not in daily, "食材卡片已從推播移除"
 
 

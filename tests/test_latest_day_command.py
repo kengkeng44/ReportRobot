@@ -91,7 +91,7 @@ def test_daily_carousel_has_no_spending_bubble():
     import flex_builder
 
     msg = flex_builder.daily_report_carousel(
-        extra_text="小知識", weather_text="晴天", premarket_text="盤前",
+        extra_text="小知識", weather_text="晴天",
         today_str="2026-08-16",
     )
 

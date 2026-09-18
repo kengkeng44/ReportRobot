@@ -22,8 +22,6 @@ import humor
 from admin_notify import notify_admin
 from flex_builder import daily_report_carousel
 from line_sender import push_message
-from premarket import build_premarket_report
-from stock_news import get_cnyes_news
 from tz_utils import now_tpe, today_tpe
 from weather import PERSONAL_WEATHER_LOCATIONS, get_weather_report
 
@@ -39,15 +37,8 @@ def _safe(label, body_fn):
         return None
 
 
-def _fetch_market_news(limit=3):
-    """抓鉅亨台股市場新聞數則標題，組成一段文字；無則回 None。"""
-    items = get_cnyes_news("台股", limit=limit)
-    lines = [f"• {it['title']}" for it in items[:limit] if it.get("title")]
-    return "\n".join(lines) if lines else None
-
-
 # 2026-08-16 使用者要求把「食材提醒」與「最近一天消費」都從**群組**推播拿掉，
-# 群組只留三張：今日一則 / 天氣 / 盤前。要看時自己問：
+# 群組只留：今日一則 / 天氣（2026-09-18 起盤前也拿掉，見下方）。要看時自己問：
 #   食材提醒 → LINE 打「快過期」（command_router 的 pantry_expiring，含「已用掉」按鈕）
 #   最近消費 → LINE 打「最新消費」（command_router 的 fin_latest_day）
 #
@@ -261,7 +252,9 @@ def _email_personal_report(today):
 
 
 async def run_daily_report(force_premarket=False):
-    print(f"開始執行每日情報... (force_premarket={force_premarket})")
+    # force_premarket：2026-09-18 群組推播拿掉盤前後已無作用，僅為相容
+    # server.py 的排程與 /trigger?force= 端點而保留；不再影響群組內容。
+    print("開始執行每日情報...")
     today = today_tpe().strftime("%Y-%m-%d")
 
     # 1. 天氣
@@ -270,23 +263,12 @@ async def run_daily_report(force_premarket=False):
         return weather_msg
     weather_text = _safe("天氣", _weather)
 
-    # 2. 盤前報告（週末回 None，week_text 也是 None）
-    premarket_text = _safe(
-        "盤前",
-        lambda: build_premarket_report(force=force_premarket),
-    )
-
-    # 2b. 盤前有內容才附市場新聞
-    if premarket_text:
-        market_news = _safe("市場新聞", _fetch_market_news)
-        if market_news:
-            premarket_text = f"{premarket_text}\n\n📰 今日市場新聞\n{market_news}"
-
-    # 3. 今日一則（小知識/笑話 + 節日 + 天氣新聞）
+    # 2. 今日一則（小知識/笑話 + 節日 + 天氣新聞）
+    #    2026-09-18 群組推播拿掉「盤前報告」：使用者用不太到。想看盤前自己打「盤前」。
     extra_text = _safe("今日一則", humor.get_daily_extra)
 
     # 組 carousel 一次推（1 則 push）
-    carousel = daily_report_carousel(extra_text, weather_text, premarket_text, today)
+    carousel = daily_report_carousel(extra_text, weather_text, today)
     if carousel is None:
         # 兩段都炸了 → 推一則純文字告知
         await push_message(f"<b>⚠️ 每日情報 {today}</b>\n資料暫時無法取得，已通知維運。")

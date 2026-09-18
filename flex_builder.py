@@ -535,15 +535,18 @@ def quick_reply_text(body, options):
     return msg
 
 
-def daily_report_carousel(extra_text, weather_text, premarket_text, today_str):
+def daily_report_carousel(extra_text, weather_text, today_str):
     """把每日報組成 carousel（橫滑），1 則 push 搞定。
-    順序：今日一則 → 天氣 → 盤前。全部缺回 None。
+    順序：今日一則 → 天氣。全部缺回 None。
 
     2026-08-16 依使用者要求拿掉「食材提醒」與「最近一天消費」兩張卡 ——
     每天固定跳的東西越多，整則推播越容易被整個略過。兩邊的邏輯都留著，
     改成要看時自己問：
       食材提醒 → LINE 打「快過期」（含「已用掉」按鈕）
       最近消費 → LINE 打「最新消費」
+
+    2026-09-18 再拿掉「盤前報告」卡：使用者說群組用不太到。盤前邏輯留在
+    premarket.py，改成想看時自己打「盤前」（見 command_router 的 premarket）。
     """
     bubbles = []
 
@@ -569,15 +572,6 @@ def daily_report_carousel(extra_text, weather_text, premarket_text, today_str):
             body="⚠️ 天氣資料暫時無法取得",
             header_color=_BROWN,
         ))
-
-    if premarket_text:
-        bubbles.append(text_bubble(
-            title="📊 盤前報告",
-            subtitle=today_str,
-            body=premarket_text,
-            header_color="#5B8DA6",
-        ))
-    # premarket_text 為 None 時通常是週末，這時就只有今日一則 + 天氣 bubble
 
     if not bubbles:
         return None

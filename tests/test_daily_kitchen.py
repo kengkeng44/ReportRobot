@@ -139,21 +139,21 @@ def _titles(msg):
 
 def test_daily_carousel_has_no_kitchen_bubble():
     msg = flex_builder.daily_report_carousel(
-        extra_text="小知識", weather_text="晴天", premarket_text="盤前",
+        extra_text="小知識", weather_text="晴天",
         today_str="2026-08-16",
     )
 
     assert "🥬 食材提醒" not in _titles(msg)
 
 
-def test_daily_carousel_is_exactly_the_three_cards():
-    """使用者指定推播只留這三張。多一張就是又開始稀釋。"""
+def test_daily_carousel_is_exactly_the_two_cards():
+    """2026-09-18 盤前也拿掉，推播只留這兩張。多一張就是又開始稀釋。"""
     msg = flex_builder.daily_report_carousel(
-        extra_text="小知識", weather_text="晴天", premarket_text="盤前",
+        extra_text="小知識", weather_text="晴天",
         today_str="2026-08-16",
     )
 
-    assert _titles(msg) == ["💫 今日一則", "🌤️ 天氣報告", "📊 盤前報告"]
+    assert _titles(msg) == ["💫 今日一則", "🌤️ 天氣報告"]
 
 
 def test_carousel_no_longer_accepts_kitchen_args():
@@ -161,7 +161,8 @@ def test_carousel_no_longer_accepts_kitchen_args():
     import inspect
 
     params = inspect.signature(flex_builder.daily_report_carousel).parameters
-    for gone in ("kitchen_text", "kitchen_items", "kitchen_more", "spending_text"):
+    for gone in ("kitchen_text", "kitchen_items", "kitchen_more",
+                 "spending_text", "premarket_text"):
         assert gone not in params
 
 

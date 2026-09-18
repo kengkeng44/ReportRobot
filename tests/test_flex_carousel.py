@@ -18,20 +18,27 @@ def test_extra_bubble_is_first(monkeypatch):
     msg = flex_builder.daily_report_carousel(
         extra_text="💡 今日小知識\n冷知識",
         weather_text="晴天",
-        premarket_text="盤前內容",
         today_str="2026-08-03",
     )
     titles = _titles(msg)
     assert titles[0] == "💫 今日一則"
     assert "🌤️ 天氣報告" in titles
-    assert "📊 盤前報告" in titles
+
+
+def test_no_premarket_bubble_in_group_push(monkeypatch):
+    """2026-09-18 盤前報告從群組推播拿掉，carousel 不該再有這張卡。"""
+    msg = flex_builder.daily_report_carousel(
+        extra_text="💡 今日小知識\n冷知識",
+        weather_text="晴天",
+        today_str="2026-08-03",
+    )
+    assert "📊 盤前報告" not in _titles(msg)
 
 
 def test_no_extra_still_works(monkeypatch):
     msg = flex_builder.daily_report_carousel(
         extra_text=None,
         weather_text="晴天",
-        premarket_text=None,
         today_str="2026-08-03",
     )
     assert "🌤️ 天氣報告" in _titles(msg)
