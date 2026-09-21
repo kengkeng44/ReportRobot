@@ -5,6 +5,7 @@
 - 匯率與原物料（USD/TWD、DXY、USD/JPY、油、金）
 - 三大法人買賣超
 - AI 根據 Google News 標題整理 Fed / 總經 / 地緣 / 類股 / 法說會
+  （唯一花 token 的段，用 PREMARKET_AI_ENABLED 開關；預設關閉省 token）
 """
 
 import os
@@ -51,6 +52,14 @@ ADR_STOCKS = [
 COMMODITIES = [
     ("GLD", "黃金"),
 ]
+
+
+def _ai_summary_enabled():
+    """「🧠 盤前重點」是這份報告裡唯一花 token 的段（Claude API）。
+    用 PREMARKET_AI_ENABLED 開關暫時停掉省錢，預設關閉；
+    要開回來把它設成 1 / true / yes / on 即可（免改程式、免重部署）。"""
+    val = _env("PREMARKET_AI_ENABLED").strip().lower()
+    return val in ("1", "true", "yes", "on")
 
 
 def is_weekend():
@@ -288,7 +297,9 @@ def build_premarket_report(force=False):
     intl_lines = [_quote_line(s, l) for s, l in INTL_INDICES + ADR_STOCKS + COMMODITIES]
     chip_data = get_institutional_trades()
     chip_block = _build_chip_block_from(chip_data)
-    ai_block = _build_ai_summary(chip_data=chip_data)
+    # AI 盤前重點暫時停掉省 token（PREMARKET_AI_ENABLED 開關，預設關）。
+    # 關閉時完全不呼叫 Claude API，只留免費的國際市場 / 三大法人兩段。
+    ai_block = _build_ai_summary(chip_data=chip_data) if _ai_summary_enabled() else ""
 
     sections = [
         "<b>📊 盤前報告</b>",
