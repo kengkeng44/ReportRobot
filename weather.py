@@ -516,6 +516,7 @@ def _fetch_local_events(locations, today):
         # 只是篩選 + 排版,用 Haiku、不給工具
         message = sonnet_client.create(
             ANTHROPIC_API_KEY, prompt, max_tokens=800, model=sonnet_client.HAIKU,
+            label="天氣新聞",
         )
         # web_search 是 server-side tool；content 含多個 block，取最後一個 text
         text = ""
@@ -589,7 +590,7 @@ def get_weather_report(locations=None):
             max_tokens=1500,
             messages=[{"role": "user", "content": prompt}]
         )
-        usage_tracker.track("claude-haiku-4-5-20251001", message)
+        usage_tracker.track("claude-haiku-4-5-20251001", message, feature="近期活動")
         weather_text = message.content[0].text
     except Exception as e:
         print(f"AI 天氣整理失敗：{e}")

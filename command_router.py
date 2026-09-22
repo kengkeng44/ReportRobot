@@ -203,35 +203,32 @@ HELP_TEXT = (
 
 
 def _format_cost_stats(stats):
-    """把 usage_tracker.get_stats() 的 dict 轉成 LINE 友善排版。"""
-    lines = ["<b>💰 AI 用量統計</b>"]
-    started = stats.get("tracking_since", "")[:16].replace("T", " ")
-    now = stats.get("now", "")[:16].replace("T", " ")
-    lines.append(f"統計區間：{started} ~ {now}")
-    lines.append("")
+    """把 usage_tracker.get_stats() 的 dict 轉成 LINE 友善排版（當月、依功能）。"""
+    month = stats.get("month", "")
+    lines = [f"<b>💰 AI 用量統計（{month}）</b>", ""]
 
-    by_model = stats.get("by_model", {})
-    if not by_model:
-        lines.append("（尚無 AI 呼叫紀錄）")
+    by_feature = stats.get("by_feature", {})
+    if not by_feature:
+        lines.append("（本月尚無 AI 呼叫紀錄）")
     else:
-        for model, data in by_model.items():
-            short = model.replace("claude-", "").replace("-20251001", "")
-            lines.append(f"🤖 {short}")
-            lines.append(f"  呼叫 {data['calls']} 次")
-            lines.append(
-                f"  In {data['input_tokens']:,} / Out {data['output_tokens']:,} tokens"
-            )
-            lines.append(f"  約 ${data['estimated_cost_usd']:.4f}")
-            lines.append("")
-
-    if stats.get("web_search_calls"):
-        lines.append(f"🔍 Web Search 共 {stats['web_search_calls']} 次")
-        lines.append(f"  約 ${stats['web_search_cost_usd']:.4f}")
+        lines.append("＜依功能＞")
+        for feature, data in by_feature.items():
+            ws = data.get("web_searches", 0)
+            ws_str = f"、🔍{ws}" if ws else ""
+            lines.append(f"• {feature}：${data['estimated_cost_usd']:.4f}")
+            lines.append(f"    呼叫 {data['calls']} 次{ws_str}")
         lines.append("")
 
-    lines.append(f"📊 累計：${stats.get('total_estimated_cost_usd', 0):.4f}")
+    if stats.get("web_search_calls"):
+        lines.append(f"🔍 Web Search 共 {stats['web_search_calls']} 次"
+                     f"（約 ${stats['web_search_cost_usd']:.4f}）")
+        lines.append("")
+
+    lines.append(f"📊 本月累計：${stats.get('total_estimated_cost_usd', 0):.4f}")
     lines.append("")
-    lines.append("ℹ️ 從上次 Railway 重啟到現在的累積，redeploy 會歸零。")
+    persist = "✅ Notion 持久化（跨 redeploy 保留）" if stats.get("persisted") \
+        else "⚠️ in-memory 計數（redeploy 歸零）"
+    lines.append(f"ℹ️ {persist}")
     return "\n".join(lines)
 
 # 偵測前綴：開頭是 / 或「查」

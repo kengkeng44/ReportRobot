@@ -95,7 +95,7 @@ def translate_titles(items):
             max_tokens=800,
             messages=[{"role": "user", "content": prompt}],
         )
-        usage_tracker.track(AI_MODEL, message)
+        usage_tracker.track(AI_MODEL, message, feature="個股查詢")
         text = message.content[0].text.strip()
         match = re.search(r'\[.*\]', text, re.DOTALL)
         if match:
@@ -434,7 +434,7 @@ def get_ai_analysis(stock_id, news_summary, forum_summary):
             max_tokens=1200,
             messages=[{"role": "user", "content": prompt}],
         )
-        usage_tracker.track(AI_MODEL, message)
+        usage_tracker.track(AI_MODEL, message, feature="個股查詢")
         return message.content[0].text
     except Exception as e:
         return f"AI 分析暫時無法取得：{e}"
@@ -540,7 +540,7 @@ def get_security_intro(stock_id, name):
             max_tokens=200,
             messages=[{"role": "user", "content": prompt}],
         )
-        usage_tracker.track("claude-haiku-4-5-20251001", msg)
+        usage_tracker.track("claude-haiku-4-5-20251001", msg, feature="個股查詢")
         text = msg.content[0].text.strip() if msg.content else ""
         # AI 表示不熟悉就跳過
         if text in ("無資料", "無資料。", "無", "") or "不熟悉" in text or "無法確定" in text:
@@ -593,7 +593,7 @@ def get_fundamentals_block(stock_id, name):
         # 照格式整理搜尋結果,Haiku 就夠(2026-09-16 實測 Haiku 4.5 可用 web_search)
         msg = sonnet_client.create(
             ANTHROPIC_API_KEY, prompt, max_tokens=1200, model=sonnet_client.HAIKU,
-            tools=[sonnet_client.web_search_tool(3)],
+            tools=[sonnet_client.web_search_tool(3)], label="個股查詢",
         )
         text = ""
         for block in msg.content:

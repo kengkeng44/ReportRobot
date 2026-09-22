@@ -190,7 +190,8 @@ def _call_claude(prompt, max_tokens, max_uses, label, model=sonnet_client.MODEL)
             extra = {"max_tokens": max_tokens + 4000, "effort": "medium"}
         msg = sonnet_client.create(
             ANTHROPIC_API_KEY, prompt, model=model,
-            tools=[sonnet_client.web_search_tool(max_uses)], **extra,
+            tools=[sonnet_client.web_search_tool(max_uses)], label="自由問答",
+            **extra,
         )
         # 蒐集所有 text block（web_search 之間會穿插多個 text，必須全部收）
         texts = []

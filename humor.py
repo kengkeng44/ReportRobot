@@ -69,7 +69,7 @@ def _ai(prompt, max_tokens=300):
         temperature=1.0,  # 明示要多樣性,不要之後有人手癢調低
         messages=[{"role": "user", "content": prompt}],
     )
-    usage_tracker.track(AI_MODEL, message)
+    usage_tracker.track(AI_MODEL, message, feature="今日一則")
     return message.content[0].text.strip()
 
 

@@ -185,7 +185,7 @@ def _ai(prompt, max_tokens=200):
         temperature=1.0,
         messages=[{"role": "user", "content": prompt}],
     )
-    usage_tracker.track(AI_MODEL, message)
+    usage_tracker.track(AI_MODEL, message, feature="今日三句")
 
     # 截斷的回覆「還是解析得出來」——「句子：Play it」被切一半,
     # parse_ai 會當成一個完整片語收下,然後它就永久住在語句庫裡了。

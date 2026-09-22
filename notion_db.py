@@ -168,6 +168,24 @@ _SCHEMAS = {
         "Month": {"title": {}},                                 # YYYY-MM
         "Count": {"number": {"format": "number"}},
     },
+    # API 用量成本：一行 = 一個月的一個功能。usage_tracker 持久化用。
+    # title「項目」是唯一鍵「YYYY-MM｜功能」，另存月份 / 功能方便 Notion 分組。
+    "ApiCost": {
+        "項目": {"title": {}},                                  # "YYYY-MM｜功能"（唯一鍵）
+        "月份": {"rich_text": {}},                              # YYYY-MM
+        "功能": _select(
+            ("盤前重點", "gray"), ("今日一則", "orange"), ("天氣新聞", "blue"),
+            ("近期活動", "green"), ("今日三句", "purple"), ("待辦解析", "yellow"),
+            ("個股查詢", "pink"), ("自由問答", "red"), ("帳單整理", "brown"),
+            ("其他", "default"),
+        ),
+        "呼叫次數": {"number": {"format": "number"}},
+        "InputTokens": {"number": {"format": "number"}},
+        "OutputTokens": {"number": {"format": "number"}},
+        "WebSearch次數": {"number": {"format": "number"}},
+        "估算成本USD": {"number": {"format": "dollar"}},
+        "更新時間": {"date": {}},
+    },
     # 已經講過的小知識/笑話/新鮮事。存在 Notion 而不是記憶體：
     # Railway redeploy 會重啟 process，in-memory 的歷史一歸零就又開始重複。
     "今日一則": {
@@ -670,6 +688,96 @@ def quota_set_month(month_str, count):
         return True
     except Exception as e:
         print(f"[notion] quota_set_month 失敗：{e}")
+        return False
+
+
+# ─────────────────────────────────────────────────────────
+# ApiCost：API 用量成本的持久化
+# 一行 = 一個月的一個功能，title「項目」= "YYYY-MM｜功能"
+# ─────────────────────────────────────────────────────────
+
+def api_cost_get_month(month_str):
+    """讀取某月所有功能的累計，回 {feature: {...}}。Notion 不可用回 {}。"""
+    db_id = get_or_create_db("ApiCost")
+    client = _get_client()
+    if not db_id or not client:
+        return {}
+    try:
+        out = {}
+        cursor = None
+        while True:
+            kwargs = {
+                "database_id": db_id,
+                "filter": {"property": "月份", "rich_text": {"equals": month_str}},
+                "page_size": 100,
+            }
+            if cursor:
+                kwargs["start_cursor"] = cursor
+            res = client.databases.query(**kwargs)
+            for page in res.get("results", []):
+                props = page.get("properties", {}) or {}
+                feature = _read_select(props, "功能") or _read_title(props, "項目")
+                if not feature:
+                    continue
+                out[feature] = {
+                    "calls": int((props.get("呼叫次數", {}) or {}).get("number") or 0),
+                    "input_tokens": int((props.get("InputTokens", {}) or {}).get("number") or 0),
+                    "output_tokens": int((props.get("OutputTokens", {}) or {}).get("number") or 0),
+                    "web_searches": int((props.get("WebSearch次數", {}) or {}).get("number") or 0),
+                    "cost_usd": float((props.get("估算成本USD", {}) or {}).get("number") or 0.0),
+                }
+            if not res.get("has_more"):
+                break
+            cursor = res.get("next_cursor")
+        return out
+    except Exception as e:
+        print(f"[notion] api_cost_get_month 失敗：{e}")
+        return {}
+
+
+def _api_cost_find(db_id, client, key):
+    """依 title「項目」找該列 page_id，找不到回 None。"""
+    try:
+        res = client.databases.query(
+            database_id=db_id,
+            filter={"property": "項目", "title": {"equals": key}},
+            page_size=1,
+        )
+        results = res.get("results", [])
+        return results[0]["id"] if results else None
+    except Exception as e:
+        print(f"[notion] api_cost_find 失敗：{e}")
+        return None
+
+
+def api_cost_set(month_str, feature, *, calls, input_tokens, output_tokens,
+                 web_searches, cost_usd):
+    """寫入某月某功能的累計。沒有就建，已有就 update。"""
+    db_id = get_or_create_db("ApiCost")
+    client = _get_client()
+    if not db_id or not client:
+        return False
+    key = f"{month_str}｜{feature}"
+    props = {
+        "月份": {"rich_text": [{"text": {"content": month_str}}]},
+        "功能": {"select": {"name": feature}},
+        "呼叫次數": {"number": int(calls)},
+        "InputTokens": {"number": int(input_tokens)},
+        "OutputTokens": {"number": int(output_tokens)},
+        "WebSearch次數": {"number": int(web_searches)},
+        "估算成本USD": {"number": round(float(cost_usd), 4)},
+        "更新時間": {"date": {"start": datetime.now().isoformat(timespec="seconds")}},
+    }
+    try:
+        page_id = _api_cost_find(db_id, client, key)
+        if page_id:
+            client.pages.update(page_id=page_id, properties=props)
+        else:
+            props["項目"] = {"title": [{"text": {"content": key}}]}
+            client.pages.create(parent={"database_id": db_id}, properties=props)
+        return True
+    except Exception as e:
+        print(f"[notion] api_cost_set 失敗：{e}")
         return False
 
 

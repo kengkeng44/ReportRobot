@@ -29,7 +29,7 @@ def fake_api(monkeypatch):
 
     monkeypatch.setattr(sonnet_client.anthropic, "Anthropic", FakeClient)
     monkeypatch.setattr(sonnet_client.usage_tracker, "track",
-                        lambda model, msg: state.tracked.append(model))
+                        lambda model, msg, feature=None: state.tracked.append(model))
     return state
 
 
