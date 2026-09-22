@@ -355,6 +355,7 @@ def format_overview(detailed=False):
         # 整理帳單明細要算數字,effort medium;思考也吃 max_tokens,留足空間
         msg = sonnet_client.create(
             ANTHROPIC_API_KEY, prompt, max_tokens=10000, effort="medium",
+            label="帳單整理",
         )
         text = ""
         for block in msg.content:

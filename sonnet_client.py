@@ -23,10 +23,12 @@ def web_search_tool(max_uses):
     return {"type": "web_search_20250305", "name": "web_search", "max_uses": max_uses}
 
 
-def create(api_key, prompt, *, max_tokens, effort=None, tools=None, model=MODEL):
+def create(api_key, prompt, *, max_tokens, effort=None, tools=None, model=MODEL,
+           label=None):
     """呼叫模型(預設 Sonnet 5);回傳最後一個 message,content 換成所有回合累積的 blocks。
 
     每個回合都各自記進 usage_tracker,呼叫端不用再 track。
+    label：功能名稱,傳給 usage_tracker 做「每功能」成本歸戶(見 usage_tracker)。
     """
     client = anthropic.Anthropic(api_key=api_key)
     messages = [{"role": "user", "content": prompt}]
@@ -40,7 +42,7 @@ def create(api_key, prompt, *, max_tokens, effort=None, tools=None, model=MODEL)
     msg = None
     for _ in range(MAX_CONTINUATIONS + 1):
         msg = client.messages.create(messages=messages, **kwargs)
-        usage_tracker.track(model, msg)
+        usage_tracker.track(model, msg, feature=label or usage_tracker.DEFAULT_FEATURE)
         blocks.extend(msg.content)
         if msg.stop_reason != "pause_turn":
             break

@@ -288,6 +288,7 @@ def _ai_summary_uncached(chip_data=None):
         # 不給 web_search:資料都在 prompt 裡。要判斷方向、交叉比對數字,留 Sonnet 5 + medium
         message = sonnet_client.create(
             ANTHROPIC_API_KEY, prompt, max_tokens=6000, effort="medium",
+            label="盤前重點",
         )
         text = ""
         for block in message.content:

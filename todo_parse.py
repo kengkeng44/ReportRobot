@@ -280,5 +280,5 @@ def _ai(prompt, max_tokens=64):
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
     )
-    usage_tracker.track(AI_MODEL, message)
+    usage_tracker.track(AI_MODEL, message, feature="待辦解析")
     return message.content[0].text.strip()
