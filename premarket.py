@@ -1,10 +1,13 @@
 """
 盤前報告（每日 08:00 推、週末略過）：
+※ 整份報告目前用 PREMARKET_ENABLED 總開關暫停（預設關閉）；設成 1 才會推。
+
 - 國際指數隔夜收盤（含費半 SOX）
 - 重要 ADR 與盤後價（TSMC / NVIDIA）
 - 匯率與原物料（USD/TWD、DXY、USD/JPY、油、金）
 - 三大法人買賣超
 - AI 根據 Google News 標題整理 Fed / 總經 / 地緣 / 類股 / 法說會
+  （唯一花 token 的段，用 PREMARKET_AI_ENABLED 開關；預設關閉省 token）
 """
 
 import os
@@ -51,6 +54,24 @@ ADR_STOCKS = [
 COMMODITIES = [
     ("GLD", "黃金"),
 ]
+
+
+def _flag_on(name):
+    return _env(name).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _report_enabled():
+    """整份盤前報告的總開關（PREMARKET_ENABLED，預設關閉暫停）。
+    關閉時 build_premarket_report 直接回 None：每日排程不推、按「盤前」按鈕也不出。
+    要開回來把它設成 1 / true / yes / on 即可（免改程式、免重部署）。"""
+    return _flag_on("PREMARKET_ENABLED")
+
+
+def _ai_summary_enabled():
+    """「🧠 盤前重點」是這份報告裡唯一花 token 的段（Claude API）。
+    用 PREMARKET_AI_ENABLED 開關暫時停掉省錢，預設關閉；
+    要開回來把它設成 1 / true / yes / on 即可（免改程式、免重部署）。"""
+    return _flag_on("PREMARKET_AI_ENABLED")
 
 
 def is_weekend():
@@ -280,7 +301,13 @@ def _ai_summary_uncached(chip_data=None):
 
 
 def build_premarket_report(force=False):
-    """組成盤前報告 HTML 字串；週末回 None（呼叫端會 skip）。force=True 強跑。"""
+    """組成盤前報告 HTML 字串；週末回 None（呼叫端會 skip）。force=True 強跑。
+
+    整份報告用 PREMARKET_ENABLED 總開關暫停中（預設關閉）：關閉時一律回 None，
+    連 force=True（按「盤前」按鈕）也不出，要開回來設 PREMARKET_ENABLED=1。"""
+    if not _report_enabled():
+        print("盤前報告總開關關閉（PREMARKET_ENABLED 未開），skip")
+        return None
     if is_weekend() and not force:
         print("週末，盤前報告 skip")
         return None
@@ -288,7 +315,9 @@ def build_premarket_report(force=False):
     intl_lines = [_quote_line(s, l) for s, l in INTL_INDICES + ADR_STOCKS + COMMODITIES]
     chip_data = get_institutional_trades()
     chip_block = _build_chip_block_from(chip_data)
-    ai_block = _build_ai_summary(chip_data=chip_data)
+    # AI 盤前重點暫時停掉省 token（PREMARKET_AI_ENABLED 開關，預設關）。
+    # 關閉時完全不呼叫 Claude API，只留免費的國際市場 / 三大法人兩段。
+    ai_block = _build_ai_summary(chip_data=chip_data) if _ai_summary_enabled() else ""
 
     sections = [
         "<b>📊 盤前報告</b>",

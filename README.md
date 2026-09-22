@@ -273,6 +273,8 @@ Notion 持久化(待辦 / 提醒 / LINE 配額)
 | `ADMIN_LINE_USER_ID` | 管理員錯誤通知 + admin-only 指令權限（自己的 LINE userId，用 `/我的id` 取得）|
 | `DAILY_CRON` | 排程 cron 表達式（預設 `"0 22 * * *"` = UTC 22:00 = 台北 06:00）|
 | `LINE_PUSH_QUOTA` | LINE 月 push 配額（預設 `200` = 輕用量；中用量設 `3000`、高用量設 `6000`）|
+| `PREMARKET_ENABLED` | 盤前報告總開關。留空/`0`=**整份暫停**（每日不推、按「盤前」也不出，預設），設 `1` 開回來 |
+| `PREMARKET_AI_ENABLED` | 盤前「🧠 盤前重點」AI 段開關（唯一花 token 的段）。留空/`0`=**關閉省 token**（預設），設 `1` 開回來 |
 | `GMAIL_FORWARD_FROM` | 重要 Gmail 即時轉發的寄件人 watchlist，逗號分隔（例：`bossmail@xxx,landlord@yyy`）|
 | `PYTHONUNBUFFERED` | 設 `1`，讓 print 即時顯示在 Railway log |
 
