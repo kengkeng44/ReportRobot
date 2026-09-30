@@ -88,6 +88,7 @@ def test_group_carousel_cannot_carry_private_stuff():
 @pytest.fixture
 def _mailed(monkeypatch):
     box = []
+    monkeypatch.setenv("PERSONAL_EMAIL_ENABLED", "1")
     monkeypatch.setattr(mailer, "is_configured", lambda: True)
     # 簽章要跟真的 mailer.send_email 對齊。少一個 images 參數，
     # daily_report 傳 images= 就會炸在替身上 —— 那是替身過期，
@@ -99,6 +100,19 @@ def _mailed(monkeypatch):
                         lambda locations=None: ("板橋天氣", None))
     monkeypatch.setattr(daily_report, "_spending_recent", lambda: "最新消費內容")
     return box
+
+
+def test_personal_report_paused_by_default(monkeypatch, _mailed):
+    """PERSONAL_EMAIL_ENABLED 沒開 → 不寄信，也不抓任何區塊（省 API 錢）。"""
+    monkeypatch.delenv("PERSONAL_EMAIL_ENABLED", raising=False)
+
+    def _boom(*a, **k):
+        raise AssertionError("暫停時不該抓資料")
+
+    monkeypatch.setattr(daily_report, "get_weather_report", _boom)
+    monkeypatch.setattr(daily_report, "_spending_recent", _boom)
+    daily_report._email_personal_report("2026-09-30")
+    assert _mailed == []
 
 
 def test_personal_report_is_emailed(_mailed):
@@ -214,6 +228,7 @@ def _mailed_full(monkeypatch):
     是因為既有測試都在 unpack 兩元組。
     """
     box = []
+    monkeypatch.setenv("PERSONAL_EMAIL_ENABLED", "1")
     monkeypatch.setattr(mailer, "is_configured", lambda: True)
     monkeypatch.setattr(
         mailer, "send_email",

@@ -13,6 +13,10 @@
 2026-09-04 個人版拿掉「冰箱快過期・煮什麼」區塊：使用者覺得每天跳這張
 太吵。食材記錄（LINE「買了」、電子發票 → pantry 的自動記錄）完全沒動，
 動的只是「每天被動通知」這件事 —— 要看自己在 LINE 打「快過期」問。
+
+2026-09-30 個人版信整份用 PERSONAL_EMAIL_ENABLED 總開關暫停（預設關閉）：
+使用者不想每天收，也不想花錢去抓信裡那些資料（天氣 AI 摘要、今日三句等）。
+設成 1 才會寄。群組版 LINE 推播不受影響。
 """
 
 import os
@@ -137,6 +141,18 @@ def _build_personal_sections(todos, reminders, recent_days, weather,
     return out
 
 
+def _personal_email_enabled():
+    """個人版每日信的總開關（PERSONAL_EMAIL_ENABLED，預設關閉暫停）。
+
+    關閉時 _email_personal_report 一進來就 return，任何區塊都不抓 ——
+    天氣、今日三句會呼叫 Claude API，待辦 / 消費 / 持倉會打 Notion 與報價，
+    不寄信就不該花這些錢。每日排程與 /admin/run-personal 都走同一函式，一次覆蓋。
+    要開回來把它設成 1 / true / yes / on 即可（免改程式、免重部署）。
+    """
+    return os.environ.get("PERSONAL_EMAIL_ENABLED", "").strip().lower() in (
+        "1", "true", "yes", "on")
+
+
 def _personal_user_id():
     """個人版每日信要抓誰的待辦 / 提醒。兩個都沒設回 None。
 
@@ -170,6 +186,10 @@ def _email_personal_report(today):
 
     整段包在呼叫端的 try 裡：個人版炸掉不能影響已經推出去的群組版。
     """
+    if not _personal_email_enabled():
+        print("[個人版] 總開關關閉（PERSONAL_EMAIL_ENABLED 未開），skip")
+        return
+
     import mailer
 
     if not mailer.is_configured():

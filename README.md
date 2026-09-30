@@ -247,6 +247,7 @@ Gmail / 對帳單
 | 變數 | 用途 |
 |---|---|
 | `SEND_TOKEN_PICKLE_B64` | 只有 `gmail.send` 權限的 OAuth token base64（雲端必填）|
+| `PERSONAL_EMAIL_ENABLED` | 每日個人報 Gmail 總開關。留空/`0`=**整份暫停**（不寄、也不抓天氣/三句/財務等資料，預設），設 `1` 開回來 |
 | `REPORT_EMAIL_TO` | 收件者，沒設就寄給 `GMAIL_USER` 自己 |
 
 外部 API
