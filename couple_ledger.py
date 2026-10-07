@@ -207,7 +207,8 @@ def mirror_txn(txn):
         return False
     gid = couple_group_id()
     admin = os.environ.get("ADMIN_LINE_USER_ID", "")
-    fp = txn.get("fingerprint")
+    # 在 Notion 手動新增的列沒有 Fingerprint，退而用頁面 ID 去重
+    fp = txn.get("fingerprint") or txn.get("page_id")
     if not (gid and admin and fp):
         return False
     if notion_db.couple_has_source(fp):
@@ -237,14 +238,131 @@ def mirror_txn(txn):
     return True
 
 
-def backfill(limit=1000):
-    """把交易明細裡既有的共同消費一次補進共同帳本。重跑安全（有去重）。"""
+def mark_shared(txn):
+    """把交易明細的一筆改成共同（金額改成我那半）並同步進共同帳本。
+
+    只有「原始總額還沒填」時才砍半：那代表金額欄還是整筆。已經填過的
+    （私訊記的共同、全聯自動規則）金額本來就是我那半，再砍會變四分之一。
+    """
+    import finance_report
     import notion_db
-    added = 0
+
+    t = dict(txn)
+    if not t.get("total_set"):
+        total = t.get("amount")
+        if not total:
+            return False
+        half = finance_report.my_share_of(total)
+        if not notion_db.transaction_set_split(t["page_id"], "共同", half, total):
+            return False
+        t.update(amount=half, total=total, total_set=True)
+    elif t.get("split_raw") != "共同":
+        if not notion_db.transaction_set_split(t["page_id"], "共同"):
+            return False
+    t["split_type"] = t["split_raw"] = "共同"
+    mirror_txn(t)
+    return True
+
+
+def rescan(limit=1000):
+    """重掃交易明細，該進共同帳本的都補進去。每天排程跑，也可手動觸發。重跑安全。
+
+    三種會被抓到：
+      1. 已經是共同、但還沒進帳本的（國泰同步、私訊記一筆）
+      2. 你在 Notion 手動把分攤類型改成共同的 —— 金額欄還是整筆，順手砍成你那半
+      3. 還沒標分攤、但店名在自動共同清單裡的（全聯、康達盛通），舊資料一起補標
+    標了「個人」的不動：那是你明確決定過的。
+    """
+    import finance_report
+    import notion_db
+
+    stats = {"mirrored": 0, "marked": 0}
     for t in notion_db.transactions_load(limit=limit):
-        if mirror_txn(t):
-            added += 1
-    return added
+        if t.get("direction") == "收入" or not t.get("page_id"):
+            continue
+        if t.get("split_raw") == "共同":
+            if not t.get("total_set"):
+                if mark_shared(t):
+                    stats["marked"] += 1
+            elif mirror_txn(t):
+                stats["mirrored"] += 1
+        elif t.get("split_raw") is None and finance_report.is_shared_shop(t.get("shop")):
+            if mark_shared(t):
+                stats["marked"] += 1
+    return stats
+
+
+def backfill(limit=1000):
+    """舊名保留給 /admin/couple-backfill。"""
+    st = rescan(limit)
+    return st["mirrored"] + st["marked"]
+
+
+# ── 私訊「整理共同」：一筆一筆點 ─────────────────────────
+
+_REVIEW_KEYWORDS = {"整理共同", "標共同", "整理雙人"}
+# 換行用 chr(10)：這個專案的編輯流程把字面量 \n 轉成真的換行踩過好幾次
+_NL = chr(10)
+_REVIEW = {"rows": [], "skip": set()}
+
+
+def _pending_review(refresh=False):
+    """還沒標分攤的支出（新到舊）。整理期間用快取，每按一下不必重撈 Notion。"""
+    import notion_db
+    if refresh or not _REVIEW["rows"]:
+        _REVIEW["rows"] = [t for t in notion_db.transactions_load(limit=1000)
+                           if t.get("split_raw") is None and t.get("page_id")
+                           and t.get("direction") != "收入" and t.get("amount")]
+        _REVIEW["skip"] = set()
+    return [t for t in _REVIEW["rows"] if t["page_id"] not in _REVIEW["skip"]]
+
+
+def _review_card(note=""):
+    rows = _pending_review()
+    if not rows:
+        return (note + _NL if note else "") + "✅ 沒有還沒分的帳了。"
+    t = rows[0]
+    name = (t.get("shop") or "").strip() or f"（{t.get('category') or '沒有店名'}）"
+    src = "國泰" if (t.get("source") or "").startswith("國泰") else (t.get("source") or "")
+    body = (f"{(t.get('date') or '')[5:]}　{name}{_NL}NT${int(t['amount']):,}　{src}"
+            f"{_NL}{_NL}這筆是兩個人一起的嗎？（還有 {len(rows)} 筆）")
+    if note:
+        body = note + _NL + _NL + body
+
+    def _pb(label, choice):
+        return {"type": "action", "action": {
+            "type": "postback", "label": label, "displayText": label,
+            "data": f"action=split_mark&pid={t['page_id']}&s={choice}"}}
+
+    return {"type": "text", "text": body, "quickReply": {"items": [
+        _pb("共同", "shared"), _pb("個人", "personal"),
+        _pb("跳過", "skip"), _pb("先到這", "stop")]}}
+
+
+def review_start():
+    return _review_card()
+
+
+def review_postback(page_id, choice):
+    """按了共同 / 個人 / 跳過 / 先到這。回下一張卡。"""
+    import notion_db
+
+    if choice == "stop":
+        _REVIEW["rows"] = []
+        return "好，先整理到這。想繼續再打「整理共同」。"
+    t = next((r for r in _REVIEW["rows"] if r["page_id"] == page_id), None)
+    if t is None:
+        # 伺服器重啟過或卡片太舊，重新撈一次接著整理
+        _pending_review(refresh=True)
+        return _review_card("那張卡片過期了，從最新的接著整理：")
+    note = ""
+    if choice == "shared":
+        note = "👍 已標共同，也進共同帳本了。" if mark_shared(t) else "⚠️ 寫入失敗，這筆先跳過。"
+    elif choice == "personal":
+        note = ("已標個人。" if notion_db.transaction_set_split(page_id, "個人")
+                else "⚠️ 寫入失敗，這筆先跳過。")
+    _REVIEW["skip"].add(page_id)
+    return _review_card(note)
 
 
 # ── 結算 ─────────────────────────────────────────────────

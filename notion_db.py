@@ -1685,6 +1685,25 @@ def couple_load(limit=200, since=None, until=None):
     return out
 
 
+def transaction_set_split(page_id, split_type, amount=None, total=None):
+    """改一筆交易的分攤類型。共同時一併寫「金額 = 我那半、原始總額 = 整筆」，
+    跟私訊記一筆的共同同一套語意 —— 不改金額的話，本月支出會把整筆算成你的。"""
+    client = _get_client()
+    if not client or not page_id:
+        return False
+    props = {"分攤類型": _prop_select(split_type)}
+    if amount is not None:
+        props["金額"] = _prop_number(amount)
+    if total is not None:
+        props["原始總額"] = _prop_number(total)
+    try:
+        client.pages.update(page_id=page_id, properties=props)
+        return True
+    except Exception as e:
+        print(f"[notion] transaction_set_split 失敗：{e}")
+        return False
+
+
 def couple_has_source(source_id):
     """共同帳本裡是否已有這個來源ID。查不到 Notion 時回 True ——
     寧可這次不同步（明天會再試），也不要重複寫入讓結算多算一筆。"""
@@ -1832,6 +1851,11 @@ def transactions_load(limit=200, since=None, until=None):
                     "split_type": _read_select(props, "分攤類型") or "個人",
                     # 共同帳本同步靠它去重（couple_ledger.mirror_txn）
                     "fingerprint": _read_rich_text(props, "Fingerprint"),
+                    # 下面三個給「標成共同」用（couple_ledger.rescan / 整理共同）：
+                    # split_type 對空值有預設「個人」，分不出「沒標過」跟「標了個人」
+                    "page_id": r.get("id"),
+                    "split_raw": _read_select(props, "分攤類型"),
+                    "total_set": _read_number(props, "原始總額") is not None,
                     "total": (_read_number(props, "原始總額")
                               if _read_number(props, "原始總額") is not None
                               else _read_number(props, "金額")),

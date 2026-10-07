@@ -205,6 +205,24 @@ async def lifespan(app: FastAPI):
         misfire_grace_time=300,
         replace_existing=True,
     )
+    # 共同帳本重掃：排在財務同步（15:30）之後，把當天新進的全聯 / 康達盛通、
+    # 以及你在 Notion 手動改成共同的那幾筆補進共同帳本。重跑有去重。
+    def _run_couple_rescan():
+        try:
+            import couple_ledger
+            print(f"[couple] 重掃：{couple_ledger.rescan()}")
+        except Exception as e:
+            print(f"[couple] 重掃失敗（非致命）：{e}")
+
+    scheduler.add_job(
+        _run_couple_rescan,
+        CronTrigger(hour=15, minute=50, timezone="Asia/Taipei"),
+        id="couple_rescan",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=1800,
+        replace_existing=True,
+    )
     scheduler.start()
     # 注入 scheduler 給 personal.py 用（提醒功能要排 one-shot job）
     import app_state

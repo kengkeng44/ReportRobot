@@ -369,9 +369,11 @@ def test_mirror_dedupes(env, monkeypatch):
 
 def test_backfill_counts(env, monkeypatch):
     seen = set()
+    def r(fp, split="共同"):
+        return dict(_shared_txn(fp, split=split), page_id="p" + fp,
+                    split_raw=split, total_set=True)
     monkeypatch.setattr(notion_db, "transactions_load",
-                        lambda **kw: [_shared_txn("a"), _shared_txn("a"),
-                                      _shared_txn("b", split="個人"), _shared_txn("c")])
+                        lambda **kw: [r("a"), r("a"), r("b", split="個人"), r("c")])
     monkeypatch.setattr(notion_db, "couple_has_source", lambda fp: fp in seen)
     monkeypatch.setattr(notion_db, "couple_add", lambda r: seen.add(r["source_id"]) or "pid")
     assert cl.backfill() == 2
@@ -440,3 +442,63 @@ def test_chart_command_returns_image(env, monkeypatch):
 def test_chart_without_data_is_text(env, monkeypatch):
     monkeypatch.setattr(notion_db, "couple_load", lambda **kw: [])
     assert "沒有圖可以畫" in cr.handle("圖表 9月", ctx=_group())
+
+
+# ── 重掃 / 整理共同 ──────────────────────────────────────
+
+def _row(pid, shop="", amount=100, split_raw=None, total_set=False, fp="", direction="支出"):
+    return {"page_id": pid, "shop": shop, "amount": amount, "total": amount,
+            "split_raw": split_raw, "split_type": split_raw or "個人",
+            "total_set": total_set, "fingerprint": fp, "direction": direction,
+            "date": "2026-10-01", "category": "超市∕量販", "source": "國泰消費彙整"}
+
+
+@pytest.fixture
+def ledger_io(env, monkeypatch):
+    io = {"set": [], "added": []}
+    monkeypatch.setattr(notion_db, "transaction_set_split",
+                        lambda pid, s, a=None, t=None: io["set"].append((pid, s, a, t)) or True)
+    monkeypatch.setattr(notion_db, "couple_has_source", lambda sid: False)
+    monkeypatch.setattr(notion_db, "couple_add", lambda r: io["added"].append(r) or "pid")
+    return io
+
+
+def test_rescan_three_cases(ledger_io, monkeypatch):
+    rows = [
+        _row("a", "全聯", 400, "共同", total_set=True, fp="fa"),        # 1 已共同未入帳 → 只同步
+        _row("b", "晚餐", 600, "共同"),                                # 2 Notion 手改 → 砍半 + 同步
+        _row("c", "康達盛通生活量販淡新店", 2000),                       # 3 自動規則 → 補標
+        _row("d", "康達盛通生活量販淡新店", 900, "個人"),                 # 明確標個人 → 不動
+        _row("e", "全家", 80),                                         # 沒規則 → 不動
+        _row("f", "退款", 300, "共同", direction="收入"),
+    ]
+    monkeypatch.setattr(notion_db, "transactions_load", lambda **kw: rows)
+    assert cl.rescan() == {"mirrored": 1, "marked": 2}
+    assert ledger_io["set"] == [("b", "共同", 300, 600), ("c", "共同", 1000, 2000)]
+    assert [r["total"] for r in ledger_io["added"]] == [400, 600, 2000]
+    assert ledger_io["added"][1]["source_id"] == "b"          # 沒指紋用頁面 ID
+
+
+def test_review_flow(ledger_io, monkeypatch):
+    monkeypatch.setattr(notion_db, "transactions_load", lambda **kw: [
+        _row("p1", "爭鮮", 755), _row("p2", "", 521), _row("p3", "uber", 265, "個人")])
+    card = cr.handle("整理共同", ctx=DM)
+    assert "爭鮮" in card["text"] and "還有 2 筆" in card["text"]
+    data = card["quickReply"]["items"][0]["action"]["data"]
+    nxt = cr.handle_postback(data, ADMIN, ctx=DM)                 # 按「共同」
+    assert ledger_io["set"][0] == ("p1", "共同", 378, 755)
+    assert "還有 1 筆" in nxt["text"]
+    pb = nxt["quickReply"]["items"][1]["action"]["data"]           # 按「個人」
+    done = cr.handle_postback(pb, ADMIN, ctx=DM)
+    assert ledger_io["set"][1][:2] == ("p2", "個人")
+    assert "沒有還沒分的帳" in done
+
+
+def test_review_admin_only(env, monkeypatch):
+    monkeypatch.setattr(notion_db, "transactions_load", lambda **kw: pytest.fail("不該讀"))
+    assert cr.handle("整理共同", ctx={"source_type": "user", "user_id": GF}) is None
+    assert "沒有作用" in cr.handle_postback("action=split_mark&pid=x&s=shared", GF)
+
+
+def test_kangda_is_shared_shop():
+    assert fr.is_shared_shop("康達盛通生活量販淡新店")

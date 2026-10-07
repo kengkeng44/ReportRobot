@@ -1119,6 +1119,14 @@ def handle(text, ctx=None):
     # 情侶記帳群組有自己的一套（預設共同、記進共同帳本），排最前面。
     # 它沒接走的（查股票、說明）照常往下走。
     import couple_ledger
+    # 私訊「整理共同」：一筆一筆把還沒分的刷卡紀錄點成共同 / 個人（只限本人）
+    if (text or "").strip().lstrip("/") in couple_ledger._REVIEW_KEYWORDS and _is_admin(ctx):
+        try:
+            couple_ledger._pending_review(refresh=True)
+            return couple_ledger.review_start()
+        except Exception as e:
+            print(f"整理共同失敗：{e}")
+            return "交易明細暫時連不上，等一下再試。"
     reply = couple_ledger.setup_reply(text, ctx)
     if reply is None and couple_ledger.is_couple_chat(ctx):
         reply = couple_ledger.handle(text, ctx)
@@ -1337,6 +1345,17 @@ def handle_postback(data, user_id, ctx=None):
         if action == "todo_add_start":
             return "群組裡直接打「待辦 內容」就好，例如：待辦 買衛生紙"
         user_id = ctx["group_id"]
+
+    if action == "split_mark":
+        if not _is_postback_owner(user_id):
+            return "這是本人的帳，這顆按鈕對你沒有作用。"
+        pid = (parsed.get("pid") or [""])[0]
+        choice = (parsed.get("s") or [""])[0]
+        try:
+            return couple_ledger.review_postback(pid, choice)
+        except Exception as e:
+            print(f"整理共同按鈕失敗：{e}")
+            return "寫入失敗，等一下再打「整理共同」。"
 
     try:
         if action == "todo_add_start":
