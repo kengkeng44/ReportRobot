@@ -286,7 +286,7 @@ def rescan(limit=1000):
                     stats["marked"] += 1
             elif mirror_txn(t):
                 stats["mirrored"] += 1
-        elif t.get("split_raw") is None and finance_report.is_shared_shop(t.get("shop")):
+        elif not t.get("split_raw") and finance_report.is_shared_shop(t.get("shop")):
             if mark_shared(t):
                 stats["marked"] += 1
     return stats
@@ -311,7 +311,7 @@ def _pending_review(refresh=False):
     import notion_db
     if refresh or not _REVIEW["rows"]:
         _REVIEW["rows"] = [t for t in notion_db.transactions_load(limit=1000)
-                           if t.get("split_raw") is None and t.get("page_id")
+                           if not t.get("split_raw") and t.get("page_id")
                            and t.get("direction") != "收入" and t.get("amount")]
         _REVIEW["skip"] = set()
     return [t for t in _REVIEW["rows"] if t["page_id"] not in _REVIEW["skip"]]

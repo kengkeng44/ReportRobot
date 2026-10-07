@@ -446,7 +446,7 @@ def test_chart_without_data_is_text(env, monkeypatch):
 
 # ── 重掃 / 整理共同 ──────────────────────────────────────
 
-def _row(pid, shop="", amount=100, split_raw=None, total_set=False, fp="", direction="支出"):
+def _row(pid, shop="", amount=100, split_raw="", total_set=False, fp="", direction="支出"):
     return {"page_id": pid, "shop": shop, "amount": amount, "total": amount,
             "split_raw": split_raw, "split_type": split_raw or "個人",
             "total_set": total_set, "fingerprint": fp, "direction": direction,
