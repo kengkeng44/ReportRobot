@@ -65,6 +65,11 @@ _LATEST_DAY_KEYWORDS = {"最新消費", "最近一天消費", "昨天花多少",
 _CARD_KEYWORDS = {"卡費", "信用卡帳單", "帳單", "card"}
 _NETWORTH_KEYWORDS = {"淨值", "資產", "networth"}
 _MANUAL_RE = re.compile(r"^(?:記一筆|記帳)\s*(.*)$")
+# 「品項 金額 [個人|單人|共同]」整句。品項要有中文且不以數字開頭：
+# 「2330」是查股票、「0050 0056」是聊天，都不該被當成一筆帳。
+# 品項限 12 字以內 —— 一整句聊天「我今天走了 8000」不是在記帳。
+_QUICK_ENTRY_RE = re.compile(
+    r"^(?=[^\d])(?=.*[一-鿿])(.{1,12}?)\s*(\d+(?:\.\d+)?)\s*(?:元|塊)?\s*(個人|單人|共同)?$")
 _SHOPPING_ADD_RE = re.compile(r"^(?:要買|待買)\s*(.*)$")
 _SHOPPING_BOUGHT_RE = re.compile(r"^(?:買好了|買到了)\s*(.*)$")
 _PREVIEW_KEYWORDS = {"預覽", "preview", "Preview", "PREVIEW", "test", "預覽報告"}
@@ -118,8 +123,9 @@ HELP_TEXT = (
     "💳 財務（1 對 1 才能用）\n"
     "  • 本月支出 / 最近交易 / 卡費 / 淨值\n"
     "  • 最新消費   ← 最新一天的明細 + 本月累計（原本在每日推播，已改成用問的）\n"
-    "  • 記一筆        ← 只打三個字會跳常記品項,再點金額、點個人/共同\n"
-    "  • 記一筆 午餐 120 個人   ← 直接打可以一步到位\n"
+    "  • 午餐 120      ← 私訊直接打就記好(預設個人),不用打「記一筆」\n"
+    "  • 記一筆        ← 跳常記的組合,按一下就記好;也有表單按鈕\n"
+    "  • 記一筆 午餐 120 個人   ← 舊寫法照樣可以\n"
     "  • 記一筆 晚餐 600 共同   ← 共同消費自動除以 2 記你那半\n"
     "  • 記一筆 薪水 50000     ← 含薪水/獎金/退款會記成收入\n"
     "  信用卡消費每天 15:30 自動同步進 Notion\n"
@@ -432,6 +438,12 @@ def parse(text):
             return ("stock", ticker)
         # 既然有 / 前綴 + 中文 + 找不到對應股票/指令，就丟給 AI 自由發揮
         return ("free_query", cleaned)
+
+    # 不帶「記一筆」的記帳：「午餐 120」「晚餐 600 共同」。排在最後，
+    # 前面所有指令都沒接走才算。是否真的記帳由 _dispatch 依聊天室決定 ——
+    # 家人群組裡講「便當 80」不能被記進誰的帳。
+    if not has_prefix and _QUICK_ENTRY_RE.match(cleaned):
+        return ("quick_entry", cleaned)
 
     return None  # 不認得就靜默不回應，避免騷擾家人聊天
 
@@ -774,26 +786,95 @@ _MANUAL_QUICK_HINT = (
 )
 
 
+# ── 記帳按鈕用的交易快取 ─────────────────────────────────
+# 「記一筆」每一段都要算常記品項 / 金額，原本每按一下就從 Notion 撈
+# 200 筆（兩次分頁查詢，1～3 秒）。按鈕只需要「大概的習慣」，十分鐘前
+# 的資料完全夠用；自己剛記的那筆則直接塞進快取，不必等過期。
+_TXN_CACHE = {"at": 0.0, "rows": None}
+_TXN_CACHE_TTL = 600
+
+
+def _cached_txns():
+    """回快取的交易明細；過期或沒有才去 Notion 撈。撈失敗丟例外給呼叫端。"""
+    import time
+
+    import notion_db
+
+    now = time.monotonic()
+    rows = _TXN_CACHE["rows"]
+    if rows is None or now - _TXN_CACHE["at"] > _TXN_CACHE_TTL:
+        rows = notion_db.transactions_load()
+        _TXN_CACHE["rows"] = rows
+        _TXN_CACHE["at"] = now
+    return rows
+
+
+def _remember_txn(txn):
+    """剛寫進 Notion 的那筆放到快取最前面（資料是新到舊）。
+
+    不放的話，剛記的組合要等快取過期才會出現在按鈕上 ——
+    使用者連記兩天咖啡，第二天的按鈕卻還沒有它。
+    """
+    if _TXN_CACHE["rows"] is not None:
+        _TXN_CACHE["rows"] = [txn] + list(_TXN_CACHE["rows"])
+
+
+def warm_caches():
+    """開機後背景先撈一次，第一個按「記一筆」的人不用等。失敗就算了。"""
+    try:
+        _cached_txns()
+    except Exception as e:
+        print(f"記帳快取預熱失敗（非致命）：{e}")
+    try:
+        import couple_ledger
+        couple_ledger.warm_cache()
+    except Exception as e:
+        print(f"共同帳本快取預熱失敗（非致命）：{e}")
+
+
+def _combo_label(shop, total, split):
+    """一鍵按鈕的字。個人不寫（多數是個人，寫了只是佔字數）。"""
+    tail = " 共同" if split == "共同" else ""
+    return f"{shop} {total:,}{tail}" if isinstance(total, int) else f"{shop} {total}{tail}"
+
+
+def _liff_option():
+    """有設 LIFF_ID 才給「表單」按鈕。沒設時按鈕不存在，而不是點了壞掉。"""
+    import liff_api
+    url = liff_api.liff_url()
+    return [("📝 表單", url)] if url else []
+
+
 def _manual_item_quick_reply():
-    """「記一筆」不帶參數 → 常記品項按鈕。Notion 掛掉就退回用法說明。"""
+    """「記一筆」不帶參數 → 一鍵組合 + 常記品項按鈕。Notion 掛掉就退回用法說明。
+
+    排列：表單 → 一鍵組合（按了直接記好）→ 品項（再選金額）。
+    組合放前面是因為它最省事；品項放後面當「這次不一樣」的出口。
+    """
     import finance_report
     import notion_db
-    from flex_builder import quick_reply_text
+    from flex_builder import QUICK_REPLY_MAX, quick_reply_text
 
     if not notion_db.is_configured():
         return _MANUAL_USAGE
 
     try:
-        txns = notion_db.transactions_load()
+        txns = _cached_txns()
     except Exception as e:
         print(f"常記品項載入失敗:{e}")
         return _MANUAL_USAGE
 
-    names = finance_report.frequent_expense_items(txns)
-    if not names:
+    options = _liff_option()
+    for shop, total, split in finance_report.frequent_combos(txns):
+        options.append((_combo_label(shop, total, split),
+                        f"記一筆 {shop} {total} {split}"))
+    room = QUICK_REPLY_MAX - len(options)
+    names = finance_report.frequent_expense_items(txns, limit=max(room, 0))
+    options += [(n, f"記一筆 {n}") for n in names]
+
+    if not options:
         return _MANUAL_USAGE
-    return quick_reply_text(_MANUAL_QUICK_HINT,
-                            [(n, f"記一筆 {n}") for n in names])
+    return quick_reply_text(_MANUAL_QUICK_HINT, options)
 
 
 def _manual_amount_quick_reply(item):
@@ -813,7 +894,7 @@ def _manual_amount_quick_reply(item):
         return hint
 
     try:
-        txns = notion_db.transactions_load()
+        txns = _cached_txns()
     except Exception as e:
         print(f"常用金額載入失敗:{e}")
         return hint
@@ -823,6 +904,21 @@ def _manual_amount_quick_reply(item):
         return hint
     return quick_reply_text(hint,
                             [(str(a), f"記一筆 {item} {a}") for a in amounts])
+
+
+def _quick_entry_arg(text):
+    """私訊直接打的「午餐 120」→ 交給 fin_manual 的參數。
+
+    沒寫分攤就當個人：跟人分的錢現在記在情侶群組，私訊這邊幾乎都是
+    自己的。再跳一段「個人 / 共同」就失去「打完就好」的意義。
+    「單人」是使用者習慣的講法，跟「個人」同義。
+    """
+    cleaned = (text or "").strip()
+    if cleaned.endswith("單人"):
+        return cleaned[:-2].strip() + " 個人"
+    if cleaned.endswith(("個人", "共同")):
+        return cleaned
+    return cleaned + " 個人"
 
 
 def _manual_split_quick_reply(item, total):
@@ -859,6 +955,7 @@ def _handle_finance(kind, arg):
             return _manual_split_quick_reply(txn["shop"], txn["total"])
         if not notion_db.transaction_add(txn):
             return "寫入 Notion 失敗,請稍後再試。"
+        _remember_txn(txn)
         sign = "+" if txn["direction"] == "收入" else "-"
         if txn["split_type"] == "共同":
             # 兩個數字都要看得到:整桌多少、我付多少
@@ -1019,6 +1116,15 @@ def handle(text, ctx=None):
     攔截必須排在所有指令分派之前（否則使用者講的「待辦」「快過期」
     會先被指令吃掉），但在 parse 之後（否則已知指令會被記成待辦）。
     """
+    # 情侶記帳群組有自己的一套（預設共同、記進共同帳本），排最前面。
+    # 它沒接走的（查股票、說明）照常往下走。
+    import couple_ledger
+    reply = couple_ledger.setup_reply(text, ctx)
+    if reply is None and couple_ledger.is_couple_chat(ctx):
+        reply = couple_ledger.handle(text, ctx)
+    if reply is not None:
+        return reply
+
     parsed = parse(text)
     intercepted = _intercept_pending_todo(text, ctx, parsed)
 
@@ -1042,6 +1148,13 @@ def _dispatch(text, ctx, parsed):
         return None
 
     kind, arg = parsed
+
+    # 不帶前綴的「午餐 120」只在私訊算記帳；其他聊天室一律當沒聽到，
+    # 不回「請私訊」—— 那會讓家人群組每講一句價錢就被 bot 插嘴。
+    if kind == "quick_entry":
+        if not _is_personal_chat(ctx):
+            return None
+        return _handle_finance("fin_manual", _quick_entry_arg(arg))
 
     # 權限檢查
     if kind in _ADMIN_KINDS and not _is_admin(ctx):

@@ -360,9 +360,16 @@ def parse_manual(text, today=None):
 
     shop = (cleaned[:m.start()] + " " + cleaned[m.end():]).strip()
     shop = re.sub(r"\s+", " ", shop)
-    if not shop:
-        shop = "未命名"
+    return build_manual_txn(shop, total, split_type, today)
 
+
+def build_manual_txn(shop, total, split_type=None, today=None):
+    """品項、金額、分攤已經分好時直接組交易 dict（LIFF 表單走這條）。
+
+    從 parse_manual 拆出來：表單送來的品項可能含數字（「7-11」），
+    拼回一句話再 parse 會把 7 當成金額。
+    """
+    shop = (shop or "").strip() or "未命名"
     day = (today or date.today()).isoformat()
     direction = "收入" if any(k in shop for k in _INCOME_HINTS) else "支出"
 
@@ -581,6 +588,51 @@ def frequent_amounts(txns, item, limit=BUTTON_LIMIT, pad=True, today=None):
             if amount not in out:
                 out.append(amount)
     return out
+
+
+# 一鍵組合至少要記過幾次才上按鈕。記一次的組合多半是偶發
+# （朋友生日那頓 1,280），放上第一排只會害手滑按錯 —— 按錯一筆
+# 的代價（去 Notion 刪）比多按兩下高。
+COMBO_MIN_COUNT = 2
+
+
+def frequent_combos(txns, limit=4, today=None, min_count=COMBO_MIN_COUNT):
+    """最常記的「品項 + 金額 + 分攤」整組。回 [(品項, 原始總額, 分攤類型)]。
+
+    這是「按一下就記好」的那排按鈕。分開統計品項與金額（frequent_expense_items
+    / frequent_amounts）是給三段式用的；那條路每段都要等一次回覆，而習慣性
+    消費（每天那杯 55 的咖啡）根本不需要選。
+
+    次數用**實際筆數**判斷門檻、用加權次數排序：門檻問的是「這是不是習慣」，
+    近期加權只該影響先後，不該讓一筆昨天的偶發消費（權重 3）直接過關。
+    只看近 90 天 —— 舊價位不該佔第一排。
+    """
+    today = today or date.today()
+    weights, hits, order = {}, {}, []
+    for t in txns or []:
+        if (t.get("source") or "") != "手動":
+            continue
+        if t.get("direction") == "收入":
+            continue                    # 薪水不會是每天按的那顆
+        name = (t.get("shop") or "").strip()
+        amount = t.get("total")
+        if amount is None:
+            amount = t.get("amount")
+        if not name or amount is None:
+            continue
+        w = _recency_weight(t.get("date"), today)
+        if not w:
+            continue
+        amount = int(amount) if float(amount) == int(amount) else amount
+        key = (name, amount, _split_of(t))
+        if key not in weights:
+            order.append(key)
+        weights[key] = weights.get(key, 0) + w
+        hits[key] = hits.get(key, 0) + 1
+
+    ranked = sorted((k for k in order if hits[k] >= min_count),
+                    key=lambda k: (-weights[k], order.index(k)))
+    return ranked[:limit]
 
 
 # ─────────────────────────────────────────────────────────

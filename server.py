@@ -229,6 +229,8 @@ async def lifespan(app: FastAPI):
             notion_db.ensure_all_dbs()
         except Exception as e:
             print(f"[startup] Notion schema 收斂失敗（非致命）：{e}")
+        # 排在 schema 之後：共同帳本第一次部署時要先建好才撈得到
+        command_router.warm_caches()
 
     threading.Thread(target=_ensure_notion_schema,
                      name="notion-schema-ensure", daemon=True).start()
@@ -254,6 +256,53 @@ def verify_line_signature(body: bytes, signature: str | None) -> bool:
 @app.get("/")
 async def root():
     return {"status": "ok", "service": "reportrobot"}
+
+
+# ── LIFF 記帳表單 ─────────────────────────────────────────
+# 用 def 不用 async def：裡面全是同步的 Notion / LINE 呼叫，
+# 讓 FastAPI 丟到 threadpool 跑，不卡住 webhook 那條 event loop。
+
+_LIFF_HTML_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "static", "liff_ledger.html")
+
+
+@app.get("/liff/ledger")
+def liff_ledger_page():
+    from fastapi.responses import HTMLResponse
+
+    import liff_api
+    if not liff_api.liff_id():
+        raise HTTPException(status_code=503, detail="LIFF not configured")
+    with open(_LIFF_HTML_PATH, encoding="utf-8") as f:
+        html = f.read().replace("__LIFF_ID__", liff_api.liff_id())
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+def _liff_user(authorization):
+    import liff_api
+    token = (authorization or "").removeprefix("Bearer ").strip()
+    user_id = liff_api.verify_id_token(token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="invalid token")
+    return user_id
+
+
+@app.get("/liff/api/bootstrap")
+def liff_bootstrap(authorization: str | None = Header(None)):
+    import liff_api
+    return liff_api.bootstrap(_liff_user(authorization))
+
+
+@app.post("/liff/api/record")
+async def liff_record(request: Request, authorization: str | None = Header(None)):
+    from fastapi.concurrency import run_in_threadpool
+    from fastapi.responses import JSONResponse
+
+    import liff_api
+    payload = await request.json()
+    user_id = await run_in_threadpool(_liff_user, authorization)
+    status, body = await run_in_threadpool(liff_api.record, user_id, payload)
+    return JSONResponse(body, status_code=status)
 
 
 @app.get("/admin/env-check")

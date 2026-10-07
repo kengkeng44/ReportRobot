@@ -109,6 +109,37 @@ def _post(url, payload):
         return False
 
 
+_member_name_cache = {}
+
+
+def group_member_name(group_id, user_id):
+    """群組成員的 LINE 暱稱。不是成員回 None，查不到（API 掛了）回 ""。
+
+    兩種「沒有」要分開：None 是「確定不在這個群組」，拿來擋 LIFF 表單
+    的寫入權限；"" 是「暫時不知道」，記帳照記、名字之後補也無妨。
+    結果快取在記憶體 —— 暱稱很少改，每記一筆就打一次 API 太浪費。
+    """
+    if not (LINE_CHANNEL_TOKEN and group_id and user_id):
+        return ""
+    key = (group_id, user_id)
+    if key in _member_name_cache:
+        return _member_name_cache[key]
+    url = f"https://api.line.me/v2/bot/group/{group_id}/member/{user_id}"
+    try:
+        r = requests.get(url, headers=_headers(), timeout=5)
+    except Exception as e:
+        print(f"LINE 群組成員查詢例外：{e}")
+        return ""
+    if r.status_code == 404:
+        return None
+    if r.status_code != 200:
+        print(f"LINE 群組成員查詢失敗 {r.status_code}: {r.text[:200]}")
+        return ""
+    name = (r.json() or {}).get("displayName") or ""
+    _member_name_cache[key] = name
+    return name
+
+
 def _bump_quota():
     """LINE push 成功後計數一次（reply 不算）。"""
     try:

@@ -519,15 +519,16 @@ def quick_reply_text(body, options):
     options 空的時候不放 quickReply key：空物件會被當格式錯誤。
     """
     msg = {"type": "text", "text": body}
+
+    def _action(label, text):
+        label = str(label)[:QUICK_REPLY_LABEL_MAX]
+        # 網址開 LIFF 表單；當成 message 送出的話使用者只會看到自己貼了一串網址
+        if str(text).startswith("https://"):
+            return {"type": "uri", "label": label, "uri": str(text)}
+        return {"type": "message", "label": label, "text": str(text)}
+
     items = [
-        {
-            "type": "action",
-            "action": {
-                "type": "message",
-                "label": str(label)[:QUICK_REPLY_LABEL_MAX],
-                "text": str(text),
-            },
-        }
+        {"type": "action", "action": _action(label, text)}
         for label, text in (options or [])[:QUICK_REPLY_MAX]
     ]
     if items:

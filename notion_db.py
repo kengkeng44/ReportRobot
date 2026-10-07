@@ -48,6 +48,12 @@ _SECTIONS = {
         "icon": "📚",
         "dbs": ("語句庫", "金句庫"),
     },
+    # 獨立一頁而不放財務中心：之後要整頁分享給女友看，放在財務中心底下
+    # 分享出去就連同信用卡明細、淨值一起被看到。
+    "共同記帳": {
+        "icon": "💑",
+        "dbs": ("共同帳本",),
+    },
 }
 
 _DB_SECTION = {db: sec for sec, cfg in _SECTIONS.items() for db in cfg["dbs"]}
@@ -270,6 +276,21 @@ _SCHEMAS = {
         "分攤類型": _select(("個人", "default"), ("共同", "blue")),
         "原始總額": {"number": {"format": "number"}},
         "Fingerprint": {"rich_text": {}},                       # 去重鍵，見 spec 3.3
+    },
+    # 情侶群組記的帳。跟「交易明細」刻意分開（見 _SECTIONS 的理由）。
+    # 「金額」存**整筆**，不像交易明細存我那半 —— 這張表是兩個人的，
+    # 沒有「我」；誰該負擔多少由結算時算，不寫死在資料裡。
+    "共同帳本": {
+        "摘要": {"title": {}},
+        "日期": {"date": {}},
+        "金額": {"number": {"format": "number"}},
+        # 共同 = 兩人平分、列入結算；個人 = 只是順手記在這裡，不列入結算
+        "類型": _select(("共同", "blue"), ("個人", "default")),
+        "付款人": {"rich_text": {}},
+        # 結算靠 ID 不靠名字：LINE 暱稱會改，改了同一個人就變兩個人
+        "付款人ID": {"rich_text": {}},
+        "類別": _select(*_SPEND_CATEGORIES),
+        "來源": _select(("LINE", "green"), ("表單", "purple")),
     },
     "信用卡帳單": {
         "期別": {"title": {}},                                   # YYYY-MM
@@ -1572,6 +1593,98 @@ def transaction_add(txn):
     except Exception as e:
         print(f"[notion] transaction_add 失敗 {txn.get('fingerprint')}：{e}")
         return None
+
+
+def couple_add(entry):
+    """共同帳本寫一筆。entry: date/item/total/kind/payer/payer_id/category/source。
+    成功回 page_id，失敗回 None。"""
+    db_id = get_or_create_db("共同帳本")
+    client = _get_client()
+    if not db_id or not client:
+        return None
+
+    def _text(v):
+        return {"rich_text": [{"text": {"content": v or ""}}]}
+
+    props = {
+        "摘要": {"title": [{"text": {"content": entry.get("item") or "未命名"}}]},
+        "日期": {"date": {"start": entry["date"]}},
+        "金額": _prop_number(entry.get("total")),
+        "類型": _prop_select(entry.get("kind")),
+        "付款人": _text(entry.get("payer")),
+        "付款人ID": _text(entry.get("payer_id")),
+        "類別": (_prop_select(normalize_spend_category(entry["category"]))
+                 if entry.get("category") else None),
+        "來源": _prop_select(entry.get("source") or "LINE"),
+    }
+    props = {k: v for k, v in props.items() if v is not None}
+    try:
+        page = client.pages.create(parent={"database_id": db_id}, properties=props)
+        return page["id"]
+    except Exception as e:
+        print(f"[notion] couple_add 失敗：{e}")
+        return None
+
+
+def couple_load(limit=200, since=None, until=None):
+    """撈共同帳本（新到舊）。Notion 掛掉丟例外，讓呼叫端決定怎麼跟人講。
+
+    跟 transactions_load 一樣要分頁、篩選每頁都要重帶（理由見那邊）。
+    """
+    db_id = get_or_create_db("共同帳本")
+    client = _get_client()
+    if not db_id or not client:
+        return []
+    bounds = []
+    if since:
+        bounds.append({"property": "日期", "date": {"on_or_after": since}})
+    if until:
+        bounds.append({"property": "日期", "date": {"on_or_before": until}})
+
+    out, cursor = [], None
+    while len(out) < limit:
+        kwargs = {
+            "database_id": db_id,
+            "sorts": [{"property": "日期", "direction": "descending"},
+                      {"timestamp": "created_time", "direction": "descending"}],
+            "page_size": min(limit - len(out), 100),
+        }
+        if len(bounds) == 1:
+            kwargs["filter"] = bounds[0]
+        elif bounds:
+            kwargs["filter"] = {"and": bounds}
+        if cursor:
+            kwargs["start_cursor"] = cursor
+        res = client.databases.query(**kwargs)
+        for row in res.get("results", []):
+            props = row.get("properties", {}) or {}
+            out.append({
+                "page_id": row.get("id"),
+                "date": (_read_date(props, "日期") or "")[:10],
+                "item": _read_title(props, "摘要"),
+                "total": _read_number(props, "金額"),
+                "kind": _read_select(props, "類型") or "共同",
+                "payer": _read_rich_text(props, "付款人"),
+                "payer_id": _read_rich_text(props, "付款人ID"),
+                "category": _read_select(props, "類別"),
+            })
+        if not res.get("has_more"):
+            break
+        cursor = res.get("next_cursor")
+    return out
+
+
+def couple_delete(page_id):
+    """撤銷一筆（archived，Notion 垃圾桶 30 天內救得回來）。"""
+    client = _get_client()
+    if not client or not page_id:
+        return False
+    try:
+        client.pages.update(page_id=page_id, archived=True)
+        return True
+    except Exception as e:
+        print(f"[notion] couple_delete 失敗：{e}")
+        return False
 
 
 def starting_holdings_load():
