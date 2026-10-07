@@ -52,8 +52,8 @@ _BACK = ("返回", "BACK", "#8A7A6E", ("switch", "main"))
 
 MENUS = {
     "main": {
-        "name": "全能大管家 主選單",
-        "chat_bar": "全能大管家",
+        "name": "喵管家 主選單",
+        "chat_bar": "喵管家",
         "cells": [
             ("財務", "FINANCE", "#A0826D", ("switch", "finance")),
             ("煮飯", "KITCHEN", "#88B07A", ("switch", "kitchen")),
@@ -64,7 +64,7 @@ MENUS = {
         ],
     },
     "finance": {
-        "name": "全能大管家 財務",
+        "name": "喵管家 財務",
         "chat_bar": "財務",
         "cells": [
             ("本月支出", "SPENDING", "#A0826D", ("message", "/本月支出")),
@@ -78,7 +78,7 @@ MENUS = {
         ],
     },
     "kitchen": {
-        "name": "全能大管家 煮飯",
+        "name": "喵管家 煮飯",
         "chat_bar": "煮飯",
         "cells": [
             ("庫存",   "PANTRY",   "#88B07A", ("message", "/庫存")),
@@ -92,7 +92,7 @@ MENUS = {
         ],
     },
     "invest": {
-        "name": "全能大管家 投資",
+        "name": "喵管家 投資",
         "chat_bar": "投資",
         "cells": [
             ("持股",   "HOLDINGS",  "#D9534F", ("message", "仁和持股")),
@@ -105,7 +105,7 @@ MENUS = {
         ],
     },
     "todo": {
-        "name": "全能大管家 待辦",
+        "name": "喵管家 待辦",
         "chat_bar": "待辦",
         "cells": [
             # prompt 開鍵盤並預填「待辦 P0 」，使用者補完內容才送出。
@@ -124,7 +124,7 @@ MENUS = {
         ],
     },
     "more": {
-        "name": "全能大管家 更多",
+        "name": "喵管家 更多",
         "chat_bar": "更多",
         "cells": [
             ("提醒", "REMIND",  "#5B8DA6", ("message", "/提醒")),

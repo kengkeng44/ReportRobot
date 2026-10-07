@@ -160,9 +160,10 @@ def test_help_points_to_the_spending_command_after_removal():
 # ── 名稱與長度 ────────────────────────────────────────────
 
 def test_help_uses_current_bot_name():
-    """專案已改名「全能大管家」（見 setup_richmenu.MENUS），舊名不該留在說明裡。"""
-    assert "全能大管家" in cr.HELP_TEXT
-    assert "喵管家" not in cr.HELP_TEXT
+    """2026-10-07 改回「喵管家」（見 setup_richmenu.MENUS），舊名不該留在說明裡。"""
+    assert "喵管家" in cr.HELP_TEXT
+    assert "全能大管家" not in cr.HELP_TEXT
+    assert "鄭家大總管" not in cr.PERSONAL_ONLY_MSG
 
 
 def test_help_fits_in_one_line_message():
