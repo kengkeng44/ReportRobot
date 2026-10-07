@@ -30,6 +30,8 @@ _SETTLE_LAST_KEYWORDS = {"上個月結算", "上月結算"}
 _RECENT_KEYWORDS = {"共同明細", "最近", "明細", "最近幾筆"}
 _UNDO_KEYWORDS = {"撤銷", "刪掉上一筆", "刪除上一筆", "取消上一筆", "記錯了"}
 _HELP_KEYWORDS = {"記帳說明", "記帳教學"}
+_PANEL_KEYWORDS = {"選單", "面板", "記帳選單"}
+_TODO_RE = re.compile(r"^(?:待辦|todo)(?:\s+(.*))?$", re.IGNORECASE)
 
 HELP_TEXT = (
     "💑 共同記帳怎麼用\n\n"
@@ -41,7 +43,11 @@ HELP_TEXT = (
     "　結算　　　← 這個月誰該給誰多少\n"
     "　上個月結算\n"
     "　最近　　　← 最近 10 筆\n"
-    "　撤銷　　　← 刪掉你自己記的最後一筆\n\n"
+    "　撤銷　　　← 刪掉你自己記的最後一筆\n"
+    "　選單　　　← 叫出按鈕卡，長按設成公告就會釘在最上面\n\n"
+    "兩人共用的待辦：\n"
+    "　待辦 買衛生紙　← 新增\n"
+    "　待辦　　　　　← 看清單，按「完成」就劃掉\n\n"
     "誰打的字就算誰付的錢。"
 )
 
@@ -310,6 +316,14 @@ def handle(text, ctx):
     if t in _HELP_KEYWORDS:
         return HELP_TEXT
 
+    if t in _PANEL_KEYWORDS:
+        return panel_flex()
+
+    # 待辦要排在記帳之前：「待辦 繳電費 1200」長得像一筆帳
+    m = _TODO_RE.match(t)
+    if m:
+        return _todo((m.group(1) or "").strip(), ctx)
+
     try:
         if t in _SETTLE_KEYWORDS or t in _SETTLE_LAST_KEYWORDS:
             offset = -1 if t in _SETTLE_LAST_KEYWORDS else 0
@@ -340,6 +354,79 @@ def handle(text, ctx):
         return "共同帳本暫時連不上，等一下再試。"
 
     return None
+
+
+def _todo(body, ctx):
+    """群組待辦：兩人共用一份，用群組 ID 當清單主人。
+
+    personal.py 的待辦本來就是「依 ID 分清單」，拿群組 ID 當 ID 就得到一份
+    共用清單，存取、Notion 同步、完成按鈕全部沿用。每日個人信只讀
+    PERSONAL_USER_ID 那份，所以群組待辦不會混進你的信裡。
+    """
+    import command_router
+    import personal
+    from flex_builder import todo_list_flex
+
+    key = (ctx or {}).get("group_id")
+    if not key:
+        return None
+    try:
+        if not body:
+            return todo_list_flex(personal.list_todos(key))
+        return command_router._handle_todo_subcmd(key, body)
+    except Exception as e:
+        print(f"群組待辦失敗：{e}")
+        return "待辦暫時連不上，等一下再試。"
+
+
+def panel_flex():
+    """群組的常駐面板：一張大按鈕卡，設成公告就會一直釘在群組最上面。
+
+    LINE 的六格選單只出現在跟 bot 的私訊，群組裡唯一能「一直看得到」的
+    是公告。所以做一張卡讓使用者長按設成公告，而不是每次打字叫出來。
+    """
+    import liff_api
+
+    def _btn(label, action, style="secondary", color=None):
+        b = {"type": "button", "style": style, "height": "md", "action": action}
+        if color:
+            b["color"] = color
+        return b
+
+    def _msg(label, text):
+        return {"type": "message", "label": label, "text": text}
+
+    rows = []
+    url = liff_api.liff_url()
+    if url:
+        # 黃底黑字：整個聊天室裡最亮的一塊，一眼就找得到
+        rows.append(_btn("記帳", {"type": "uri", "label": "📝 開記帳表單", "uri": url},
+                         style="secondary", color="#FFD400"))
+    rows.append({"type": "box", "layout": "horizontal", "spacing": "sm", "contents": [
+        _btn("結算", _msg("結算", "結算")),
+        _btn("最近", _msg("最近", "最近")),
+    ]})
+    rows.append({"type": "box", "layout": "horizontal", "spacing": "sm", "contents": [
+        _btn("待辦", _msg("待辦", "待辦")),
+        _btn("撤銷", _msg("撤銷", "撤銷")),
+    ]})
+
+    return {
+        "type": "flex",
+        "altText": "💑 記帳面板",
+        "contents": {
+            "type": "bubble",
+            "body": {
+                "type": "box", "layout": "vertical", "spacing": "md",
+                "contents": [
+                    {"type": "text", "text": "💑 我們的記帳", "weight": "bold", "size": "lg"},
+                    {"type": "text", "wrap": True, "size": "xs", "color": "#8a96a0",
+                     "text": "也可以直接打「午餐 120」。長按這張卡 → 設為公告，就會釘在最上面。"},
+                    *rows,
+                ],
+            },
+        },
+    }
 
 
 def _undo(user_id):

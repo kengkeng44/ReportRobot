@@ -1309,7 +1309,7 @@ def _dispatch(text, ctx, parsed):
 # Postback handler（按 Flex 按鈕觸發的 webhook 事件）
 # ════════════════════════════════════════
 
-def handle_postback(data, user_id):
+def handle_postback(data, user_id, ctx=None):
     """處理 Flex 卡片按鈕的 postback。
     data: 'action=todo_complete&id=5' urlencoded
     user_id: 來自 event.source.userId（信任 LINE 平台，不從 data 取）
@@ -1329,6 +1329,14 @@ def handle_postback(data, user_id):
             return int((parsed.get(key) or [str(default)])[0])
         except (ValueError, TypeError):
             return default
+
+    # 記帳群組的待辦是兩人共用一份，清單主人是群組不是按的人
+    # （見 couple_ledger._todo）。只換待辦類 —— 食材按鈕仍要認本人。
+    import couple_ledger
+    if action.startswith("todo_") and couple_ledger.is_couple_chat(ctx):
+        if action == "todo_add_start":
+            return "群組裡直接打「待辦 內容」就好，例如：待辦 買衛生紙"
+        user_id = ctx["group_id"]
 
     try:
         if action == "todo_add_start":

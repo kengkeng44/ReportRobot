@@ -372,7 +372,11 @@ async def line_webhook(
             print(f"[webhook] postback data={data[:60]!r} source={mask_source(source)}")
             if not (reply_token and user_id):
                 continue
-            response = command_router.handle_postback(data, user_id)
+            response = command_router.handle_postback(data, user_id, ctx={
+                "source_type": source.get("type"),
+                "user_id": user_id,
+                "group_id": source.get("groupId"),
+            })
             if response:
                 await reply_message(reply_token, response)
             continue

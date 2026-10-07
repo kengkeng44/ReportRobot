@@ -38,9 +38,17 @@ def test_sub_menus_can_go_back_to_main():
 
 
 def test_main_menu_reaches_every_sub_menu():
-    """每個子選單都要進得去，不然做了也沒人看得到。"""
-    reachable = {t for _l, _s, _c, (k, t) in rm.MENUS["main"]["cells"] if k == "switch"}
-    assert reachable == set(rm.MENUS) - {"main"}
+    """每個子選單都要進得去，不然做了也沒人看得到。
+
+    可以隔一層（煮飯 2026-10-08 起從「更多」進），只要從主選單點得到。
+    """
+    reachable, todo = set(), ["main"]
+    while todo:
+        for _l, _s, _c, (k, t) in rm.MENUS[todo.pop()]["cells"]:
+            if k == "switch" and t not in reachable:
+                reachable.add(t)
+                todo.append(t)
+    assert reachable >= set(rm.MENUS) - {"main"}
 
 
 def _is_pictograph(ch):

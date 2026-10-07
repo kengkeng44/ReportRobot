@@ -44,6 +44,7 @@ CELL_H = H // ROWS  # 843
 #   ("message", "/待辦")   → 送出文字訊息，走一般 webhook → command_router
 #   ("switch",  "kitchen") → 切換到別的分頁（參數是 MENUS 的 key，同時也是 alias id）
 #   ("prompt",  "買了 ")   → 打開鍵盤並預填文字，使用者接著補後半段就送出
+#   ("liff",    "記一筆")  → 開 LIFF 記帳表單；沒設 LIFF_ID 時退回送出參數那句文字
 #
 # ⚠️ 標籤只能放中文與英文：PNG 是用 CJK 字型畫的，沒有彩色 emoji 字型，
 #    放 emoji 或箭頭會變成豆腐字（test_labels_have_no_emoji 會擋）。
@@ -56,7 +57,10 @@ MENUS = {
         "chat_bar": "喵管家",
         "cells": [
             ("財務", "FINANCE", "#A0826D", ("switch", "finance")),
-            ("煮飯", "KITCHEN", "#88B07A", ("switch", "kitchen")),
+            # 主選單最常按的一格，用螢光黃 + 黑字：其他格都是低彩度的
+            # 大地色，這格是整張選單唯一高彩度的地方，一眼就看到。
+            # 煮飯讓出位置，搬到「更多」頁（2026-10-08 使用者指定）。
+            ("記帳", "LEDGER",  "#FFD400", ("liff", "記一筆")),
             ("投資", "INVEST",  "#D9534F", ("switch", "invest")),
             ("待辦", "TODO",    "#5B8DA6", ("switch", "todo")),
             ("今日", "TODAY",   "#F0AD4E", ("message", "/預覽")),
@@ -127,7 +131,8 @@ MENUS = {
         "name": "喵管家 更多",
         "chat_bar": "更多",
         "cells": [
-            ("提醒", "REMIND",  "#5B8DA6", ("message", "/提醒")),
+            # 提醒在「待辦」頁也有，這格讓給從主選單搬來的煮飯
+            ("煮飯", "KITCHEN", "#88B07A", ("switch", "kitchen")),
             ("額度", "QUOTA",   "#4A7A92", ("message", "/額度")),
             ("成本", "COST",    "#6B9CB5", ("message", "/cost")),
             ("預覽", "PREVIEW", "#3E6A80", ("message", "/預覽")),
@@ -186,6 +191,16 @@ def find_font(size):
 _find_font = find_font
 
 
+def _ink_for(hex_color):
+    """亮底用黑字、其他用白字。螢光黃配白字幾乎看不見。
+
+    門檻刻意抓高（0.75）：既有的橘色「今日」亮度約 0.71，維持白字不變。
+    """
+    h = hex_color.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    return "#1B1B1B" if 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.75 else "white"
+
+
 def generate_image(cells, out_path):
     """畫 2500×1686 PNG，6 格純色塊 + 中文大字 + EN 副標。"""
     from PIL import Image, ImageDraw
@@ -214,7 +229,8 @@ def generate_image(cells, out_path):
         th = bbox[3] - bbox[1]
         tx = x0 + (CELL_W - tw) // 2 - bbox[0]
         ty = y0 + (CELL_H - th) // 2 - bbox[1] - 60
-        draw.text((tx, ty), label, fill="white", font=main_font)
+        ink = _ink_for(color)
+        draw.text((tx, ty), label, fill=ink, font=main_font)
 
         # 副標（底部置中）
         bbox2 = draw.textbbox((0, 0), sub, font=sub_font)
@@ -222,7 +238,7 @@ def generate_image(cells, out_path):
         sh = bbox2[3] - bbox2[1]
         sx = x0 + (CELL_W - sw) // 2 - bbox2[0]
         sy = y0 + CELL_H - sh - 70 - bbox2[1]
-        draw.text((sx, sy), sub, fill="white", font=sub_font)
+        draw.text((sx, sy), sub, fill=ink, font=sub_font)
 
     img.save(out_path, "PNG", optimize=True)
     return out_path
@@ -270,6 +286,11 @@ def build_areas(cells):
                 "richMenuAliasId": param,
                 "data": f"switch={param}",
             }
+        elif kind == "liff":
+            import liff_api
+            url = liff_api.liff_url()
+            line_action = ({"type": "uri", "uri": url} if url
+                           else {"type": "message", "text": param})
         elif kind == "prompt":
             # 需要接著打字的功能（查哪支股票）。「買了」與「記一筆」都改
             # 送裸指令了 —— 它們會回 quick reply，點兩下完成，不必打字。

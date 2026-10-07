@@ -288,3 +288,47 @@ def test_record_personal_from_form(env, monkeypatch):
 def test_verify_requires_liff_id(monkeypatch):
     monkeypatch.delenv("LIFF_ID", raising=False)
     assert liff_api.verify_id_token("anything") is None
+
+
+# ── 群組待辦（兩人共用）與面板 ─────────────────────────────
+
+def test_group_todo_uses_group_as_owner(env, monkeypatch):
+    import personal
+    seen = []
+    monkeypatch.setattr(cr, "_handle_todo_subcmd", lambda key, body: seen.append((key, body)) or "ok")
+    monkeypatch.setattr(personal, "list_todos", lambda key: seen.append((key, None)) or [])
+    cr.handle("待辦 繳電費 1200", ctx=_group(user=GF))   # 不能被當成一筆帳
+    cr.handle("待辦", ctx=_group(user=ADMIN))
+    assert seen == [(GROUP, "繳電費 1200"), (GROUP, None)]
+
+
+def test_group_todo_postback_uses_group(env, monkeypatch):
+    import personal
+    done = []
+    monkeypatch.setattr(personal, "delete_todo", lambda key, tid: done.append((key, tid)) or True)
+    monkeypatch.setattr(personal, "list_todos", lambda key: [])
+    cr.handle_postback("action=todo_complete&id=3", GF, ctx=_group(user=GF))
+    cr.handle_postback("action=todo_complete&id=4", ADMIN, ctx=DM)
+    assert done == [(GROUP, 3), (ADMIN, 4)]
+
+
+def test_panel_has_form_button_when_configured(env, monkeypatch):
+    monkeypatch.setenv("LIFF_ID", "123-abc")
+    card = cr.handle("選單", ctx=_group())
+    first = card["contents"]["body"]["contents"][2]
+    assert first["action"]["uri"] == "https://liff.line.me/123-abc"
+    assert first["color"] == "#FFD400"
+
+
+def test_richmenu_ledger_cell(monkeypatch):
+    import setup_richmenu as sr
+    main = sr.MENUS["main"]["cells"]
+    ledger = [c for c in main if c[1] == "LEDGER"][0]
+    monkeypatch.setenv("LIFF_ID", "123-abc")
+    area = sr.build_areas([ledger])[0]["action"]
+    assert area == {"type": "uri", "uri": "https://liff.line.me/123-abc"}
+    monkeypatch.delenv("LIFF_ID")
+    assert sr.build_areas([ledger])[0]["action"]["type"] == "message"
+    assert sr._ink_for("#FFD400") != "white" and sr._ink_for("#F0AD4E") == "white"
+    # 煮飯沒有消失，只是搬到「更多」
+    assert any(c[3] == ("switch", "kitchen") for c in sr.MENUS["more"]["cells"])
