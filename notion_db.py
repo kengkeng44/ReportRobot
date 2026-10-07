@@ -290,7 +290,9 @@ _SCHEMAS = {
         # 結算靠 ID 不靠名字：LINE 暱稱會改，改了同一個人就變兩個人
         "付款人ID": {"rich_text": {}},
         "類別": _select(*_SPEND_CATEGORIES),
-        "來源": _select(("LINE", "green"), ("表單", "purple")),
+        "來源": _select(("LINE", "green"), ("表單", "purple"), ("自動同步", "orange")),
+        # 從交易明細同步過來的那筆的 Fingerprint。有值 = 自動同步的，靠它去重
+        "來源ID": {"rich_text": {}},
     },
     "信用卡帳單": {
         "期別": {"title": {}},                                   # YYYY-MM
@@ -1589,10 +1591,18 @@ def transaction_add(txn):
 
     try:
         page = client.pages.create(parent={"database_id": db_id}, properties=props)
-        return page["id"]
     except Exception as e:
         print(f"[notion] transaction_add 失敗 {txn.get('fingerprint')}：{e}")
         return None
+    # 共同的那筆同步一份到共同帳本。放在這個唯一的寫入關卡，國泰同步
+    # （全聯自動共同）、私訊記一筆、表單三條路就都涵蓋到了。
+    # 同步失敗不影響這筆本身已經寫好。
+    try:
+        import couple_ledger
+        couple_ledger.mirror_txn(txn)
+    except Exception as e:
+        print(f"[notion] 共同帳本同步失敗（非致命）：{e}")
+    return page["id"]
 
 
 def couple_add(entry):
@@ -1616,6 +1626,7 @@ def couple_add(entry):
         "類別": (_prop_select(normalize_spend_category(entry["category"]))
                  if entry.get("category") else None),
         "來源": _prop_select(entry.get("source") or "LINE"),
+        "來源ID": _text(entry["source_id"]) if entry.get("source_id") else None,
     }
     props = {k: v for k, v in props.items() if v is not None}
     try:
@@ -1672,6 +1683,29 @@ def couple_load(limit=200, since=None, until=None):
             break
         cursor = res.get("next_cursor")
     return out
+
+
+def couple_has_source(source_id):
+    """共同帳本裡是否已有這個來源ID。查不到 Notion 時回 True ——
+    寧可這次不同步（明天會再試），也不要重複寫入讓結算多算一筆。"""
+    db_id = get_or_create_db("共同帳本")
+    client = _get_client()
+    if not db_id or not client or not source_id:
+        return True
+    try:
+        res = client.databases.query(
+            database_id=db_id, page_size=1,
+            filter={"property": "來源ID", "rich_text": {"equals": source_id}})
+        return bool(res.get("results"))
+    except Exception as e:
+        print(f"[notion] couple_has_source 失敗：{e}")
+        return True
+
+
+def couple_db_url():
+    """共同帳本在 Notion 的網址，給群組按鈕卡用。拿不到回空字串。"""
+    db_id = get_or_create_db("共同帳本")
+    return f"https://www.notion.so/{db_id.replace('-', '')}" if db_id else ""
 
 
 def couple_delete(page_id):
@@ -1796,6 +1830,8 @@ def transactions_load(limit=200, since=None, until=None):
                     # 一律當個人；原始總額回退成金額 —— 個人消費兩者相等。
                     # 沒有這兩條 fallback，所有統計都得特判 None。
                     "split_type": _read_select(props, "分攤類型") or "個人",
+                    # 共同帳本同步靠它去重（couple_ledger.mirror_txn）
+                    "fingerprint": _read_rich_text(props, "Fingerprint"),
                     "total": (_read_number(props, "原始總額")
                               if _read_number(props, "原始總額") is not None
                               else _read_number(props, "金額")),

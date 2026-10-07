@@ -332,3 +332,78 @@ def test_richmenu_ledger_cell(monkeypatch):
     assert sr._ink_for("#FFD400") != "white" and sr._ink_for("#F0AD4E") == "white"
     # 煮飯沒有消失，只是搬到「更多」
     assert any(c[3] == ("switch", "kitchen") for c in sr.MENUS["more"]["cells"])
+
+
+# ── 交易明細 → 共同帳本 自動同步 ────────────────────────────
+
+def _shared_txn(fp="fp1", split="共同", direction="支出"):
+    return {"date": "2026-10-05", "shop": "全聯福利中心－板橋", "amount": 210,
+            "total": 420, "split_type": split, "direction": direction,
+            "category": "超市", "fingerprint": fp}
+
+
+def test_mirror_shared_txn_uses_full_total_and_admin_as_payer(env, monkeypatch):
+    rows = []
+    monkeypatch.setattr(notion_db, "couple_has_source", lambda fp: False)
+    monkeypatch.setattr(notion_db, "couple_add", lambda r: rows.append(r) or "pid")
+    assert cl.mirror_txn(_shared_txn()) is True
+    r = rows[0]
+    assert r["total"] == 420 and r["payer_id"] == ADMIN and r["payer"] == "家豪"
+    assert r["source"] == "自動同步" and r["source_id"] == "fp1" and r["date"] == "2026-10-05"
+
+
+@pytest.mark.parametrize("txn", [_shared_txn(split="個人"),
+                                 _shared_txn(direction="收入"),
+                                 _shared_txn(fp="")])
+def test_mirror_skips(env, monkeypatch, txn):
+    monkeypatch.setattr(notion_db, "couple_has_source", lambda fp: False)
+    monkeypatch.setattr(notion_db, "couple_add", lambda r: pytest.fail("不該同步"))
+    assert cl.mirror_txn(txn) is False
+
+
+def test_mirror_dedupes(env, monkeypatch):
+    monkeypatch.setattr(notion_db, "couple_has_source", lambda fp: True)
+    monkeypatch.setattr(notion_db, "couple_add", lambda r: pytest.fail("重複了"))
+    assert cl.mirror_txn(_shared_txn()) is False
+
+
+def test_backfill_counts(env, monkeypatch):
+    seen = set()
+    monkeypatch.setattr(notion_db, "transactions_load",
+                        lambda **kw: [_shared_txn("a"), _shared_txn("a"),
+                                      _shared_txn("b", split="個人"), _shared_txn("c")])
+    monkeypatch.setattr(notion_db, "couple_has_source", lambda fp: fp in seen)
+    monkeypatch.setattr(notion_db, "couple_add", lambda r: seen.add(r["source_id"]) or "pid")
+    assert cl.backfill() == 2
+
+
+# ── 依月份結算 ───────────────────────────────────────────
+
+@pytest.mark.parametrize("text,offset", [
+    ("結算", 0), ("上個月結算", -1), ("結算 9月", -1), ("9月結算", -1),
+    ("結算 2026-08", -2), ("結算 12", -10),          # 10 月打 12 月 = 去年 12 月
+    ("結算 2025年12月", -10), ("結算 11月", -11),
+])
+def test_settle_offset(text, offset):
+    assert cl._settle_offset(text, TODAY) == offset
+
+
+@pytest.mark.parametrize("text", ["結算 13", "結算 2027-01", "結算了嗎"])
+def test_settle_offset_rejects(text):
+    assert cl._settle_offset(text, TODAY) is None
+
+
+def test_settle_reply_has_month_buttons(env, monkeypatch):
+    import tz_utils
+    monkeypatch.setattr(tz_utils, "today_tpe", lambda: TODAY)
+    monkeypatch.setattr(notion_db, "couple_load", lambda **kw: [])
+    msg = cr.handle("結算 8月", ctx=_group())
+    assert "8 月" in msg["text"]
+    labels = [i["action"]["label"] for i in msg["quickReply"]["items"]]
+    assert labels == ["7 月", "9 月", "10 月"]
+
+
+def test_panel_has_notion_link(env, monkeypatch):
+    monkeypatch.setattr(notion_db, "couple_db_url", lambda: "https://www.notion.so/abc")
+    body = cr.handle("選單", ctx=_group())["contents"]["body"]["contents"]
+    assert body[-1]["action"]["uri"] == "https://www.notion.so/abc"

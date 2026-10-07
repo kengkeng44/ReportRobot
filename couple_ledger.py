@@ -41,14 +41,17 @@ HELP_TEXT = (
     "其他：\n"
     "　記一筆　　← 跳常記的按鈕，按一下就記好\n"
     "　結算　　　← 這個月誰該給誰多少\n"
-    "　上個月結算\n"
+    "　上個月結算 / 結算 9月　← 看任何一個月\n"
     "　最近　　　← 最近 10 筆\n"
     "　撤銷　　　← 刪掉你自己記的最後一筆\n"
     "　選單　　　← 叫出按鈕卡，長按設成公告就會釘在最上面\n\n"
     "兩人共用的待辦：\n"
     "　待辦 買衛生紙　← 新增\n"
     "　待辦　　　　　← 看清單，按「完成」就劃掉\n\n"
-    "誰打的字就算誰付的錢。"
+    "誰打的字就算誰付的錢。私訊或表單記成「共同」的、" + chr(10) +
+    "全聯刷卡，也會自動同步過來（算你付的）。" + chr(10) + chr(10) +
+    "結算：每筆共同的錢兩人各出一半，" + chr(10) +
+    "多付的人收回差額 —— 只看當月，月與月分開算。"
 )
 
 
@@ -182,6 +185,66 @@ def confirm_text(row):
     return f"✅ {row['item']} NT${row['total']:,}（共同・{who}付）"
 
 
+# ── 從交易明細自動同步 ───────────────────────────────────
+
+def mirror_txn(txn):
+    """交易明細裡「共同」的那筆，同步一份到共同帳本。回 True 表示這次有寫入。
+
+    付款人一律是你（ADMIN_LINE_USER_ID）：交易明細是你的帳 —— 你的信用卡、
+    你私訊記的、你的表單 —— 錢都是你付的。金額用原始總額（整筆），結算
+    時才分一半；交易明細的「金額」已經是你那半，拿它會少算一半。
+
+    去重靠交易明細的 Fingerprint：國泰同步每天都會重跑，沒有去重的話
+    同一筆全聯會每天多一筆。
+    """
+    import finance_report
+    import line_sender
+    import notion_db
+
+    if not txn or txn.get("split_type") != "共同" or txn.get("direction") == "收入":
+        return False
+    gid = couple_group_id()
+    admin = os.environ.get("ADMIN_LINE_USER_ID", "")
+    fp = txn.get("fingerprint")
+    if not (gid and admin and fp):
+        return False
+    if notion_db.couple_has_source(fp):
+        return False
+
+    total = txn.get("total") if txn.get("total") is not None else txn.get("amount")
+    if not total:
+        return False
+    item = (txn.get("shop") or txn.get("category") or "消費").strip()
+    row = {
+        "date": (txn.get("date") or "")[:10],
+        "item": item,
+        "total": int(total) if float(total) == int(total) else total,
+        "kind": "共同",
+        "payer": line_sender.group_member_name(gid, admin) or "",
+        "payer_id": admin,
+        "category": txn.get("category") or finance_report.guess_category(item),
+        "source": "自動同步",
+        "source_id": fp,
+    }
+    page_id = notion_db.couple_add(row)
+    if not page_id:
+        return False
+    row["page_id"] = page_id
+    if _CACHE["rows"] is not None:
+        _CACHE["rows"] = [row] + list(_CACHE["rows"])
+    return True
+
+
+def backfill(limit=1000):
+    """把交易明細裡既有的共同消費一次補進共同帳本。重跑安全（有去重）。"""
+    import notion_db
+    added = 0
+    for t in notion_db.transactions_load(limit=limit):
+        if mirror_txn(t):
+            added += 1
+    return added
+
+
 # ── 結算 ─────────────────────────────────────────────────
 
 def settle_text(rows, label):
@@ -243,15 +306,68 @@ def _fmt(n):
     return f"{n:,}"
 
 
+_SETTLE_MONTH_RE = re.compile(
+    r"^(?:結算\s*(?:(\d{4})[-/年])?(\d{1,2})\s*月?|(?:(\d{4})[-/年])?(\d{1,2})\s*月\s*結算)$")
+
+
+def _settle_offset(text, today):
+    """「結算」→0、「上個月結算」→-1、「結算 9月」「9月結算」「結算 2026-09」→ 跟今天差幾個月。
+    不是結算指令回 None。未來的月份當成去年的（10 月打「結算 12」是去年 12 月）。"""
+    if text in _SETTLE_KEYWORDS:
+        return 0
+    if text in _SETTLE_LAST_KEYWORDS:
+        return -1
+    m = _SETTLE_MONTH_RE.match(text)
+    if not m:
+        return None
+    year = m.group(1) or m.group(3)
+    month = int(m.group(2) or m.group(4))
+    if not 1 <= month <= 12:
+        return None
+    y = int(year) if year else today.year
+    offset = (y - today.year) * 12 + (month - today.month)
+    if offset > 0 and not year:
+        offset -= 12
+    return offset if offset <= 0 else None
+
+
+def _settle_reply(rows, label, offset, today):
+    """結算文字 + 前後月份按鈕，一路點回去看每個月。"""
+    from flex_builder import quick_reply_text
+
+    options = []
+    for off in (offset - 1, offset + 1, 0):
+        if off > 0 or off == offset or any(o[1] == _month_cmd(today, off) for o in options):
+            continue
+        options.append((_month_label(today, off), _month_cmd(today, off)))
+    return quick_reply_text(settle_text(rows, label), options)
+
+
+def _ym(today, offset):
+    y, m = today.year, today.month + offset
+    while m < 1:
+        y, m = y - 1, m + 12
+    return y, m
+
+
+def _month_label(today, offset):
+    y, m = _ym(today, offset)
+    return f"{m} 月" if y == today.year else f"{y} 年 {m} 月"
+
+
+def _month_cmd(today, offset):
+    y, m = _ym(today, offset)
+    return f"結算 {y}-{m:02d}"
+
+
 def _month_bounds(today, offset=0):
     """offset=0 本月、-1 上個月 → (since, until, 標籤)。"""
     import calendar
     from datetime import date
-    y, m = today.year, today.month + offset
-    while m < 1:
-        y, m = y - 1, m + 12
+    y, m = _ym(today, offset)
     last = calendar.monthrange(y, m)[1]
-    return date(y, m, 1).isoformat(), date(y, m, last).isoformat(), f"{m} 月"
+    return (date(y, m, 1).isoformat(), date(y, m, last).isoformat(),
+            _month_label(today, offset))
 
 
 def recent_text(rows, n=10):
@@ -325,11 +441,12 @@ def handle(text, ctx):
         return _todo((m.group(1) or "").strip(), ctx)
 
     try:
-        if t in _SETTLE_KEYWORDS or t in _SETTLE_LAST_KEYWORDS:
-            offset = -1 if t in _SETTLE_LAST_KEYWORDS else 0
-            since, until, label = _month_bounds(today_tpe(), offset)
-            return settle_text(notion_db.couple_load(limit=500, since=since,
-                                                     until=until), label)
+        today = today_tpe()
+        offset = _settle_offset(t, today)
+        if offset is not None:
+            since, until, label = _month_bounds(today, offset)
+            rows = notion_db.couple_load(limit=500, since=since, until=until)
+            return _settle_reply(rows, label, offset, today)
 
         if t in _RECENT_KEYWORDS:
             return recent_text(notion_db.couple_load(limit=10))
@@ -410,6 +527,15 @@ def panel_flex():
         _btn("待辦", _msg("待辦", "待辦")),
         _btn("撤銷", _msg("撤銷", "撤銷")),
     ]})
+    try:
+        import notion_db
+        notion_url = notion_db.couple_db_url()
+    except Exception as e:
+        print(f"共同帳本網址取得失敗：{e}")
+        notion_url = ""
+    if notion_url:
+        rows.append(_btn("Notion", {"type": "uri", "label": "📒 Notion 共同帳本",
+                                    "uri": notion_url}, style="link"))
 
     return {
         "type": "flex",

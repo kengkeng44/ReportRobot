@@ -511,6 +511,18 @@ async def trigger_finance_sync(request: Request, days: int = 7):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/admin/couple-backfill")
+def couple_backfill(request: Request):
+    """把交易明細既有的共同消費補進共同帳本（一次性；重跑安全，有去重）。"""
+    admin_token = os.environ.get("ADMIN_TOKEN", "")
+    if not admin_token:
+        raise HTTPException(status_code=503, detail="Admin disabled")
+    if request.headers.get("X-Admin-Token") != admin_token:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    import couple_ledger
+    return {"ok": True, "added": couple_ledger.backfill()}
+
+
 @app.post("/admin/setup-richmenu")
 async def setup_richmenu(request: Request):
     """一次性建立 / 重建 LINE Rich Menu（分頁式：主選單 + 財務/煮飯/投資/更多）。
