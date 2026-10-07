@@ -511,6 +511,19 @@ async def trigger_finance_sync(request: Request, days: int = 7):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/chart/{token}.png")
+def chart_png(token: str):
+    """群組圓餅圖的圖檔（LINE 圖片訊息只收網址）。token 隨機，只留最近 20 張。"""
+    from fastapi.responses import Response
+
+    import couple_chart
+    png = couple_chart.get(token)
+    if not png:
+        raise HTTPException(status_code=404, detail="chart expired")
+    return Response(png, media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
 @app.post("/admin/couple-backfill")
 def couple_backfill(request: Request):
     """把交易明細既有的共同消費補進共同帳本（一次性；重跑安全，有去重）。"""

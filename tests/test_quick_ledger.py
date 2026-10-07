@@ -407,3 +407,36 @@ def test_panel_has_notion_link(env, monkeypatch):
     monkeypatch.setattr(notion_db, "couple_db_url", lambda: "https://www.notion.so/abc")
     body = cr.handle("選單", ctx=_group())["contents"]["body"]["contents"]
     assert body[-1]["action"]["uri"] == "https://www.notion.so/abc"
+
+
+# ── 圓餅圖 ───────────────────────────────────────────────
+
+def test_chart_slices_merge_and_skip_personal():
+    import couple_chart as cc
+    rows = [{"kind": "共同", "item": "全聯福利中心－板橋", "total": 400},
+            {"kind": "共同", "item": "全聯福利中心－新店", "total": 100},
+            {"kind": "個人", "item": "衣服", "total": 990}]
+    rows += [{"kind": "共同", "item": f"品項{i}", "total": 10 + i} for i in range(8)]
+    parts = cc.slices(rows)
+    assert parts[0] == ("全聯福利中心", 500)
+    assert len(parts) == 7 and parts[-1][0] == "其他"
+    assert all(name != "衣服" for name, _v in parts)
+
+
+def test_chart_command_returns_image(env, monkeypatch):
+    import couple_chart as cc
+    import tz_utils
+    monkeypatch.setattr(tz_utils, "today_tpe", lambda: TODAY)
+    monkeypatch.setattr(notion_db, "couple_load", lambda **kw: [
+        {"kind": "共同", "item": "晚餐", "total": 600, "date": "2026-10-01"}])
+    msgs = cr.handle("圖表", ctx=_group())
+    img = msgs[0]
+    assert img["type"] == "image" and img["originalContentUrl"].endswith(".png")
+    token = img["originalContentUrl"].rsplit("/", 1)[1][:-4]
+    assert cc.get(token).startswith(b"\x89PNG")
+    assert [o["action"]["label"] for o in msgs[1]["quickReply"]["items"]] == ["9 月", "看結算"]
+
+
+def test_chart_without_data_is_text(env, monkeypatch):
+    monkeypatch.setattr(notion_db, "couple_load", lambda **kw: [])
+    assert "沒有圖可以畫" in cr.handle("圖表 9月", ctx=_group())

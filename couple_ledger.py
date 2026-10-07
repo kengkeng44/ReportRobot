@@ -31,6 +31,7 @@ _RECENT_KEYWORDS = {"共同明細", "最近", "明細", "最近幾筆"}
 _UNDO_KEYWORDS = {"撤銷", "刪掉上一筆", "刪除上一筆", "取消上一筆", "記錯了"}
 _HELP_KEYWORDS = {"記帳說明", "記帳教學"}
 _PANEL_KEYWORDS = {"選單", "面板", "記帳選單"}
+_CHART_RE = re.compile(r"^(?:圖表|圓餅圖|圓餅|統計)(?:\s*(.+))?$")
 _TODO_RE = re.compile(r"^(?:待辦|todo)(?:\s+(.*))?$", re.IGNORECASE)
 
 HELP_TEXT = (
@@ -44,6 +45,7 @@ HELP_TEXT = (
     "　上個月結算 / 結算 9月　← 看任何一個月\n"
     "　最近　　　← 最近 10 筆\n"
     "　撤銷　　　← 刪掉你自己記的最後一筆\n"
+    "　圖表　　　← 本月共同支出圓餅圖（圖表 9月 看別的月）" + chr(10) +
     "　選單　　　← 叫出按鈕卡，長按設成公告就會釘在最上面\n\n"
     "兩人共用的待辦：\n"
     "　待辦 買衛生紙　← 新增\n"
@@ -343,6 +345,27 @@ def _settle_reply(rows, label, offset, today):
     return quick_reply_text(settle_text(rows, label), options)
 
 
+def _chart_reply(offset, today):
+    """圓餅圖 + 一句總結（附前後月份按鈕）。沒資料就只回文字。"""
+    import couple_chart
+    import notion_db
+    from flex_builder import quick_reply_text
+
+    since, until, label = _month_bounds(today, offset)
+    rows = notion_db.couple_load(limit=500, since=since, until=until)
+    image = couple_chart.chart_messages(rows, label)
+    if not image:
+        return f"💑 {label}還沒有共同支出，沒有圖可以畫。"
+    options = []
+    for off in (offset - 1, offset + 1):
+        if off <= 0:
+            options.append((_month_label(today, off),
+                            "圖表 " + _month_cmd(today, off).split(" ", 1)[1]))
+    options.append(("看結算", _month_cmd(today, offset)))
+    return [image, quick_reply_text(f"{label}共同支出依品項分。打「結算」看誰該給誰。",
+                                    options)]
+
+
 def _ym(today, offset):
     y, m = today.year, today.month + offset
     while m < 1:
@@ -442,6 +465,14 @@ def handle(text, ctx):
 
     try:
         today = today_tpe()
+
+        m = _CHART_RE.match(t)
+        if m:
+            # 「圖表 9月」借用結算的月份解析，兩個指令吃一樣的月份寫法
+            offset = _settle_offset(("結算 " + m.group(1)) if m.group(1) else "結算", today)
+            if offset is not None:
+                return _chart_reply(offset, today)
+
         offset = _settle_offset(t, today)
         if offset is not None:
             since, until, label = _month_bounds(today, offset)
@@ -527,6 +558,7 @@ def panel_flex():
         _btn("待辦", _msg("待辦", "待辦")),
         _btn("撤銷", _msg("撤銷", "撤銷")),
     ]})
+    rows.append(_btn("圖表", _msg("📊 本月圓餅圖", "圖表")))
     try:
         import notion_db
         notion_url = notion_db.couple_db_url()
