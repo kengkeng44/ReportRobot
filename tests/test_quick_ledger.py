@@ -17,6 +17,7 @@ ADMIN = "Uadmin"
 GF = "Ugf"
 GROUP = "Cgroup"
 DM = {"source_type": "user", "user_id": ADMIN}
+LOGS = []
 
 
 def _txn(shop, total, split="個人", days_ago=0, source="手動", direction="支出"):
@@ -34,6 +35,16 @@ def env(monkeypatch):
     names = {ADMIN: "家豪", GF: "小美"}
     monkeypatch.setattr(line_sender, "group_member_name",
                         lambda g, u: names.get(u) if g == GROUP else None)
+    # 成員名單、異動紀錄不打 Notion：名單固定兩位管理員，紀錄收進 LOGS
+    import couple_members
+    monkeypatch.setattr(couple_members, "_CACHE", {"at": 0.0, "rows": None})
+    monkeypatch.setattr(notion_db, "members_load", lambda: [
+        {"page_id": "m1", "user_id": ADMIN, "name": "家豪", "role": "管理員"},
+        {"page_id": "m2", "user_id": GF, "name": "小美", "role": "管理員"}])
+    monkeypatch.setattr(notion_db, "member_upsert", lambda *a, **kw: "m9")
+    LOGS.clear()
+    monkeypatch.setattr(notion_db, "couple_log_add", lambda e: LOGS.append(e) or "log")
+    monkeypatch.setattr(notion_db, "couple_log_load", lambda **kw: list(reversed(LOGS)))
 
 
 def _group(user=ADMIN, gid=GROUP):
@@ -502,3 +513,215 @@ def test_review_admin_only(env, monkeypatch):
 
 def test_kangda_is_shared_shop():
     assert fr.is_shared_shop("康達盛通生活量販淡新店")
+
+
+# ── 代記、編輯、刪除、異動紀錄、管理員（2026-10-12）────────────────
+
+def _mention_ctx(text, user=ADMIN, target=GF):
+    at = text.index("@")
+    return dict(_group(user), mentions=[target],
+                mention_spans=[(at, len(text) - at)], raw_text=text)
+
+
+def test_record_for_someone_else_by_mention(env, monkeypatch):
+    rows = []
+    monkeypatch.setattr(notion_db, "couple_add", lambda r: rows.append(r) or "pid")
+    text = "午餐 120 @小美"
+    reply = cr.handle(text, ctx=_mention_ctx(text))
+    assert rows[0]["payer_id"] == GF and rows[0]["recorder_id"] == ADMIN
+    assert rows[0]["item"] == "午餐" and rows[0]["total"] == 120
+    assert "小美付" in reply["text"] and "家豪記" in reply["text"]
+    assert LOGS[-1]["action"] == "新增" and LOGS[-1]["actor_id"] == ADMIN
+
+
+def test_record_for_someone_else_by_suffix(env, monkeypatch):
+    rows = []
+    monkeypatch.setattr(notion_db, "couple_add", lambda r: rows.append(r) or "pid")
+    cr.handle("晚餐 600 小美付", ctx=_group(user=ADMIN))
+    assert rows[0]["item"] == "晚餐" and rows[0]["payer_id"] == GF
+
+
+def test_unknown_payer_suffix_is_not_hijacked(env, monkeypatch):
+    rows = []
+    monkeypatch.setattr(notion_db, "couple_add", lambda r: rows.append(r) or "pid")
+    assert cr.handle("房租 9000 阿姨付", ctx=_group(user=ADMIN)) is None
+    assert rows == []
+
+
+def _stored(**kw):
+    row = {"page_id": "p1", "date": "2026-10-07", "item": "午餐", "total": 120,
+           "kind": "共同", "payer": "家豪", "payer_id": ADMIN,
+           "recorder": "家豪", "recorder_id": ADMIN}
+    row.update(kw)
+    return row
+
+
+def test_update_entry_writes_diff_and_log(env, monkeypatch):
+    updates = []
+    monkeypatch.setattr(notion_db, "couple_get", lambda pid: _stored())
+    monkeypatch.setattr(notion_db, "couple_update", lambda pid, f: updates.append(f) or True)
+    ok, msg = cl.update_entry("p1", {"total": 150, "payer_id": GF}, GF)
+    assert ok
+    assert updates[0]["total"] == 150 and updates[0]["payer_id"] == GF
+    assert updates[0]["payer"] == "小美"
+    assert "金額 120→150" in msg and "付款人 家豪→小美" in msg and msg.startswith("✏️ 小美")
+    assert LOGS[-1]["action"] == "修改" and LOGS[-1]["actor"] == "小美"
+
+
+def test_update_entry_no_change_skips_write(env, monkeypatch):
+    monkeypatch.setattr(notion_db, "couple_get", lambda pid: _stored())
+    monkeypatch.setattr(notion_db, "couple_update", lambda pid, f: pytest.fail("不該寫"))
+    assert cl.update_entry("p1", {"total": 120}, ADMIN) == (True, "沒有變動。")
+    assert LOGS == []
+
+
+def test_delete_entry_logs(env, monkeypatch):
+    monkeypatch.setattr(notion_db, "couple_get", lambda pid: _stored())
+    monkeypatch.setattr(notion_db, "couple_delete", lambda pid: True)
+    ok, msg = cl.delete_entry("p1", GF)
+    assert ok and "小美刪了" in msg
+    assert LOGS[-1]["action"] == "刪除" and "午餐" in LOGS[-1]["detail"]
+
+
+def test_undo_follows_recorder_not_payer(env, monkeypatch):
+    rows = [_stored(page_id="p2", payer_id=GF, payer="小美", recorder_id=ADMIN)]
+    deleted = []
+    monkeypatch.setattr(notion_db, "couple_load", lambda **kw: rows)
+    monkeypatch.setattr(notion_db, "couple_delete", lambda pid: deleted.append(pid) or True)
+    cr.handle("撤銷", ctx=_group(user=ADMIN))
+    assert deleted == ["p2"]
+
+
+def test_log_command(env, monkeypatch):
+    monkeypatch.setattr(notion_db, "couple_get", lambda pid: _stored())
+    monkeypatch.setattr(notion_db, "couple_update", lambda pid, f: True)
+    cl.update_entry("p1", {"total": 150}, GF)
+    out = cr.handle("編輯紀錄", ctx=_group(user=ADMIN))
+    assert "小美" in out and "金額 120→150" in out
+
+
+def test_members_list_and_both_admins(env):
+    out = cr.handle("成員", ctx=_group(user=GF))
+    assert out.count("👑 管理員") == 2
+
+
+def test_seed_makes_everyone_seen_an_admin(env, monkeypatch):
+    import couple_members
+    added = []
+    monkeypatch.setattr(notion_db, "members_load", lambda: [])
+    monkeypatch.setattr(notion_db, "couple_load", lambda **kw: [_stored(payer_id=GF)])
+    monkeypatch.setattr(notion_db, "member_upsert",
+                        lambda uid, name, role, page_id=None: added.append((uid, name, role)) or "m")
+    assert couple_members.is_admin(GF)
+    assert added == [(ADMIN, "家豪", "管理員"), (GF, "小美", "管理員")]
+
+
+def test_set_admin_rules(env, monkeypatch):
+    monkeypatch.setattr(notion_db, "members_load", lambda: [
+        {"page_id": "m1", "user_id": ADMIN, "name": "家豪", "role": "管理員"},
+        {"page_id": "m2", "user_id": GF, "name": "小美", "role": "成員"}])
+    # 一般成員不能設
+    assert "只有管理員" in cr.handle("設管理員 家豪", ctx=_group(user=GF))
+    # bot 主人拿不掉
+    text = "取消管理員 @家豪"
+    assert "拿不掉" in cr.handle(text, ctx=_mention_ctx(text, user=ADMIN, target=ADMIN))
+    # 管理員用 @ 設別人
+    calls = []
+    monkeypatch.setattr(notion_db, "member_upsert",
+                        lambda uid, name, role, page_id=None: calls.append((uid, role, page_id)) or "m2")
+    text = "設管理員 @小美"
+    assert "小美 現在是管理員" in cr.handle(text, ctx=_mention_ctx(text))
+    assert calls == [(GF, "管理員", "m2")]
+
+
+def test_recent_has_edit_buttons_when_liff(env, monkeypatch):
+    monkeypatch.setenv("LIFF_ID", "123-abc")
+    monkeypatch.setattr(notion_db, "couple_load",
+                        lambda **kw: [_stored(payer_id=GF, payer="小美")])
+    out = cr.handle("最近", ctx=_group(user=ADMIN))
+    blob = str(out)
+    assert out["type"] == "flex"
+    assert "https://liff.line.me/123-abc?edit=p1&book=couple" in blob
+    assert "家豪記" in blob
+
+
+def test_dm_couple_commands_only_for_members(env, monkeypatch):
+    assert "管理員" in cr.handle("成員", ctx={"source_type": "user", "user_id": GF})
+    stranger = {"source_type": "user", "user_id": "Ustranger"}
+    assert cl.handle_dm("成員", stranger) is None
+
+
+# ── 表單編輯 ────────────────────────────────────────────
+
+def test_form_edit_couple(env, monkeypatch):
+    monkeypatch.setattr(notion_db, "couple_get", lambda pid: _stored())
+    monkeypatch.setattr(notion_db, "couple_update", lambda pid, f: True)
+    status, body = liff_api.get_entry(GF, "couple", "p1")
+    assert status == 200 and body["entry"]["recorder"] == "家豪"
+    status, body = liff_api.save_entry(GF, "couple", "p1",
+                                       {"item": "午餐", "amount": 200, "kind": "共同",
+                                        "date": "2026-10-06", "payer_id": GF})
+    assert status == 200 and "金額 120→200" in body["message"]
+    assert "日期 2026-10-07→2026-10-06" in body["message"]
+
+
+def test_form_edit_rejects_outsiders_and_unknown_payer(env, monkeypatch):
+    assert liff_api.get_entry("Ustranger", "couple", "p1")[0] == 403
+    assert liff_api.get_entry(GF, "personal", "p1")[0] == 403
+    status, _ = liff_api.save_entry(GF, "couple", "p1",
+                                    {"item": "午餐", "amount": 1, "payer_id": "Uhacker"})
+    assert status == 400
+
+
+def _personal(**kw):
+    t = {"page_id": "t1", "date": "2026-10-07", "shop": "晚餐", "amount": 600,
+         "total": 600, "split_type": "個人", "source": "手動", "direction": "支出",
+         "fingerprint": "fp1"}
+    t.update(kw)
+    return t
+
+
+def test_form_edit_personal_to_shared_mirrors(env, monkeypatch):
+    import couple_ledger
+    updates, mirrored = [], []
+    monkeypatch.setattr(notion_db, "transaction_get", lambda pid: _personal())
+    monkeypatch.setattr(notion_db, "transaction_update", lambda pid, f: updates.append(f) or True)
+    monkeypatch.setattr(notion_db, "couple_find_by_source", lambda fp: None)
+    monkeypatch.setattr(couple_ledger, "mirror_txn", lambda t: mirrored.append(t) or True)
+    status, body = liff_api.save_entry(ADMIN, "personal", "t1",
+                                       {"item": "晚餐", "amount": 600, "kind": "共同"})
+    assert status == 200
+    assert updates[0]["amount"] == 300 and updates[0]["total"] == 600
+    assert mirrored[0]["split_type"] == "共同" and mirrored[0]["fingerprint"] == "fp1"
+
+
+def test_form_edit_personal_back_to_solo_removes_mirror(env, monkeypatch):
+    import couple_ledger
+    removed = []
+    monkeypatch.setattr(notion_db, "transaction_get",
+                        lambda pid: _personal(split_type="共同", amount=300))
+    monkeypatch.setattr(notion_db, "transaction_update", lambda pid, f: True)
+    monkeypatch.setattr(notion_db, "couple_find_by_source", lambda fp: "c9")
+    monkeypatch.setattr(couple_ledger, "delete_entry",
+                        lambda pid, actor: removed.append((pid, actor)) or (True, ""))
+    liff_api.save_entry(ADMIN, "personal", "t1", {"item": "晚餐", "amount": 600, "kind": "個人"})
+    assert removed == [("c9", ADMIN)]
+
+
+def test_form_cannot_delete_bank_synced(env, monkeypatch):
+    monkeypatch.setattr(notion_db, "transaction_get",
+                        lambda pid: _personal(source="國泰消費彙整"))
+    monkeypatch.setattr(notion_db, "transaction_delete", lambda pid: pytest.fail("不該刪"))
+    status, body = liff_api.delete_entry(ADMIN, "personal", "t1")
+    assert status == 400 and "明天會再出現" in body["message"]
+
+
+def test_form_record_for_partner(env, monkeypatch):
+    rows = []
+    monkeypatch.setattr(notion_db, "couple_add", lambda r: rows.append(r) or "pid")
+    status, body = liff_api.record(ADMIN, {"mode": "couple", "item": "電影", "amount": 640,
+                                           "kind": "共同", "payer_id": GF,
+                                           "date": "2026-10-05"})
+    assert status == 200
+    assert rows[0]["payer_id"] == GF and rows[0]["recorder_id"] == ADMIN
+    assert rows[0]["date"] == "2026-10-05"

@@ -52,7 +52,7 @@ _SECTIONS = {
     # 分享出去就連同信用卡明細、淨值一起被看到。
     "共同記帳": {
         "icon": "💑",
-        "dbs": ("共同帳本",),
+        "dbs": ("共同帳本", "共同帳本紀錄", "記帳成員"),
     },
 }
 
@@ -293,6 +293,28 @@ _SCHEMAS = {
         "來源": _select(("LINE", "green"), ("表單", "purple"), ("自動同步", "orange")),
         # 從交易明細同步過來的那筆的 Fingerprint。有值 = 自動同步的，靠它去重
         "來源ID": {"rich_text": {}},
+        # 誰按的記帳，跟付款人分開：可以幫對方記（對方付的、我打的字）。
+        # 舊資料沒有這兩欄，讀的時候退回付款人。
+        "記錄人": {"rich_text": {}},
+        "記錄人ID": {"rich_text": {}},
+    },
+    # 共同帳本的異動紀錄：誰在什麼時候新增 / 改 / 刪了哪一筆。
+    # 另開一張而不是在帳目上加欄位：刪掉的那筆進了垃圾桶，紀錄還要看得到。
+    "共同帳本紀錄": {
+        "摘要": {"title": {}},
+        "時間": {"date": {}},
+        "動作": _select(("新增", "green"), ("修改", "blue"), ("刪除", "red")),
+        "操作人": {"rich_text": {}},
+        "操作人ID": {"rich_text": {}},
+        "帳目ID": {"rich_text": {}},
+        "內容": {"rich_text": {}},
+    },
+    # 記帳群組的人。LINE 一般帳號拿不到群組成員清單（那支 API 要認證帳號），
+    # 所以名單是「在群組講過話 / 記過帳的人」自己長出來的。
+    "記帳成員": {
+        "名字": {"title": {}},
+        "使用者ID": {"rich_text": {}},
+        "角色": _select(("管理員", "red"), ("成員", "default")),
     },
     "信用卡帳單": {
         "期別": {"title": {}},                                   # YYYY-MM
@@ -1627,6 +1649,8 @@ def couple_add(entry):
                  if entry.get("category") else None),
         "來源": _prop_select(entry.get("source") or "LINE"),
         "來源ID": _text(entry["source_id"]) if entry.get("source_id") else None,
+        "記錄人": _text(entry["recorder"]) if entry.get("recorder") else None,
+        "記錄人ID": _text(entry["recorder_id"]) if entry.get("recorder_id") else None,
     }
     props = {k: v for k, v in props.items() if v is not None}
     try:
@@ -1635,6 +1659,262 @@ def couple_add(entry):
     except Exception as e:
         print(f"[notion] couple_add 失敗：{e}")
         return None
+
+
+def _couple_row(page):
+    props = page.get("properties", {}) or {}
+    payer = _read_rich_text(props, "付款人")
+    payer_id = _read_rich_text(props, "付款人ID")
+    return {
+        "page_id": page.get("id"),
+        "date": (_read_date(props, "日期") or "")[:10],
+        "item": _read_title(props, "摘要"),
+        "total": _read_number(props, "金額"),
+        "kind": _read_select(props, "類型") or "共同",
+        "payer": payer,
+        "payer_id": payer_id,
+        "category": _read_select(props, "類別"),
+        "source": _read_select(props, "來源"),
+        "source_id": _read_rich_text(props, "來源ID"),
+        # 舊資料沒有記錄人 —— 那時只能自己記自己付的，付款人就是記錄人
+        "recorder": _read_rich_text(props, "記錄人") or payer,
+        "recorder_id": _read_rich_text(props, "記錄人ID") or payer_id,
+    }
+
+
+def _same_id(a, b):
+    return (a or "").replace("-", "") == (b or "").replace("-", "")
+
+
+def _page_in(page_id, db_name):
+    """讀一頁並確認它屬於 db_name 那張表、沒被刪。不是就回 None。
+
+    表單送來的 page_id 不能信：不檢查的話，拿財務中心任何一頁的 ID
+    就能透過「改共同帳本」去改它。
+    """
+    client = _get_client()
+    db_id = get_or_create_db(db_name)
+    if not client or not page_id or not db_id:
+        return None
+    try:
+        page = client.pages.retrieve(page_id=page_id)
+    except Exception as e:
+        print(f"[notion] 讀取 {db_name} 頁面失敗：{e}")
+        return None
+    parent = (page.get("parent") or {}).get("database_id")
+    if page.get("archived") or not _same_id(parent, db_id):
+        return None
+    return page
+
+
+def couple_get(page_id):
+    """讀一筆共同帳本。不存在、已刪除、不是共同帳本的頁面回 None。"""
+    page = _page_in(page_id, "共同帳本")
+    return _couple_row(page) if page else None
+
+
+def _rich(v):
+    return {"rich_text": [{"text": {"content": v or ""}}]}
+
+
+_COUPLE_FIELDS = {
+    "item": ("摘要", lambda v: {"title": [{"text": {"content": v or "未命名"}}]}),
+    "date": ("日期", lambda v: {"date": {"start": v}}),
+    "total": ("金額", lambda v: _prop_number(v)),
+    "kind": ("類型", lambda v: _prop_select(v)),
+    "payer": ("付款人", _rich),
+    "payer_id": ("付款人ID", _rich),
+    "category": ("類別", lambda v: _prop_select(normalize_spend_category(v)) if v else None),
+}
+
+
+def couple_update(page_id, fields):
+    """改一筆共同帳本。fields 只帶要改的欄位（鍵同 _COUPLE_FIELDS）。"""
+    client = _get_client()
+    if not client or not page_id:
+        return False
+    props = {}
+    for k, v in (fields or {}).items():
+        if k in _COUPLE_FIELDS:
+            name, conv = _COUPLE_FIELDS[k]
+            val = conv(v)
+            if val is not None:
+                props[name] = val
+    if not props:
+        return True
+    try:
+        client.pages.update(page_id=page_id, properties=props)
+        return True
+    except Exception as e:
+        print(f"[notion] couple_update 失敗：{e}")
+        return False
+
+
+def couple_find_by_source(source_id):
+    """自動同步過來的那筆在共同帳本的 page_id。沒有回 None。"""
+    db_id = get_or_create_db("共同帳本")
+    client = _get_client()
+    if not db_id or not client or not source_id:
+        return None
+    try:
+        res = client.databases.query(
+            database_id=db_id, page_size=1,
+            filter={"property": "來源ID", "rich_text": {"equals": source_id}})
+        hits = res.get("results") or []
+        return hits[0]["id"] if hits else None
+    except Exception as e:
+        print(f"[notion] couple_find_by_source 失敗：{e}")
+        return None
+
+
+def couple_log_add(entry):
+    """寫一條異動紀錄。entry: at/action/actor/actor_id/entry_id/summary/detail。
+    失敗只印 log —— 紀錄寫不進去，不該讓那次修改本身變成失敗。"""
+    db_id = get_or_create_db("共同帳本紀錄")
+    client = _get_client()
+    if not db_id or not client:
+        return None
+    props = {
+        "摘要": {"title": [{"text": {"content": (entry.get("summary") or "")[:200]}}]},
+        "時間": {"date": {"start": entry["at"]}},
+        "動作": _prop_select(entry.get("action")),
+        "操作人": _rich(entry.get("actor")),
+        "操作人ID": _rich(entry.get("actor_id")),
+        "帳目ID": _rich(entry.get("entry_id")),
+        # rich_text 單段上限 2000 字
+        "內容": _rich((entry.get("detail") or "")[:1900]),
+    }
+    props = {k: v for k, v in props.items() if v is not None}
+    try:
+        return client.pages.create(parent={"database_id": db_id}, properties=props)["id"]
+    except Exception as e:
+        print(f"[notion] couple_log_add 失敗：{e}")
+        return None
+
+
+def couple_log_load(limit=20, entry_id=None):
+    """異動紀錄（新到舊）。給 entry_id 就只看那一筆的。"""
+    db_id = get_or_create_db("共同帳本紀錄")
+    client = _get_client()
+    if not db_id or not client:
+        return []
+    kwargs = {"database_id": db_id, "page_size": min(limit, 100),
+              "sorts": [{"property": "時間", "direction": "descending"}]}
+    if entry_id:
+        kwargs["filter"] = {"property": "帳目ID", "rich_text": {"equals": entry_id}}
+    try:
+        res = client.databases.query(**kwargs)
+    except Exception as e:
+        print(f"[notion] couple_log_load 失敗：{e}")
+        return []
+    out = []
+    for row in res.get("results", []):
+        props = row.get("properties", {}) or {}
+        out.append({
+            "at": _read_date(props, "時間") or "",
+            "action": _read_select(props, "動作"),
+            "actor": _read_rich_text(props, "操作人"),
+            "actor_id": _read_rich_text(props, "操作人ID"),
+            "entry_id": _read_rich_text(props, "帳目ID"),
+            "summary": _read_title(props, "摘要"),
+            "detail": _read_rich_text(props, "內容"),
+        })
+    return out
+
+
+def members_load():
+    """記帳成員 → [{page_id, user_id, name, role}]。Notion 掛掉丟例外。"""
+    db_id = get_or_create_db("記帳成員")
+    client = _get_client()
+    if not db_id or not client:
+        return []
+    res = client.databases.query(database_id=db_id, page_size=100)
+    out = []
+    for row in res.get("results", []):
+        props = row.get("properties", {}) or {}
+        uid = _read_rich_text(props, "使用者ID")
+        if uid:
+            out.append({"page_id": row.get("id"), "user_id": uid,
+                        "name": _read_title(props, "名字"),
+                        "role": _read_select(props, "角色") or "成員"})
+    return out
+
+
+def member_upsert(user_id, name=None, role=None, page_id=None):
+    """新增或更新一位成員。有 page_id 改那列，沒有就新增。回 page_id，失敗 None。"""
+    db_id = get_or_create_db("記帳成員")
+    client = _get_client()
+    if not db_id or not client or not user_id:
+        return None
+    props = {"使用者ID": _rich(user_id)}
+    if name:
+        props["名字"] = {"title": [{"text": {"content": name}}]}
+    if role:
+        props["角色"] = _prop_select(role)
+    try:
+        if page_id:
+            client.pages.update(page_id=page_id, properties=props)
+            return page_id
+        props.setdefault("名字", {"title": [{"text": {"content": "（未知）"}}]})
+        props.setdefault("角色", _prop_select("成員"))
+        return client.pages.create(parent={"database_id": db_id}, properties=props)["id"]
+    except Exception as e:
+        print(f"[notion] member_upsert 失敗：{e}")
+        return None
+
+
+def transaction_get(page_id):
+    """讀一筆交易明細（同 transactions_load 的形狀）。不是交易明細的頁面回 None。"""
+    page = _page_in(page_id, "交易明細")
+    return _txn_row(page) if page else None
+
+
+def transaction_update(page_id, fields):
+    """改一筆交易明細。fields: shop/date/amount/total/split_type/category。
+
+    shop 同時寫進「摘要」和「商店」：transaction_add 兩欄都寫同一個值，
+    讀的時候看的是商店 —— 只改摘要的話，畫面上會看不出有改。
+    """
+    client = _get_client()
+    if not client or not page_id:
+        return False
+    f = fields or {}
+    props = {}
+    if "shop" in f:
+        props["摘要"] = {"title": [{"text": {"content": f["shop"] or "消費"}}]}
+        props["商店"] = _rich(f["shop"])
+    if "date" in f:
+        props["日期"] = {"date": {"start": f["date"]}}
+    if "amount" in f:
+        props["金額"] = _prop_number(f["amount"])
+    if "total" in f:
+        props["原始總額"] = _prop_number(f["total"])
+    if "split_type" in f:
+        props["分攤類型"] = _prop_select(f["split_type"])
+    if f.get("category"):
+        props["類別"] = _prop_select(normalize_spend_category(f["category"]))
+    props = {k: v for k, v in props.items() if v is not None}
+    if not props:
+        return True
+    try:
+        client.pages.update(page_id=page_id, properties=props)
+        return True
+    except Exception as e:
+        print(f"[notion] transaction_update 失敗：{e}")
+        return False
+
+
+def transaction_delete(page_id):
+    """刪一筆交易明細（archived，Notion 垃圾桶 30 天內救得回來）。"""
+    client = _get_client()
+    if not client or not page_id:
+        return False
+    try:
+        client.pages.update(page_id=page_id, archived=True)
+        return True
+    except Exception as e:
+        print(f"[notion] transaction_delete 失敗：{e}")
+        return False
 
 
 def couple_load(limit=200, since=None, until=None):
@@ -1667,18 +1947,7 @@ def couple_load(limit=200, since=None, until=None):
         if cursor:
             kwargs["start_cursor"] = cursor
         res = client.databases.query(**kwargs)
-        for row in res.get("results", []):
-            props = row.get("properties", {}) or {}
-            out.append({
-                "page_id": row.get("id"),
-                "date": (_read_date(props, "日期") or "")[:10],
-                "item": _read_title(props, "摘要"),
-                "total": _read_number(props, "金額"),
-                "kind": _read_select(props, "類型") or "共同",
-                "payer": _read_rich_text(props, "付款人"),
-                "payer_id": _read_rich_text(props, "付款人ID"),
-                "category": _read_select(props, "類別"),
-            })
+        out.extend(_couple_row(row) for row in res.get("results", []))
         if not res.get("has_more"):
             break
         cursor = res.get("next_cursor")
@@ -1781,6 +2050,39 @@ def starting_holdings_load():
     return out
 
 
+def _txn_row(r):
+    props = r.get("properties", {}) or {}
+    date_obj = (props.get("日期", {}) or {}).get("date") or {}
+    return {
+        "date": (date_obj.get("start") or "")[:10],
+        "amount": _read_number(props, "金額"),
+        # 遷移前的資料沒有幣別欄，一律當台幣（那時只有國泰這個來源）
+        "currency": _read_select(props, "幣別") or "TWD",
+        "region": _read_select(props, "消費地區"),
+        "category": _read_select(props, "類別"),
+        "shop": _read_rich_text(props, "商店"),
+        "direction": _read_select(props, "方向") or "支出",
+        "status": _read_select(props, "狀態"),
+        # 沒讀這欄就分不出手動記帳與自動同步 —— transaction_add
+        # 一直有寫進去，讀不回來只會安靜地得到 None。
+        "source": _read_select(props, "來源"),
+        # 遷移前的資料沒有這兩欄。國泰同步的本來就是自己刷的，
+        # 一律當個人；原始總額回退成金額 —— 個人消費兩者相等。
+        # 沒有這兩條 fallback，所有統計都得特判 None。
+        "split_type": _read_select(props, "分攤類型") or "個人",
+        # 共同帳本同步靠它去重（couple_ledger.mirror_txn）
+        "fingerprint": _read_rich_text(props, "Fingerprint"),
+        # 下面三個給「標成共同」用（couple_ledger.rescan / 整理共同）：
+        # split_type 對空值有預設「個人」，分不出「沒標過」跟「標了個人」
+        "page_id": r.get("id"),
+        "split_raw": _read_select(props, "分攤類型"),
+        "total_set": _read_number(props, "原始總額") is not None,
+        "total": (_read_number(props, "原始總額")
+                  if _read_number(props, "原始總額") is not None
+                  else _read_number(props, "金額")),
+    }
+
+
 def transactions_load(limit=200, since=None, until=None):
     """撈交易明細（新到舊）。回 list of dict，欄位名對齊 finance_report。
 
@@ -1829,37 +2131,7 @@ def transactions_load(limit=200, since=None, until=None):
             if cursor:
                 kwargs["start_cursor"] = cursor
             res = client.databases.query(**kwargs)
-            for r in res.get("results", []):
-                props = r.get("properties", {}) or {}
-                date_obj = (props.get("日期", {}) or {}).get("date") or {}
-                out.append({
-                    "date": (date_obj.get("start") or "")[:10],
-                    "amount": _read_number(props, "金額"),
-                    # 遷移前的資料沒有幣別欄，一律當台幣（那時只有國泰這個來源）
-                    "currency": _read_select(props, "幣別") or "TWD",
-                    "region": _read_select(props, "消費地區"),
-                    "category": _read_select(props, "類別"),
-                    "shop": _read_rich_text(props, "商店"),
-                    "direction": _read_select(props, "方向") or "支出",
-                    "status": _read_select(props, "狀態"),
-                    # 沒讀這欄就分不出手動記帳與自動同步 —— transaction_add
-                    # 一直有寫進去，讀不回來只會安靜地得到 None。
-                    "source": _read_select(props, "來源"),
-                    # 遷移前的資料沒有這兩欄。國泰同步的本來就是自己刷的，
-                    # 一律當個人；原始總額回退成金額 —— 個人消費兩者相等。
-                    # 沒有這兩條 fallback，所有統計都得特判 None。
-                    "split_type": _read_select(props, "分攤類型") or "個人",
-                    # 共同帳本同步靠它去重（couple_ledger.mirror_txn）
-                    "fingerprint": _read_rich_text(props, "Fingerprint"),
-                    # 下面三個給「標成共同」用（couple_ledger.rescan / 整理共同）：
-                    # split_type 對空值有預設「個人」，分不出「沒標過」跟「標了個人」
-                    "page_id": r.get("id"),
-                    "split_raw": _read_select(props, "分攤類型"),
-                    "total_set": _read_number(props, "原始總額") is not None,
-                    "total": (_read_number(props, "原始總額")
-                              if _read_number(props, "原始總額") is not None
-                              else _read_number(props, "金額")),
-                })
+            out.extend(_txn_row(r) for r in res.get("results", []))
             if not res.get("has_more"):
                 break
             cursor = res.get("next_cursor")

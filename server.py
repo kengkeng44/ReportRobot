@@ -323,6 +323,34 @@ async def liff_record(request: Request, authorization: str | None = Header(None)
     return JSONResponse(body, status_code=status)
 
 
+@app.get("/liff/api/entry")
+def liff_entry_get(book: str, id: str, authorization: str | None = Header(None)):
+    """編輯表單：讀一筆 + 它的異動紀錄。"""
+    from fastapi.responses import JSONResponse
+
+    import liff_api
+    status, body = liff_api.get_entry(_liff_user(authorization), book, id)
+    return JSONResponse(body, status_code=status)
+
+
+@app.post("/liff/api/entry")
+async def liff_entry_save(request: Request, authorization: str | None = Header(None)):
+    """編輯表單：存修改，或 {"delete": true} 刪掉。"""
+    from fastapi.concurrency import run_in_threadpool
+    from fastapi.responses import JSONResponse
+
+    import liff_api
+    payload = await request.json()
+    user_id = await run_in_threadpool(_liff_user, authorization)
+    book, page_id = payload.get("book"), payload.get("id")
+    if payload.get("delete"):
+        status, body = await run_in_threadpool(liff_api.delete_entry, user_id, book, page_id)
+    else:
+        status, body = await run_in_threadpool(liff_api.save_entry, user_id, book,
+                                               page_id, payload)
+    return JSONResponse(body, status_code=status)
+
+
 @app.get("/admin/env-check")
 async def env_check(request: Request):
     """Server 看到的環境變數狀態（只回 set/len，不洩漏值）。Debug 用。
@@ -416,6 +444,14 @@ async def line_webhook(
             "user_id": source.get("userId"),
             "group_id": source.get("groupId"),
         }
+        # @提及：「午餐 120 @小美」幫別人記、「設管理員 @小美」。LINE 給的是
+        # 字元位置，要原始訊息才對得上，所以一起帶著（多行訊息的位置對不上各行，不帶）
+        mentionees = [m for m in ((msg.get("mention") or {}).get("mentionees") or [])
+                      if m.get("type", "user") == "user" and m.get("userId")]
+        if mentionees and len(text.splitlines()) <= 1:
+            ctx["mentions"] = [m["userId"] for m in mentionees]
+            ctx["mention_spans"] = [(m.get("index", 0), m.get("length", 0)) for m in mentionees]
+            ctx["raw_text"] = text
 
         # 多行訊息：每行各自當獨立指令，依序塞進同一 reply（最多 5 則 LINE 上限）
         # 限制最多 3 行，避免一次塞十個指令把 server 卡爆

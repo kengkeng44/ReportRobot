@@ -973,7 +973,7 @@ def _handle_finance(kind, arg):
             notion_db.transactions_load_month(month), month)
 
     if kind == "fin_recent":
-        return finance_report.format_recent(notion_db.transactions_load())
+        return finance_report.recent_reply(notion_db.transactions_load())
 
     if kind == "fin_latest_day":
         from tz_utils import today_tpe
@@ -1130,6 +1130,9 @@ def handle(text, ctx=None):
     reply = couple_ledger.setup_reply(text, ctx)
     if reply is None and couple_ledger.is_couple_chat(ctx):
         reply = couple_ledger.handle(text, ctx)
+    if reply is None:
+        # 私訊也能看共同帳本最近幾筆 / 編輯紀錄 / 成員（限記帳群組成員）
+        reply = couple_ledger.handle_dm(text, ctx)
     if reply is not None:
         return reply
 

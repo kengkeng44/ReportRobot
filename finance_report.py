@@ -184,6 +184,44 @@ def format_recent(txns, limit=10):
     return "\n".join(lines)
 
 
+def recent_reply(txns, limit=10):
+    """最近交易 + 每筆一顆「編輯」開表單。沒設 LIFF 就是原本的純文字。"""
+    import liff_api
+
+    text = format_recent(txns, limit)
+    if not txns or not liff_api.liff_url():
+        return text
+    rows = sorted(txns, key=lambda t: t.get("date") or "", reverse=True)[:limit]
+    body = [{"type": "text", "text": f"🧾 最近 {len(rows)} 筆", "weight": "bold", "size": "lg"}]
+    for t in rows:
+        if not t.get("page_id"):
+            continue
+        name = t.get("shop") or t.get("category") or "消費"
+        ccy = _currency(t)
+        unit = "NT$" if ccy == "TWD" else f"{ccy} "
+        sub = (t.get("date") or "")[5:]
+        if t.get("split_type") == "共同":
+            sub += f"・共同 全額 {_money(t.get('total'))}"
+        if (t.get("source") or "手動") != "手動":
+            sub += "・刷卡同步"
+        body.append({"type": "separator"})
+        body.append({"type": "box", "layout": "horizontal", "spacing": "sm",
+                     "alignItems": "center", "contents": [
+                         {"type": "box", "layout": "vertical", "flex": 5, "contents": [
+                             {"type": "box", "layout": "horizontal", "contents": [
+                                 {"type": "text", "text": name, "size": "sm",
+                                  "weight": "bold", "flex": 3},
+                                 {"type": "text", "text": f"{unit}{_money(t.get('amount'))}",
+                                  "size": "sm", "align": "end", "flex": 2}]},
+                             {"type": "text", "text": sub, "size": "xxs", "color": "#8a96a0"}]},
+                         {"type": "button", "style": "link", "height": "sm", "flex": 2,
+                          "action": {"type": "uri", "label": "編輯",
+                                     "uri": liff_api.edit_url("personal", t["page_id"])}}]})
+    return {"type": "flex", "altText": text[:300],
+            "contents": {"type": "bubble", "body": {
+                "type": "box", "layout": "vertical", "spacing": "sm", "contents": body}}}
+
+
 # ─────────────────────────────────────────────────────────
 # 卡費
 # ─────────────────────────────────────────────────────────

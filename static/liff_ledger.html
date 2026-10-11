@@ -96,6 +96,22 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   font-size: 18px; font-weight: 600; }
 .go:disabled { opacity: .35; }
 
+/* 誰付的、哪一天：收據下面一行小字列，不搶金額的視線 */
+.extra { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-soft); }
+.extra .chips { margin: 0; padding: 0; flex: 1; }
+.extra .chips button { padding: 5px 11px; font-size: 14px; }
+.extra input[type=date] { font: inherit; color: var(--ink); background: var(--key);
+  border: 0; border-radius: 999px; padding: 5px 10px; }
+.editbar { display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 13px; color: var(--ink-soft); }
+.editbar a { color: var(--ink-soft); }
+.danger { height: 44px; border-radius: 12px; color: var(--cinnabar);
+  border: 1px solid var(--rule); background: var(--slip); font-size: 15px; }
+.danger.armed { background: var(--cinnabar); color: #fff; border-color: var(--cinnabar); }
+.history { font-size: 13px; color: var(--ink-soft); line-height: 1.6;
+  border-top: 1px dashed var(--rule); padding-top: 8px; }
+.history b { color: var(--ink); font-weight: 600; }
+body.editing .presets, body.editing #presetLabel, body.editing .books button { display: none; }
 .toast { font-size: 14px; }
 .toast:empty { display: none; }
 .toast.err { color: var(--cinnabar); }
@@ -123,6 +139,17 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   </div>
 </section>
 
+<div class="extra" id="extra">
+  <span id="payerLabel">誰付的</span>
+  <div class="chips" id="payers"></div>
+  <input type="date" id="date" aria-label="日期">
+</div>
+
+<div class="editbar hidden" id="editbar">
+  <span id="editInfo"></span>
+  <a href="#" id="cancelEdit">改記新的一筆</a>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <div class="label" id="presetLabel">常記的，按一下就記好</div>
@@ -138,12 +165,30 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   <button>00</button><button>0</button><button aria-label="刪除">⌫</button>
 </div>
 <button class="go" id="go" disabled>記下</button>
+<button class="danger hidden" id="del">刪除這筆</button>
+<div class="history hidden" id="history"></div>
 
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script>
 const LIFF_ID = "__LIFF_ID__";
 const $ = (id) => document.getElementById(id);
-const state = { mode: "couple", kind: "共同", amount: "", data: null, busy: false };
+const state = { mode: "couple", kind: "共同", amount: "", data: null, busy: false,
+                payer: null, edit: null };
+
+function today() {
+  const d = new Date(Date.now() + 8 * 3600 * 1000);   // 台北時間
+  return d.toISOString().slice(0, 10);
+}
+
+// 「最近」清單的編輯按鈕開的是 liff.line.me/<id>?edit=..&book=..。
+// LIFF 有時把它包在 liff.state 裡才交給頁面，兩種都要認。
+function params() {
+  const u = new URLSearchParams(location.search);
+  const st = u.get("liff.state");
+  if (st) return new URLSearchParams(st.includes("?") ? st.slice(st.indexOf("?")) : st);
+  return u;
+}
+const INITIAL_PARAMS = params();
 
 function fmt(n) { return Number(n).toLocaleString("en-US"); }
 
@@ -180,6 +225,28 @@ function setMode(mode) {
     b.setAttribute("aria-pressed", b.dataset.mode === mode);
   setKind(mode === "couple" ? "共同" : "個人");
   renderSuggestions();
+  renderPayers();
+}
+
+function members() { return (state.data && state.data.members) || []; }
+
+function renderPayers() {
+  // 只有共同帳本、而且名單上不只自己時才需要選誰付的
+  const list = members();
+  const show = state.mode === "couple" && list.length > 1;
+  $("payerLabel").classList.toggle("hidden", !show);
+  $("payers").classList.toggle("hidden", !show);
+  if (!state.payer) state.payer = state.data && state.data.me;
+  const box = $("payers");
+  box.innerHTML = "";
+  if (!show) return;
+  for (const m of list) {
+    const b = document.createElement("button");
+    b.textContent = m.id === state.data.me ? m.name + "（我）" : m.name;
+    b.setAttribute("aria-pressed", m.id === state.payer);
+    b.onclick = () => { state.payer = m.id; renderPayers(); };
+    box.appendChild(b);
+  }
 }
 
 function setAmount(v) {
@@ -238,20 +305,30 @@ function renderAmounts() {
   box.classList.toggle("hidden", !list.length);
 }
 
+function tell(text) {
+  // 在聊天室裡開的就留一句話在聊天室，對方也看得到。
+  // 結尾刻意是括號：bot 的「午餐 120」解析要求數字或分攤結尾，這句不會被再記一次。
+  const ctx = liff.getContext() || {};
+  if (["group", "room", "utou"].includes(ctx.type))
+    liff.sendMessages([{ type: "text", text: text + "（表單）" }]).catch(() => {});
+}
+
 async function submit(entry) {
   if (state.busy) return;
+  if (state.edit) return saveEdit(entry);
   state.busy = true; refreshGo();
   toast("記帳中…");
+  entry = Object.assign({ date: $("date").value || today() }, entry);
+  if (state.mode === "couple" && state.payer) entry.payer_id = state.payer;
   try {
     const r = await api("/liff/api/record", Object.assign({ mode: state.mode }, entry));
     toast(r.message);
     // 在聊天室裡開的就留一句話在聊天室，對方也看得到記了什麼。
     // 結尾刻意是括號：bot 的「午餐 120」解析要求數字或分攤結尾，這句不會被再記一次。
-    const ctx = liff.getContext() || {};
-    if (["group", "room", "utou"].includes(ctx.type)) {
-      const tag = entry.kind === "個人" ? "個人" : "共同";
-      liff.sendMessages([{ type: "text", text: `📝 ${entry.item} NT$${fmt(entry.amount)}・${tag}（表單）` }]).catch(() => {});
-    }
+    const tag = entry.kind === "個人" ? "個人" : "共同";
+    const payer = members().find((m) => m.id === entry.payer_id);
+    const by = payer && entry.payer_id !== state.data.me ? `・${payer.name}付` : "";
+    tell(`📝 ${entry.item} NT$${fmt(entry.amount)}・${tag}${by}`);
     $("item").value = ""; setAmount(""); renderAmounts();
   } catch (e) {
     toast(e.message, true);
@@ -260,7 +337,98 @@ async function submit(entry) {
   }
 }
 
+async function saveEdit(entry) {
+  state.busy = true; refreshGo();
+  toast("儲存中…");
+  const body = Object.assign({ book: state.edit.book, id: state.edit.id,
+                               date: $("date").value }, entry);
+  if (state.edit.book === "couple" && state.payer) body.payer_id = state.payer;
+  try {
+    const r = await api("/liff/api/entry", body);
+    toast(r.message);
+    if (r.message !== "沒有變動。") tell(r.message);
+    await loadEdit(state.edit.book, state.edit.id);
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    state.busy = false; refreshGo();
+  }
+}
+
+async function deleteEdit() {
+  const btn = $("del");
+  // 按兩次才刪：不用 confirm()，那個對話框在 LINE 內建瀏覽器裡長得很突兀
+  if (!btn.classList.contains("armed")) {
+    btn.classList.add("armed"); btn.textContent = "再按一次確認刪除";
+    setTimeout(() => { btn.classList.remove("armed"); btn.textContent = "刪除這筆"; }, 4000);
+    return;
+  }
+  state.busy = true; refreshGo();
+  try {
+    const r = await api("/liff/api/entry", { book: state.edit.book, id: state.edit.id, delete: true });
+    toast(r.message);
+    tell(r.message);
+    exitEdit();
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    state.busy = false; refreshGo();
+    btn.classList.remove("armed"); btn.textContent = "刪除這筆";
+  }
+}
+
+function renderHistory(list) {
+  const box = $("history");
+  box.innerHTML = "";
+  box.classList.toggle("hidden", !list.length);
+  if (!list.length) return;
+  const h = document.createElement("div");
+  h.innerHTML = "<b>這筆的編輯紀錄</b>";
+  box.appendChild(h);
+  for (const r of list) {
+    const d = document.createElement("div");
+    const when = (r.at || "").slice(5, 16).replace("T", " ");
+    d.textContent = `${when}　${r.actor || "?"} ${r.action}：${r.detail || r.summary || ""}`;
+    box.appendChild(d);
+  }
+}
+
+async function loadEdit(book, id) {
+  const r = await api(`/liff/api/entry?book=${encodeURIComponent(book)}&id=${encodeURIComponent(id)}`);
+  const e = r.entry;
+  state.edit = { book, id: e.id, deletable: e.deletable };
+  document.body.classList.add("editing");
+  setMode(book);
+  $("item").value = e.item || "";
+  setAmount(String(e.total || ""));
+  setKind(e.kind || "共同");
+  $("date").value = e.date || today();
+  state.payer = e.payer_id || state.data.me;
+  renderPayers(); renderAmounts();
+  const who = book === "couple" && e.recorder ? `記錄人：${e.recorder}` : "";
+  const src = e.source && !["LINE", "表單", "手動"].includes(e.source) ? `・${e.source}` : "";
+  $("editInfo").textContent = (who || "編輯中") + src;
+  $("editbar").classList.remove("hidden");
+  $("go").textContent = "儲存修改";
+  $("del").classList.toggle("hidden", !e.deletable);
+  renderHistory(r.history || []);
+}
+
+function exitEdit() {
+  state.edit = null;
+  document.body.classList.remove("editing");
+  $("editbar").classList.add("hidden");
+  $("del").classList.add("hidden");
+  $("history").classList.add("hidden");
+  $("go").textContent = "記下";
+  $("item").value = ""; setAmount(""); $("date").value = today();
+  state.payer = state.data.me;
+  setMode(state.mode);
+}
+
 function wire() {
+  $("del").onclick = deleteEdit;
+  $("cancelEdit").onclick = (e) => { e.preventDefault(); exitEdit(); };
   $("books").onclick = (e) => {
     const m = e.target.dataset && e.target.dataset.mode;
     if (m && state.data && state.data.modes.includes(m)) setMode(m);
@@ -299,7 +467,16 @@ async function main() {
   // 在群組開預設共同帳本，私訊開預設我的帳
   const type = (liff.getContext() || {}).type;
   const prefer = type === "utou" ? "personal" : "couple";
+  state.payer = state.data.me;
+  $("date").value = today();
   setMode(modes.includes(prefer) ? prefer : modes[0]);
+
+  const p = INITIAL_PARAMS.get("edit") ? INITIAL_PARAMS : params();
+  const editId = p.get("edit"), book = p.get("book");
+  if (editId && modes.includes(book)) {
+    try { await loadEdit(book, editId); }
+    catch (e) { toast(e.message, true); }
+  }
 }
 main();
 </script>

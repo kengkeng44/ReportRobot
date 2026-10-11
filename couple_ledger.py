@@ -31,6 +31,9 @@ _RECENT_KEYWORDS = {"共同明細", "最近", "明細", "最近幾筆"}
 _UNDO_KEYWORDS = {"撤銷", "刪掉上一筆", "刪除上一筆", "取消上一筆", "記錯了"}
 _HELP_KEYWORDS = {"記帳說明", "記帳教學"}
 _PANEL_KEYWORDS = {"選單", "面板", "記帳選單"}
+_LOG_KEYWORDS = {"編輯紀錄", "異動紀錄", "修改紀錄", "紀錄"}
+# 「午餐 120 小美付」：尾巴「某某付」= 幫某某記。名字要在記帳成員名單上
+_PAYER_SUFFIX_RE = re.compile(r"^(.*\S)\s+(\S{1,12})付$")
 _CHART_RE = re.compile(r"^(?:圖表|圓餅圖|圓餅|統計)(?:\s*(.+))?$")
 _TODO_RE = re.compile(r"^(?:待辦|todo)(?:\s+(.*))?$", re.IGNORECASE)
 
@@ -38,19 +41,22 @@ HELP_TEXT = (
     "💑 共同記帳怎麼用\n\n"
     "直接打就好，不用打「記一筆」：\n"
     "　午餐 120　　← 共同，兩人平分\n"
-    "　衣服 990 個人　← 自己的，不列入結算（單人也可以）\n\n"
+    "　衣服 990 個人　← 自己的，不列入結算（單人也可以）\n"
+    "　午餐 120 @小美　← 幫小美記（小美付的），也可以打「午餐 120 小美付」\n\n"
     "其他：\n"
     "　記一筆　　← 跳常記的按鈕，按一下就記好\n"
     "　結算　　　← 這個月誰該給誰多少\n"
     "　上個月結算 / 結算 9月　← 看任何一個月\n"
-    "　最近　　　← 最近 10 筆\n"
+    "　最近　　　← 最近 10 筆，每筆都能按「編輯」改或刪\n"
     "　撤銷　　　← 刪掉你自己記的最後一筆\n"
+    "　編輯紀錄　← 誰在什麼時候新增、改了、刪了哪一筆\n"
+    "　成員　　　← 看誰是管理員（設管理員 @某人）\n"
     "　圖表　　　← 本月共同支出圓餅圖（圖表 9月 看別的月）" + chr(10) +
     "　選單　　　← 叫出按鈕卡，長按設成公告就會釘在最上面\n\n"
     "兩人共用的待辦：\n"
     "　待辦 買衛生紙　← 新增\n"
     "　待辦　　　　　← 看清單，按「完成」就劃掉\n\n"
-    "誰打的字就算誰付的錢。私訊或表單記成「共同」的、" + chr(10) +
+    "沒指定的話，誰打的字就算誰付的錢。私訊或表單記成「共同」的、" + chr(10) +
     "全聯刷卡，也會自動同步過來（算你付的）。" + chr(10) + chr(10) +
     "結算：每筆共同的錢兩人各出一半，" + chr(10) +
     "多付的人收回差額 —— 只看當月，月與月分開算。"
@@ -149,25 +155,33 @@ def suggestions(limit_items=13):
 
 # ── 記帳 ─────────────────────────────────────────────────
 
-def record(entry, user_id, group_id=None, source="LINE"):
+def _name(user_id, group_id=None):
+    """LINE 暱稱。查不到留空 —— 錢的紀錄比名字重要，結算靠 ID 不靠名字。"""
+    import line_sender
+    return line_sender.group_member_name(group_id or couple_group_id(), user_id) or ""
+
+
+def record(entry, user_id, group_id=None, source="LINE", payer_id=None):
     """寫進共同帳本。回 (成功與否, 寫入的列)。
 
-    付款人 = 打字的人。暱稱查不到就留空照記 —— 錢的紀錄比名字重要，
-    結算靠的是付款人ID 不是名字。
+    記錄人 = 打字的人；付款人預設也是他，有指定（@某人、表單選別人）就是被指定的人。
     """
     import finance_report
-    import line_sender
     import notion_db
     from tz_utils import today_tpe
 
-    payer = line_sender.group_member_name(group_id or couple_group_id(), user_id) or ""
+    payer_id = payer_id or user_id or ""
+    recorder = _name(user_id, group_id)
+    payer = recorder if payer_id == user_id else _name(payer_id, group_id)
     row = {
-        "date": today_tpe().isoformat(),
+        "date": entry.get("date") or today_tpe().isoformat(),
         "item": entry["item"],
         "total": entry["total"],
         "kind": entry["kind"],
         "payer": payer,
-        "payer_id": user_id or "",
+        "payer_id": payer_id,
+        "recorder": recorder,
+        "recorder_id": user_id or "",
         "category": finance_report.guess_category(entry["item"]),
         "source": source,
     }
@@ -177,14 +191,124 @@ def record(entry, user_id, group_id=None, source="LINE"):
     row["page_id"] = page_id
     if _CACHE["rows"] is not None:
         _CACHE["rows"] = [row] + list(_CACHE["rows"])
+    _log("新增", user_id, recorder, row, describe(row))
     return True, row
 
 
 def confirm_text(row):
     who = row.get("payer") or "你"
+    by = ""
+    if row.get("recorder_id") and row.get("recorder_id") != row.get("payer_id"):
+        by = f"，{row.get('recorder') or '別人'}記"
     if row["kind"] == "個人":
-        return f"✅ {row['item']} NT${row['total']:,}（{who} 個人，不列入結算）"
-    return f"✅ {row['item']} NT${row['total']:,}（共同・{who}付）"
+        return f"✅ {row['item']} NT${row['total']:,}（{who} 個人，不列入結算{by}）"
+    return f"✅ {row['item']} NT${row['total']:,}（共同・{who}付{by}）"
+
+
+def describe(row):
+    """一筆帳的一行摘要，紀錄與訊息共用。"""
+    who = row.get("payer") or "?"
+    return (f"{(row.get('date') or '')[5:]} {row.get('item')} "
+            f"NT${_fmt(row.get('total') or 0)} {row.get('kind') or '共同'}・{who}付")
+
+
+# ── 編輯 / 刪除 / 異動紀錄 ───────────────────────────────
+
+def _log(action, actor_id, actor, row, detail):
+    """寫一條異動紀錄。失敗不影響帳本身 —— notion_db 那邊已經吞掉例外。"""
+    import notion_db
+    from tz_utils import now_tpe
+    try:
+        notion_db.couple_log_add({
+            "at": now_tpe().isoformat(timespec="seconds"),
+            "action": action,
+            "actor": actor or _name(actor_id),
+            "actor_id": actor_id or "",
+            "entry_id": row.get("page_id") or "",
+            "summary": f"{action} {row.get('item') or ''}".strip(),
+            "detail": detail,
+        })
+    except Exception as e:
+        print(f"共同帳本紀錄寫入失敗：{e}")
+
+
+_FIELD_LABELS = (("item", "品項"), ("total", "金額"), ("date", "日期"),
+                 ("kind", "類型"), ("payer", "付款人"))
+
+
+def _diff(old, new):
+    parts = []
+    for key, label in _FIELD_LABELS:
+        a, b = old.get(key), new.get(key)
+        if key == "total":
+            a, b = _fmt(a or 0), _fmt(b or 0)
+        if a != b:
+            parts.append(f"{label} {a or '（空）'}→{b or '（空）'}")
+    return "、".join(parts)
+
+
+def update_entry(page_id, changes, actor_id, actor=None):
+    """改一筆共同帳本。changes: item/total/kind/date/payer_id。
+
+    回 (成功與否, 給人看的訊息)。沒有任何變動也算成功，不寫紀錄。
+    """
+    import finance_report
+    import notion_db
+
+    old = notion_db.couple_get(page_id)
+    if not old:
+        return False, "找不到這筆，可能已經被刪掉了。"
+    new = dict(old)
+    for k in ("item", "total", "kind", "date"):
+        if changes.get(k) not in (None, ""):
+            new[k] = changes[k]
+    if changes.get("payer_id") and changes["payer_id"] != old.get("payer_id"):
+        new["payer_id"] = changes["payer_id"]
+        new["payer"] = _name(changes["payer_id"])
+    diff = _diff(old, new)
+    if not diff:
+        return True, "沒有變動。"
+
+    fields = {k: new[k] for k in ("item", "total", "kind", "date", "payer", "payer_id")
+              if new.get(k) != old.get(k)}
+    if "item" in fields:
+        fields["category"] = finance_report.guess_category(new["item"])
+    if not notion_db.couple_update(page_id, fields):
+        return False, "寫入 Notion 失敗，請稍後再試。"
+    _CACHE["rows"] = None
+    actor = actor or _name(actor_id)
+    _log("修改", actor_id, actor, new, diff)
+    return True, f"✏️ {actor or '有人'}改了 {old.get('item')}：{diff}"
+
+
+def delete_entry(page_id, actor_id, actor=None, row=None):
+    """刪一筆（進 Notion 垃圾桶）並寫紀錄。回 (成功與否, 訊息)。"""
+    import notion_db
+
+    row = row or notion_db.couple_get(page_id)
+    if not row:
+        return False, "找不到這筆，可能已經被刪掉了。"
+    if not notion_db.couple_delete(page_id):
+        return False, "刪除失敗，請稍後再試。"
+    if _CACHE["rows"] is not None:
+        _CACHE["rows"] = [r for r in _CACHE["rows"] if r.get("page_id") != page_id]
+    actor = actor or _name(actor_id)
+    _log("刪除", actor_id, actor, row, describe(row))
+    return True, f"🗑️ {actor or '有人'}刪了：{describe(row)}"
+
+
+def log_text(limit=15):
+    import notion_db
+    rows = notion_db.couple_log_load(limit=limit)
+    if not rows:
+        return "還沒有任何異動紀錄。"
+    icon = {"新增": "➕", "修改": "✏️", "刪除": "🗑️"}
+    out = ["📜 編輯紀錄（新到舊）"]
+    for r in rows:
+        when = (r.get("at") or "")[5:16].replace("T", " ")
+        out.append(f"{icon.get(r.get('action'), '・')} {when} {r.get('actor') or '?'}"
+                   f"{_NL}　{r.get('detail') or r.get('summary') or ''}")
+    return _NL.join(out)
 
 
 # ── 從交易明細自動同步 ───────────────────────────────────
@@ -511,6 +635,13 @@ def _month_bounds(today, offset=0):
             _month_label(today, offset))
 
 
+def _by(r):
+    """「家豪記」—— 記錄人跟付款人不同才寫，相同的話多一個名字只是噪音。"""
+    if r.get("recorder_id") and r.get("recorder_id") != r.get("payer_id"):
+        return f"{r.get('recorder') or '?'}記"
+    return ""
+
+
 def recent_text(rows, n=10):
     if not rows:
         return "共同帳本還是空的。打「午餐 120」記第一筆。"
@@ -518,9 +649,47 @@ def recent_text(rows, n=10):
     for r in rows[:n]:
         tag = "個人" if r.get("kind") == "個人" else "共同"
         who = r.get("payer") or ""
+        by = _by(r)
         out.append(f"{r.get('date', '')[5:]}　{r.get('item')}　"
-                   f"NT${_fmt(r.get('total') or 0)}　{tag}{('・' + who) if who else ''}")
+                   f"NT${_fmt(r.get('total') or 0)}　{tag}{('・' + who + '付') if who else ''}"
+                   f"{('（' + by + '）') if by else ''}")
     return "\n".join(out)
+
+
+def recent_reply(rows, n=10):
+    """最近幾筆，每筆一顆「編輯」開表單。沒設 LIFF 就退回純文字。"""
+    import liff_api
+    if not rows or not liff_api.liff_url():
+        return recent_text(rows, n)
+
+    def _row(r):
+        tag = "個人" if r.get("kind") == "個人" else "共同"
+        sub = f"{(r.get('date') or '')[5:]}・{tag}・{r.get('payer') or '?'}付"
+        if _by(r):
+            sub += f"・{_by(r)}"
+        return {"type": "box", "layout": "horizontal", "spacing": "sm",
+                "alignItems": "center", "contents": [
+                    {"type": "box", "layout": "vertical", "flex": 5, "contents": [
+                        {"type": "box", "layout": "horizontal", "contents": [
+                            {"type": "text", "text": r.get("item") or "（未命名）",
+                             "size": "sm", "weight": "bold", "flex": 3, "wrap": False},
+                            {"type": "text", "text": f"NT${_fmt(r.get('total') or 0)}",
+                             "size": "sm", "align": "end", "flex": 2}]},
+                        {"type": "text", "text": sub, "size": "xxs", "color": "#8a96a0"}]},
+                    {"type": "button", "style": "link", "height": "sm", "flex": 2,
+                     "action": {"type": "uri", "label": "編輯",
+                                "uri": liff_api.edit_url("couple", r["page_id"])}}]}
+
+    body = [{"type": "text", "text": "💑 最近幾筆", "weight": "bold", "size": "lg"}]
+    for r in rows[:n]:
+        if r.get("page_id"):
+            body.append({"type": "separator"})
+            body.append(_row(r))
+    body.append({"type": "text", "text": "按「編輯」可以改品項、金額、日期、誰付的，或刪掉。",
+                 "size": "xxs", "color": "#8a96a0", "wrap": True})
+    return {"type": "flex", "altText": recent_text(rows, n)[:300],
+            "contents": {"type": "bubble", "body": {
+                "type": "box", "layout": "vertical", "spacing": "sm", "contents": body}}}
 
 
 # ── 按鈕 ─────────────────────────────────────────────────
@@ -565,13 +734,25 @@ def handle(text, ctx):
     import notion_db
     from tz_utils import today_tpe
 
+    import couple_members
+
     t = (text or "").strip().lstrip("/").strip()
     if not t:
         return None
     user_id = (ctx or {}).get("user_id")
 
+    # 講過話的人補進成員名單，表單「誰付的」才選得到他
+    try:
+        couple_members.touch(user_id)
+    except Exception as e:
+        print(f"成員名單更新失敗：{e}")
+
     if t in _HELP_KEYWORDS:
         return HELP_TEXT
+
+    reply = couple_members.handle(t, ctx)
+    if reply is not None:
+        return reply
 
     if t in _PANEL_KEYWORDS:
         return panel_flex()
@@ -598,14 +779,19 @@ def handle(text, ctx):
             return _settle_reply(rows, label, offset, today)
 
         if t in _RECENT_KEYWORDS:
-            return recent_text(notion_db.couple_load(limit=10))
+            return recent_reply(notion_db.couple_load(limit=10))
+
+        if t in _LOG_KEYWORDS:
+            return log_text()
 
         if t in _UNDO_KEYWORDS:
             return _undo(user_id)
 
-        entry = parse_entry(t)
+        text_wo, payer_id = _strip_payer(t, ctx)
+        entry = parse_entry(text_wo)
         if entry:
-            ok, row = record(entry, user_id, (ctx or {}).get("group_id"))
+            ok, row = record(entry, user_id, (ctx or {}).get("group_id"),
+                             payer_id=payer_id)
             if not ok:
                 return "寫入 Notion 失敗，請稍後再試。"
             from flex_builder import quick_reply_text
@@ -620,6 +806,33 @@ def handle(text, ctx):
         return "共同帳本暫時連不上，等一下再試。"
 
     return None
+
+
+def _strip_payer(t, ctx):
+    """「午餐 120 @小美」/「午餐 120 小美付」→ (「午餐 120」, 小美的 ID)。
+
+    @提及靠 LINE 給的位置把那段字挖掉，不用正規式猜 —— 暱稱裡可能有空白。
+    位置是對原始訊息算的，所以只在訊息沒被前處理改過時才挖。
+    """
+    import couple_members
+
+    ctx = ctx or {}
+    mentions = ctx.get("mentions") or []
+    spans = ctx.get("mention_spans") or []
+    raw = ctx.get("raw_text")
+    if mentions and spans and raw is not None and raw.strip() == t:
+        chars = list(raw)
+        for start, length in sorted(spans, reverse=True):
+            del chars[start:start + length]
+        return "".join(chars).strip(), mentions[0]
+
+    m = _PAYER_SUFFIX_RE.match(t)
+    if m:
+        name = m.group(2)
+        hits = [x for x in couple_members.load() if x.get("name") == name]
+        if len(hits) == 1:
+            return m.group(1).strip(), hits[0]["user_id"]
+    return t, None
 
 
 def _todo(body, ctx):
@@ -676,7 +889,10 @@ def panel_flex():
         _btn("待辦", _msg("待辦", "待辦")),
         _btn("撤銷", _msg("撤銷", "撤銷")),
     ]})
-    rows.append(_btn("圖表", _msg("📊 本月圓餅圖", "圖表")))
+    rows.append({"type": "box", "layout": "horizontal", "spacing": "sm", "contents": [
+        _btn("圖表", _msg("📊 圓餅圖", "圖表")),
+        _btn("紀錄", _msg("📜 編輯紀錄", "編輯紀錄")),
+    ]})
     try:
         import notion_db
         notion_url = notion_db.couple_db_url()
@@ -706,16 +922,48 @@ def panel_flex():
 
 
 def _undo(user_id):
-    """刪掉這個人自己記的最後一筆。只刪自己的 —— 不能幫對方撤銷。"""
+    """刪掉這個人自己記的最後一筆（看記錄人，不看付款人 ——
+    幫對方記錯了也要能撤）。要刪別人記的，從「最近」按編輯。"""
     import notion_db
     rows = notion_db.couple_load(limit=30)
-    mine = next((r for r in rows if r.get("payer_id") == user_id), None)
+    mine = next((r for r in rows
+                 if (r.get("recorder_id") or r.get("payer_id")) == user_id), None)
     if not mine:
         return "找不到你記過的帳。"
-    if not notion_db.couple_delete(mine["page_id"]):
+    ok, _ = delete_entry(mine["page_id"], user_id, row=mine)
+    if not ok:
         return "刪除失敗，請稍後再試。"
-    if _CACHE["rows"] is not None:
-        _CACHE["rows"] = [r for r in _CACHE["rows"]
-                          if r.get("page_id") != mine["page_id"]]
     return (f"🗑️ 已撤銷：{mine['date'][5:]} {mine['item']} "
             f"NT${_fmt(mine.get('total') or 0)}")
+
+
+# ── 私訊也能用的共同帳本指令 ─────────────────────────────
+
+_DM_RECENT_KEYWORDS = {"共同明細", "共同最近", "共同帳本"}
+
+
+def handle_dm(text, ctx):
+    """私訊裡的共同帳本指令：群組成員才能用。不是這類指令回 None。"""
+    import couple_members
+    import line_sender
+    import notion_db
+
+    if not ctx or ctx.get("source_type") != "user" or not couple_group_id():
+        return None
+    t = (text or "").strip().lstrip("/").strip()
+    is_cmd = (t in _DM_RECENT_KEYWORDS or t in _LOG_KEYWORDS
+              or t in couple_members._LIST_KEYWORDS or couple_members._ROLE_RE.match(t))
+    if not is_cmd:
+        return None
+    # 私訊沒有群組可以對，問 LINE「他在不在記帳群組」；陌生人一律當沒聽到
+    if not line_sender.group_member_name(couple_group_id(), ctx.get("user_id")):
+        return None
+    try:
+        if t in _DM_RECENT_KEYWORDS:
+            return recent_reply(notion_db.couple_load(limit=10))
+        if t in _LOG_KEYWORDS:
+            return log_text()
+        return couple_members.handle(t, ctx)
+    except Exception as e:
+        print(f"私訊共同帳本失敗：{e}")
+        return "共同帳本暫時連不上，等一下再試。"
