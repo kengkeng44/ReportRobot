@@ -725,3 +725,37 @@ def test_form_record_for_partner(env, monkeypatch):
     assert status == 200
     assert rows[0]["payer_id"] == GF and rows[0]["recorder_id"] == ADMIN
     assert rows[0]["date"] == "2026-10-05"
+
+
+# ── Notion 勾「算共同」→ 共同帳本（2026-10-12）──────────────────
+
+def test_sync_checked_marks_and_mirrors_once(env, monkeypatch):
+    pending = [_personal(page_id="t1", split_raw=None, total_set=False, fingerprint="fp1"),
+               _personal(page_id="t2", split_raw=None, total_set=False, direction="收入")]
+    splits, couple = [], {}
+    monkeypatch.setattr(notion_db, "transactions_checked_pending", lambda: pending)
+    monkeypatch.setattr(notion_db, "transaction_set_split",
+                        lambda pid, s, a=None, t=None: splits.append((pid, s, a, t)) or True)
+    monkeypatch.setattr(notion_db, "couple_has_source", lambda fp: fp in couple)
+    monkeypatch.setattr(notion_db, "couple_add",
+                        lambda r: couple.setdefault(r["source_id"], r) and "c1")
+    assert cl.sync_checked() == 1
+    assert splits == [("t1", "共同", 300, 600)]          # 收入那筆不動
+    assert couple["fp1"]["total"] == 600 and couple["fp1"]["payer_id"] == ADMIN
+    # 中途失敗重跑：同一筆再撈到，也不會在共同帳本多記一次
+    cl.sync_checked()
+    assert len(couple) == 1
+
+
+def test_rescan_backfills_checkbox_for_old_shared(env, monkeypatch):
+    rows = [_personal(page_id="t1", split_raw="共同", split_type="共同", total_set=True,
+                      shared_box=False),
+            _personal(page_id="t2", split_raw="共同", split_type="共同", total_set=True,
+                      shared_box=True)]
+    boxed = []
+    monkeypatch.setattr(notion_db, "transactions_load", lambda **kw: rows)
+    monkeypatch.setattr(notion_db, "transaction_set_shared_box",
+                        lambda pid, c=True: boxed.append(pid) or True)
+    monkeypatch.setattr(notion_db, "couple_has_source", lambda fp: True)
+    cl.rescan()
+    assert boxed == ["t1"]

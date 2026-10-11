@@ -214,6 +214,26 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"[couple] 重掃失敗（非致命）：{e}")
 
+    # Notion 勾「算共同」→ 記進共同帳本。Notion 沒有能用的推播，只能輪詢；
+    # 一次一個查詢、沒勾的時候撈到 0 筆，5 分鐘一次負擔很小。
+    def _run_sync_checked():
+        try:
+            import couple_ledger
+            n = couple_ledger.sync_checked()
+            if n:
+                print(f"[couple] Notion 打勾記進共同帳本：{n} 筆")
+        except Exception as e:
+            print(f"[couple] 打勾同步失敗（非致命）：{e}")
+
+    scheduler.add_job(
+        _run_sync_checked,
+        IntervalTrigger(minutes=5),
+        id="couple_sync_checked",
+        max_instances=1,
+        coalesce=True,
+        replace_existing=True,
+    )
+
     scheduler.add_job(
         _run_couple_rescan,
         CronTrigger(hour=15, minute=50, timezone="Asia/Taipei"),

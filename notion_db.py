@@ -276,6 +276,9 @@ _SCHEMAS = {
         "分攤類型": _select(("個人", "default"), ("共同", "blue")),
         "原始總額": {"number": {"format": "number"}},
         "Fingerprint": {"rich_text": {}},                       # 去重鍵，見 spec 3.3
+        # 在 Notion 直接打勾 = 這筆算共同，排程每 5 分鐘撿起來記進共同帳本
+        # （couple_ledger.sync_checked）。bot 自己標共同時也會勾上，畫面才一致。
+        "算共同": {"checkbox": {}},
     },
     # 情侶群組記的帳。跟「交易明細」刻意分開（見 _SECTIONS 的理由）。
     # 「金額」存**整筆**，不像交易明細存我那半 —— 這張表是兩個人的，
@@ -1604,6 +1607,7 @@ def transaction_add(txn):
         # 沒帶就不寫這兩欄 —— 國泰同步走的是同一個函式，硬填「個人」
         # 會把「這個來源沒有分攤概念」偽裝成「已經判斷過是個人」。
         "分攤類型": _prop_select(txn.get("split_type")),
+        "算共同": {"checkbox": True} if txn.get("split_type") == "共同" else None,
         "原始總額": _prop_number(txn.get("total")),
         "Fingerprint": {"rich_text": [{"text": {"content": txn["fingerprint"]}}]},
     }
@@ -1891,6 +1895,7 @@ def transaction_update(page_id, fields):
         props["原始總額"] = _prop_number(f["total"])
     if "split_type" in f:
         props["分攤類型"] = _prop_select(f["split_type"])
+        props["算共同"] = {"checkbox": f["split_type"] == "共同"}
     if f.get("category"):
         props["類別"] = _prop_select(normalize_spend_category(f["category"]))
     props = {k: v for k, v in props.items() if v is not None}
@@ -1960,7 +1965,8 @@ def transaction_set_split(page_id, split_type, amount=None, total=None):
     client = _get_client()
     if not client or not page_id:
         return False
-    props = {"分攤類型": _prop_select(split_type)}
+    props = {"分攤類型": _prop_select(split_type),
+             "算共同": {"checkbox": split_type == "共同"}}
     if amount is not None:
         props["金額"] = _prop_number(amount)
     if total is not None:
@@ -2076,11 +2082,49 @@ def _txn_row(r):
         # split_type 對空值有預設「個人」，分不出「沒標過」跟「標了個人」
         "page_id": r.get("id"),
         "split_raw": _read_select(props, "分攤類型"),
+        "shared_box": bool((props.get("算共同") or {}).get("checkbox")),
         "total_set": _read_number(props, "原始總額") is not None,
         "total": (_read_number(props, "原始總額")
                   if _read_number(props, "原始總額") is not None
                   else _read_number(props, "金額")),
     }
+
+
+def transactions_checked_pending(limit=50):
+    """「算共同」打勾了、但分攤類型還不是共同的 —— 也就是你剛在 Notion 勾的。
+
+    處理完分攤類型就變成共同，下一輪自然不會再撈到，所以這支查詢本身就是
+    去重的第一道；第二道是 mirror_txn 用 Fingerprint 查共同帳本有沒有這筆。
+    Notion 掛掉丟例外，讓排程印 log。
+    """
+    db_id = get_or_create_db("交易明細")
+    client = _get_client()
+    if not db_id or not client:
+        return []
+    res = client.databases.query(
+        database_id=db_id, page_size=min(limit, 100),
+        filter={"and": [
+            {"property": "算共同", "checkbox": {"equals": True}},
+            {"or": [
+                {"property": "分攤類型", "select": {"is_empty": True}},
+                {"property": "分攤類型", "select": {"does_not_equal": "共同"}},
+            ]},
+        ]})
+    return [_txn_row(r) for r in res.get("results", [])]
+
+
+def transaction_set_shared_box(page_id, checked=True):
+    """只改「算共同」勾勾（舊資料補勾用）。"""
+    client = _get_client()
+    if not client or not page_id:
+        return False
+    try:
+        client.pages.update(page_id=page_id,
+                            properties={"算共同": {"checkbox": bool(checked)}})
+        return True
+    except Exception as e:
+        print(f"[notion] transaction_set_shared_box 失敗：{e}")
+        return False
 
 
 def transactions_load(limit=200, since=None, until=None):

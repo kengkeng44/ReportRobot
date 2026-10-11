@@ -388,6 +388,24 @@ def mark_shared(txn):
     return True
 
 
+def sync_checked():
+    """在 Notion 勾了「算共同」的，標成共同並記進共同帳本。排程每 5 分鐘跑。
+
+    不重複記帳靠兩道：撈的條件是「勾了但分攤類型還不是共同」，處理完就不再
+    符合；萬一中途失敗重跑，mirror_txn 會用 Fingerprint 查共同帳本有沒有這筆。
+    收入不分攤，勾了也不動。
+    """
+    import notion_db
+
+    n = 0
+    for t in notion_db.transactions_checked_pending():
+        if t.get("direction") == "收入" or not t.get("page_id"):
+            continue
+        if mark_shared(t):
+            n += 1
+    return n
+
+
 def rescan(limit=1000):
     """重掃交易明細，該進共同帳本的都補進去。每天排程跑，也可手動觸發。重跑安全。
 
@@ -405,6 +423,9 @@ def rescan(limit=1000):
         if t.get("direction") == "收入" or not t.get("page_id"):
             continue
         if t.get("split_raw") == "共同":
+            # 「算共同」欄是後來才加的：舊的共同那幾筆補勾上，Notion 畫面才一致
+            if not t.get("shared_box"):
+                notion_db.transaction_set_shared_box(t["page_id"], True)
             if not t.get("total_set"):
                 if mark_shared(t):
                     stats["marked"] += 1
