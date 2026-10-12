@@ -259,6 +259,25 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # Notion「發票處理」選了 ✅/➡️/➕ → 照選的處理。純 Notion 查詢，不用 AI
+    def _run_invoice_review():
+        try:
+            import einvoice_ledger
+            n = einvoice_ledger.review()
+            if n:
+                print(f"[einvoice] 發票人工確認處理：{n} 筆")
+        except Exception as e:
+            print(f"[einvoice] 發票人工確認失敗（非致命）：{e}")
+
+    scheduler.add_job(
+        _run_invoice_review,
+        IntervalTrigger(minutes=5),
+        id="einvoice_review",
+        max_instances=1,
+        coalesce=True,
+        replace_existing=True,
+    )
+
     scheduler.add_job(
         _run_couple_rescan,
         CronTrigger(hour=15, minute=50, timezone="Asia/Taipei"),

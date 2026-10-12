@@ -280,6 +280,11 @@ _SCHEMAS = {
         "明細": {"rich_text": {}},
         # 去重用：同一張發票不管匯入幾次都只處理一次
         "發票號碼": {"rich_text": {}},
+        # 比對對不對，你在 Notion 選一個，排程每 5 分鐘處理（einvoice_ledger.review）
+        "發票處理": _select(("✅ 正確", "green"), ("➡️ 換下一筆", "yellow"),
+                            ("➕ 沒刷卡，新增一筆", "blue")),
+        # 原始發票（JSON），換下一筆 / 新增一筆時要靠它，不用給人看
+        "發票資料": {"rich_text": {}},
         # 誰記的：人記的寫 LINE 暱稱，信件自動抓的寫「🤖 自動」
         "記錄人": {"rich_text": {}},
         # Notion 內建：什麼時候建立、誰建立的（bot 或你在 Notion 手打）
@@ -1632,6 +1637,7 @@ def transaction_add(txn):
         "原始總額": _prop_number(txn.get("total")),
         "Fingerprint": {"rich_text": [{"text": {"content": txn["fingerprint"]}}]},
         "明細": _rich(txn["items"]) if txn.get("items") else None,
+        "發票資料": _rich(txn["invoice_data"]) if txn.get("invoice_data") else None,
         "發票號碼": _rich(txn["invoice_no"]) if txn.get("invoice_no") else None,
     }
     if txn.get("mail_url"):
@@ -2162,6 +2168,8 @@ def _txn_row(r):
         "fingerprint": _read_rich_text(props, "Fingerprint"),
         "invoice_no": _read_rich_text(props, "發票號碼"),
         "items": _read_rich_text(props, "明細"),
+        "invoice_data": _read_rich_text(props, "發票資料"),
+        "invoice_action": _read_select(props, "發票處理"),
         # 下面三個給「標成共同」用（couple_ledger.rescan / 整理共同）：
         # split_type 對空值有預設「個人」，分不出「沒標過」跟「標了個人」
         "page_id": r.get("id"),
@@ -2197,18 +2205,54 @@ def transactions_checked_pending(limit=50):
     return [_txn_row(r) for r in res.get("results", [])]
 
 
-def transaction_attach_invoice(page_id, invoice_no, items):
-    """把載具發票的號碼與品項補進既有那筆（einvoice_ledger）。"""
+def _rich_or_clear(v):
+    # 空字串的 text 物件 Notion 會拒收；要清空得給空陣列
+    return _rich(v) if v else {"rich_text": []}
+
+
+def transaction_attach_invoice(page_id, invoice_no, items, data=None, clear_action=False):
+    """把載具發票的號碼、品項、原始資料補進那筆（einvoice_ledger）。
+
+    值給 None 就是清空那欄 —— 發票改掛別筆時，原本這筆要整個拿乾淨。
+    clear_action：順便把「發票處理」選單清掉（人工確認處理完）。
+    """
     client = _get_client()
     if not client or not page_id:
         return False
+    props = {"發票號碼": _rich_or_clear(invoice_no), "明細": _rich_or_clear(items),
+             "發票資料": _rich_or_clear(data)}
+    if clear_action:
+        props["發票處理"] = {"select": None}
     try:
-        client.pages.update(page_id=page_id, properties={
-            "發票號碼": _rich(invoice_no), "明細": _rich(items)})
+        client.pages.update(page_id=page_id, properties=props)
         return True
     except Exception as e:
         print(f"[notion] transaction_attach_invoice 失敗：{e}")
         return False
+
+
+def transaction_clear_invoice_action(page_id):
+    client = _get_client()
+    if not client or not page_id:
+        return False
+    try:
+        client.pages.update(page_id=page_id, properties={"發票處理": {"select": None}})
+        return True
+    except Exception as e:
+        print(f"[notion] transaction_clear_invoice_action 失敗：{e}")
+        return False
+
+
+def transactions_invoice_review(limit=50):
+    """「發票處理」有選東西的帳 —— 等著 einvoice_ledger.review 處理。"""
+    db_id = get_or_create_db("交易明細")
+    client = _get_client()
+    if not db_id or not client:
+        return []
+    res = client.databases.query(
+        database_id=db_id, page_size=min(limit, 100),
+        filter={"property": "發票處理", "select": {"is_not_empty": True}})
+    return [_txn_row(r) for r in res.get("results", [])]
 
 
 def transaction_set_shared_box(page_id, checked=True):

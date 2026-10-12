@@ -22,6 +22,7 @@
 """
 
 import hashlib
+import json
 import re
 import unicodedata
 from datetime import date, timedelta
@@ -142,18 +143,101 @@ def new_txn(inv):
         "fingerprint": _fingerprint(inv["inv_num"]),
         "invoice_no": inv["inv_num"],
         "items": items_text(inv),
+        "invoice_data": pack(inv),
     }
+
+
+# ── 發票資料：存在 Notion 那筆帳上，人工確認時才拿得回原始發票 ──────
+
+def pack(inv, skip=()):
+    """發票 → 一小段 JSON（「發票資料」欄）。品項太長就砍尾，Notion 單欄上限 2000 字。"""
+    d = {"n": inv["inv_num"], "d": _as_date(inv.get("date")).isoformat(),
+         "a": _amount(inv), "s": inv.get("seller") or "",
+         "i": [[it.get("name"), it.get("qty")] for it in inv.get("items") or []],
+         "x": list(skip)}
+    text = json.dumps(d, ensure_ascii=False)
+    while len(text) > 1900 and d["i"]:
+        d["i"].pop()
+        text = json.dumps(d, ensure_ascii=False)
+    return text
+
+
+def unpack(text):
+    """「發票資料」→ (發票 dict, 已經被否決的帳 page_id)。壞掉回 (None, [])。"""
+    try:
+        d = json.loads(text or "")
+        inv = {"inv_num": d["n"], "date": _as_date(d["d"]), "amount": d["a"],
+               "seller": d.get("s") or "",
+               "items": [{"name": n, "qty": q} for n, q in d.get("i") or []]}
+        return inv, list(d.get("x") or [])
+    except (ValueError, KeyError, TypeError):
+        return None, []
+
+
+# ── 比對 ─────────────────────────────────────────────────
+
+def _total(t):
+    v = t.get("total") if t.get("total") is not None else t.get("amount")
+    try:
+        return round(float(v or 0))
+    except (TypeError, ValueError):
+        return None
+
+
+def _gap(inv, t):
+    return abs((_as_date(t["date"]) - _as_date(inv.get("date"))).days)
+
+
+def tier(inv, t):
+    """這筆帳跟發票像到什麼程度。數字越小越像，None = 不是候選。
+
+    0 金額 + 日期 + 店家全對          → 直接算是
+    1 金額一樣、同一天（店名對不上）  → 也算是（2026-10-12 使用者決定）
+    2 金額一樣、差一天                → ❓
+    3 店家一樣、金額不同              → ❓
+    """
+    if _gap(inv, t) > _DAY_SLACK:
+        return None
+    same_amount = _total(t) == _amount(inv)
+    brand = same_brand(inv.get("seller"), t.get("shop"))
+    if same_amount and brand:
+        return 0
+    if same_amount:
+        return 1 if _gap(inv, t) == 0 else 2
+    if brand:
+        return 3
+    return None
+
+
+SURE_TIERS = (0, 1)
+
+
+def _free(txns):
+    return [t for t in txns
+            if not t.get("invoice_no") and (t.get("direction") or "支出") == "支出"
+            and _as_date(t.get("date")) and t.get("page_id")]
+
+
+def best(inv, txns, skip=()):
+    """還沒掛發票的帳裡最像的那筆 → (tier, 帳)；沒有回 (None, None)。"""
+    ranked = [(tier(inv, t), _gap(inv, t), t) for t in _free(txns)
+              if t["page_id"] not in skip]
+    ranked = [r for r in ranked if r[0] is not None]
+    if not ranked:
+        return None, None
+    k, _, t = min(ranked, key=lambda r: (r[0], r[1]))
+    return k, t
 
 
 def plan(invoices, txns):
     """回傳要做的事：[(動作, 發票, 交易或 None)]，動作是 skip/attach/unsure/new/old。
 
     純函式，不碰 Notion —— dry-run 跟測試都靠它。
+    依 tier 一輪一輪認領：越像的先挑，免得一張半像的發票先搶走
+    另一張完全對得上的刷卡。
     """
     known = {t.get("invoice_no") for t in txns if t.get("invoice_no")}
-    free = [t for t in txns
-            if not t.get("invoice_no") and (t.get("direction") or "支出") == "支出"
-            and _as_date(t.get("date"))]
+    free = _free(txns)
     taken = set()
     actions = {}
 
@@ -170,44 +254,19 @@ def plan(invoices, txns):
             continue
         todo.append((num, day, inv))
 
-    def near(day):
-        return [t for t in free if t["page_id"] not in taken
-                and abs((_as_date(t["date"]) - day).days) <= _DAY_SLACK]
+    for level in (0, 1, 2, 3):
+        for num, day, inv in todo:
+            if num in actions:
+                continue
+            hits = [t for t in free if t["page_id"] not in taken and tier(inv, t) == level]
+            if hits:
+                t = min(hits, key=lambda t: _gap(inv, t))
+                taken.add(t["page_id"])
+                actions[num] = ("attach" if level in SURE_TIERS else "unsure", inv, t)
 
-    def closest(cands, day):
-        return min(cands, key=lambda t: abs((_as_date(t["date"]) - day).days))
-
-    def total(t):
-        v = t.get("total") if t.get("total") is not None else t.get("amount")
-        try:
-            return round(float(v or 0))
-        except (TypeError, ValueError):
-            return None
-
-    # 第一輪：金額 + 日期 + 品牌全對
     for num, day, inv in todo:
-        hits = [t for t in near(day) if total(t) == _amount(inv)
-                and same_brand(inv.get("seller"), t.get("shop"))]
-        if hits:
-            t = closest(hits, day)
-            taken.add(t["page_id"])
-            actions[num] = ("attach", inv, t)
-
-    # 第二輪：只有一半像的
-    for num, day, inv in todo:
-        if num in actions:
-            continue
-        cands = near(day)
-        half = ([t for t in cands if total(t) == _amount(inv)]
-                or [t for t in cands if same_brand(inv.get("seller"), t.get("shop"))])
-        if half:
-            t = closest(half, day)
-            taken.add(t["page_id"])
-            actions[num] = ("unsure", inv, t)
-        elif day >= NEW_ROWS_FROM:
-            actions[num] = ("new", inv, None)
-        else:
-            actions[num] = ("old", inv, None)
+        if num not in actions:
+            actions[num] = ("new" if day >= NEW_ROWS_FROM else "old", inv, None)
 
     return list(actions.values())
 
@@ -229,11 +288,10 @@ def apply(actions, notion=None):
     done = []
     for kind, inv, t in actions:
         ok = True
-        if kind == "attach":
-            ok = notion.transaction_attach_invoice(t["page_id"], inv["inv_num"], items_text(inv))
-        elif kind == "unsure":
+        if kind in ("attach", "unsure"):
             ok = notion.transaction_attach_invoice(
-                t["page_id"], inv["inv_num"], items_text(inv, unsure=True))
+                t["page_id"], inv["inv_num"], items_text(inv, unsure=kind == "unsure"),
+                pack(inv))
         elif kind == "new":
             ok = bool(notion.transaction_add(new_txn(inv)))
         else:
@@ -243,6 +301,71 @@ def apply(actions, notion=None):
             done.append((kind, inv, t))
         time.sleep(0.4)          # Notion 每秒約 3 次，見 sources._PACE
     return summary(done)
+
+
+# ── 人工確認：Notion「發票處理」下拉選單 ──────────────────────
+
+OK = "✅ 正確"
+NEXT = "➡️ 換下一筆"
+CASH = "➕ 沒刷卡，新增一筆"
+
+
+def review(notion=None):
+    """處理你在 Notion 選了「發票處理」的帳。排程每 5 分鐘跑。回處理筆數。
+
+    ✅ 正確       → 拿掉 ❓
+    ➡️ 換下一筆   → 這筆不是，發票改掛到下一個最像的帳（還是 ❓）；
+                   一個都沒有了就新增一筆
+    ➕ 沒刷卡     → 這筆不是，發票自己新增一筆消費
+    選完會把選單清空，所以同一筆不會被處理兩次。
+    """
+    if notion is None:
+        import notion_db as notion
+    done = 0
+    for row in notion.transactions_invoice_review():
+        pid, choice = row["page_id"], row.get("invoice_action")
+        inv, skip = unpack(row.get("invoice_data"))
+        if inv is None:
+            print(f"[einvoice] {pid} 沒有發票資料，無法處理「{choice}」")
+            notion.transaction_clear_invoice_action(pid)
+            continue
+        own_row = row.get("source") == SOURCE        # 本來就是發票自己新增的那筆
+
+        if choice == OK:
+            notion.transaction_attach_invoice(pid, inv["inv_num"], items_text(inv),
+                                              pack(inv, skip), clear_action=True)
+        elif choice == NEXT:
+            skip = skip + [pid]
+            _detach(notion, pid, own_row)
+            txns = notion.transactions_load(
+                limit=500, since=(inv["date"] - timedelta(days=_DAY_SLACK)).isoformat(),
+                until=(inv["date"] + timedelta(days=_DAY_SLACK)).isoformat())
+            _, t = best(inv, txns, skip)
+            if t:
+                notion.transaction_attach_invoice(
+                    t["page_id"], inv["inv_num"], items_text(inv, unsure=True), pack(inv, skip))
+            else:
+                notion.transaction_add(new_txn(inv))
+        elif choice == CASH:
+            if own_row:
+                notion.transaction_attach_invoice(pid, inv["inv_num"], items_text(inv),
+                                                  pack(inv, skip), clear_action=True)
+            else:
+                _detach(notion, pid, own_row)
+                notion.transaction_add(new_txn(inv))
+        else:
+            notion.transaction_clear_invoice_action(pid)       # 不認得的選項
+            continue
+        done += 1
+    return done
+
+
+def _detach(notion, pid, own_row):
+    """把發票從這筆帳拿掉。發票自己新增的那筆直接刪掉（垃圾桶 30 天內救得回來）。"""
+    if own_row:
+        notion.transaction_delete(pid)
+    else:
+        notion.transaction_attach_invoice(pid, None, None, None, clear_action=True)
 
 
 def load_txns(invoices, notion=None):

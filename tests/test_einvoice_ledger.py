@@ -52,9 +52,22 @@ def test_same_invoice_twice_is_skipped():
     assert acts[0][0] == "skip"
 
 
-def test_amount_only_is_unsure():
+def test_amount_and_same_day_counts_as_match():
+    # 2026-10-12 使用者決定：金額一樣、同一天就算是，不用店名
     acts = L.plan([_inv("AB1", date(2026, 10, 12), 120, "小林餐飲有限公司")],
                   [_txn("p1", "2026-10-12", 120, "午餐")])
+    assert acts[0][0] == "attach"
+
+
+def test_amount_only_one_day_apart_is_unsure():
+    acts = L.plan([_inv("AB1", date(2026, 10, 12), 120, "小林餐飲有限公司")],
+                  [_txn("p1", "2026-10-11", 120, "午餐")])
+    assert acts[0][0] == "unsure"
+
+
+def test_brand_only_is_unsure():
+    acts = L.plan([_inv("AB1", date(2026, 10, 12), 500, "全聯實業")],
+                  [_txn("p1", "2026-10-12", 496, "全聯福利中心")])
     assert acts[0][0] == "unsure"
 
 
@@ -100,10 +113,12 @@ def test_items_text():
 
 
 class _Notion:
-    def __init__(self):
-        self.attached, self.added = [], []
+    def __init__(self, review_rows=(), txns=()):
+        self.attached, self.added, self.cleared, self.deleted = [], [], [], []
+        self._review = list(review_rows)
+        self._txns = list(txns)
 
-    def transaction_attach_invoice(self, pid, num, items):
+    def transaction_attach_invoice(self, pid, num, items, data=None, clear_action=False):
         self.attached.append((pid, num, items))
         return True
 
@@ -111,10 +126,28 @@ class _Notion:
         self.added.append(txn)
         return "new-id"
 
+    def transaction_clear_invoice_action(self, pid):
+        self.cleared.append(pid)
+        return True
 
-def test_apply_writes(monkeypatch):
+    def transaction_delete(self, pid):
+        self.deleted.append(pid)
+        return True
+
+    def transactions_invoice_review(self):
+        return self._review
+
+    def transactions_load(self, **kw):
+        return self._txns
+
+
+@pytest.fixture(autouse=True)
+def _no_sleep(monkeypatch):
     import time
     monkeypatch.setattr(time, "sleep", lambda s: None)
+
+
+def test_apply_writes():
     n = _Notion()
     acts = L.plan([_inv("A", date(2026, 10, 12), 356, "全聯實業"),
                    _inv("B", date(2026, 10, 12), 80, "小吃店")],
@@ -122,4 +155,65 @@ def test_apply_writes(monkeypatch):
     out = L.apply(acts, n)
     assert n.attached == [("p1", "A", "鮮奶 x2、高麗菜")]
     assert n.added[0]["invoice_no"] == "B"
+    assert L.unpack(n.added[0]["invoice_data"])[0]["inv_num"] == "B"
     assert out.startswith("補明細 1、待確認 0、新增 1")
+
+
+def test_pack_roundtrip_and_size_limit():
+    inv = _inv("A", date(2026, 10, 12), 356, "全聯",
+               items=[(f"品項{i}" * 5, 1) for i in range(300)])
+    text = L.pack(inv, skip=["p9"])
+    assert len(text) <= 1900
+    back, skip = L.unpack(text)
+    assert back["inv_num"] == "A" and back["amount"] == 356 and skip == ["p9"]
+    assert L.unpack("壞掉") == (None, [])
+
+
+def _review_row(pid, choice, inv, skip=(), source="國泰消費彙整"):
+    return {"page_id": pid, "invoice_action": choice, "invoice_data": L.pack(inv, skip),
+            "source": source}
+
+
+INV = _inv("A", date(2026, 10, 12), 120, "小林餐飲")
+
+
+def test_review_ok_removes_question_mark():
+    n = _Notion([_review_row("p1", L.OK, INV)])
+    assert L.review(n) == 1
+    assert n.attached == [("p1", "A", "鮮奶 x2、高麗菜")]
+
+
+def test_review_next_moves_to_next_candidate():
+    others = [_txn("p1", "2026-10-12", 120, "午餐"),       # 被否決的那筆
+              _txn("p2", "2026-10-13", 120, "便當")]
+    n = _Notion([_review_row("p1", L.NEXT, INV)], others)
+    L.review(n)
+    assert n.attached[0] == ("p1", None, None)               # 先從原本那筆拿掉
+    pid, num, items = n.attached[1]
+    assert (pid, num) == ("p2", "A") and items.startswith("❓")
+    assert L.unpack(L.pack(INV, ["p1"]))[1] == ["p1"]
+
+
+def test_review_next_with_nothing_left_adds_new_row():
+    n = _Notion([_review_row("p1", L.NEXT, INV)], [_txn("p1", "2026-10-12", 120, "午餐")])
+    L.review(n)
+    assert n.added and n.added[0]["invoice_no"] == "A"
+
+
+def test_review_cash_adds_new_row():
+    n = _Notion([_review_row("p1", L.CASH, INV)])
+    L.review(n)
+    assert n.attached == [("p1", None, None)] and n.added[0]["amount"] == 120
+
+
+def test_review_next_on_invoice_own_row_deletes_it():
+    n = _Notion([_review_row("p1", L.NEXT, INV, source="載具發票")],
+                [_txn("p2", "2026-10-12", 120, "便當")])
+    L.review(n)
+    assert n.deleted == ["p1"] and n.attached[0][0] == "p2"
+
+
+def test_review_without_data_just_clears():
+    n = _Notion([{"page_id": "p1", "invoice_action": L.OK, "invoice_data": ""}])
+    L.review(n)
+    assert n.cleared == ["p1"] and not n.attached
