@@ -68,6 +68,7 @@ def test_backfill(monkeypatch):
     ]
     t_set, c_set = {}, {}
     monkeypatch.setattr(S, "owner_name", lambda: "家豪")
+    monkeypatch.setattr(S, "_PACE", 0)
     monkeypatch.setattr(notion_db, "transactions_load", lambda **kw: txns)
     monkeypatch.setattr(notion_db, "couple_load", lambda **kw: couple)
     monkeypatch.setattr(notion_db, "page_creator_name",

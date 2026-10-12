@@ -10,6 +10,10 @@ Notion 上顯示的名稱跟程式內部用的值分兩層：
 """
 
 import os
+import time
+
+# Notion 每秒約 3 次請求，一次補標上百筆會被限流（2026-10-12 第一次跑就撞到）
+_PACE = 0.4
 
 LINE_DM = "💬 LINE私訊"
 LINE_GROUP = "👥 LINE群組"
@@ -114,6 +118,7 @@ def backfill():
         if want != raw or rec != t.get("recorder"):
             if notion_db.transaction_set_origin(t["page_id"], want, rec):
                 stats["交易明細"] += 1
+            time.sleep(_PACE)
 
     for r in notion_db.couple_load(limit=3000):
         raw = r.get("source_raw")
@@ -124,4 +129,5 @@ def backfill():
         if want != raw or (rec and rec != r.get("recorder_raw")):
             if notion_db.couple_set_origin(r["page_id"], want, rec or None):
                 stats["共同帳本"] += 1
+            time.sleep(_PACE)
     return stats
