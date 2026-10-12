@@ -481,7 +481,26 @@ def rescan(limit=1000):
         elif not t.get("split_raw") and finance_report.is_shared_shop(t.get("shop")):
             if mark_shared(t):
                 stats["marked"] += 1
+    try:
+        stats["boxed"] = backfill_personal_box()
+    except Exception as e:
+        print(f"[couple] 共同帳本補勾失敗（非致命）：{e}")
     return stats
+
+
+def backfill_personal_box(limit=2000):
+    """共同帳本類型是個人、但「算個人」沒勾的補勾 —— 欄位是後來才加的，
+    在 Notion 直接改類型的也會漏。回補勾筆數。"""
+    import time
+    import notion_db
+
+    n = 0
+    for row in notion_db.couple_load(limit=limit):
+        if row.get("kind") == "個人" and not row.get("personal_box"):
+            if notion_db.couple_set_personal_box(row["page_id"], True):
+                n += 1
+            time.sleep(0.4)
+    return n
 
 
 def backfill(limit=1000):

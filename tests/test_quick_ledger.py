@@ -486,7 +486,7 @@ def test_rescan_three_cases(ledger_io, monkeypatch):
         _row("f", "退款", 300, "共同", direction="收入"),
     ]
     monkeypatch.setattr(notion_db, "transactions_load", lambda **kw: rows)
-    assert cl.rescan() == {"mirrored": 1, "marked": 2}
+    assert cl.rescan() == {"mirrored": 1, "marked": 2, "boxed": 0}
     assert ledger_io["set"] == [("b", "共同", 300, 600), ("c", "共同", 1000, 2000)]
     assert [r["total"] for r in ledger_io["added"]] == [400, 600, 2000]
     assert ledger_io["added"][1]["source_id"] == "b"          # 沒指紋用頁面 ID
@@ -806,3 +806,16 @@ def test_couple_box_on_group_row_sets_kind_personal(env, monkeypatch):
                         lambda pid, ch, actor_id, actor=None: changed.append((pid, ch)) or (True, ""))
     assert cl.sync_checked() == 1
     assert changed == [("c2", {"kind": "個人"})]
+
+
+def test_backfill_personal_box_only_unticked_personal(env, monkeypatch):
+    rows = [{"page_id": "c1", "kind": "個人", "personal_box": False},
+            {"page_id": "c2", "kind": "個人", "personal_box": True},
+            {"page_id": "c3", "kind": "共同", "personal_box": False}]
+    monkeypatch.setattr(notion_db, "couple_load", lambda **kw: rows)
+    boxed = []
+    monkeypatch.setattr(notion_db, "couple_set_personal_box",
+                        lambda pid, c=True: boxed.append(pid) or True)
+    import time
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    assert cl.backfill_personal_box() == 1 and boxed == ["c1"]

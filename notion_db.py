@@ -1815,6 +1815,20 @@ def couple_personal_pending(limit=50):
     return [_couple_row(r) for r in res.get("results", [])]
 
 
+def couple_set_personal_box(page_id, checked=True):
+    """只改共同帳本的「算個人」勾勾（舊資料補勾用）。"""
+    client = _get_client()
+    if not client or not page_id:
+        return False
+    try:
+        client.pages.update(page_id=page_id,
+                            properties={"算個人": {"checkbox": bool(checked)}})
+        return True
+    except Exception as e:
+        print(f"[notion] couple_set_personal_box 失敗：{e}")
+        return False
+
+
 def transaction_find_by_source(source_id):
     """共同帳本「來源ID」→ 交易明細那筆。來源ID 是 Fingerprint，
     Notion 手動新增的列沒有 Fingerprint，存的是頁面 ID。找不到回 None。"""
