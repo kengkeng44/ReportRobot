@@ -326,6 +326,9 @@ _SCHEMAS = {
         # 舊資料沒有這兩欄，讀的時候退回付款人。
         "記錄人": {"rich_text": {}},
         "記錄人ID": {"rich_text": {}},
+        # 勾了 = 這筆其實是個人的，排程每 5 分鐘處理（couple_ledger.sync_checked）：
+        # 從交易明細同步來的 → 那邊改回個人、這筆拿掉；群組/表單記的 → 類型改個人
+        "算個人": {"checkbox": {}},
     },
     # 共同帳本的異動紀錄：誰在什麼時候新增 / 改 / 刪了哪一筆。
     # 另開一張而不是在帳目上加欄位：刪掉的那筆進了垃圾桶，紀錄還要看得到。
@@ -1688,6 +1691,7 @@ def couple_add(entry):
         "來源ID": _text(entry["source_id"]) if entry.get("source_id") else None,
         "記錄人": _text(entry["recorder"]) if entry.get("recorder") else None,
         "記錄人ID": _text(entry["recorder_id"]) if entry.get("recorder_id") else None,
+        "算個人": {"checkbox": True} if entry.get("kind") == "個人" else None,
     }
     props = {k: v for k, v in props.items() if v is not None}
     try:
@@ -1708,6 +1712,7 @@ def _couple_row(page):
         "item": _read_title(props, "摘要"),
         "total": _read_number(props, "金額"),
         "kind": _read_select(props, "類型") or "共同",
+        "personal_box": bool((props.get("算個人") or {}).get("checkbox")),
         "payer": payer,
         "payer_id": payer_id,
         "category": _read_select(props, "類別"),
@@ -1780,6 +1785,8 @@ def couple_update(page_id, fields):
             val = conv(v)
             if val is not None:
                 props[name] = val
+    if fields and fields.get("kind"):
+        props["算個人"] = {"checkbox": fields["kind"] == "個人"}
     if not props:
         return True
     try:
@@ -1788,6 +1795,44 @@ def couple_update(page_id, fields):
     except Exception as e:
         print(f"[notion] couple_update 失敗：{e}")
         return False
+
+
+def couple_personal_pending(limit=50):
+    """共同帳本「算個人」打勾了、但類型還不是個人的 —— 你剛在 Notion 勾的。"""
+    db_id = get_or_create_db("共同帳本")
+    client = _get_client()
+    if not db_id or not client:
+        return []
+    res = client.databases.query(
+        database_id=db_id, page_size=min(limit, 100),
+        filter={"and": [
+            {"property": "算個人", "checkbox": {"equals": True}},
+            {"or": [
+                {"property": "類型", "select": {"is_empty": True}},
+                {"property": "類型", "select": {"does_not_equal": "個人"}},
+            ]},
+        ]})
+    return [_couple_row(r) for r in res.get("results", [])]
+
+
+def transaction_find_by_source(source_id):
+    """共同帳本「來源ID」→ 交易明細那筆。來源ID 是 Fingerprint，
+    Notion 手動新增的列沒有 Fingerprint，存的是頁面 ID。找不到回 None。"""
+    db_id = get_or_create_db("交易明細")
+    client = _get_client()
+    if not db_id or not client or not source_id:
+        return None
+    try:
+        res = client.databases.query(
+            database_id=db_id, page_size=1,
+            filter={"property": "Fingerprint", "rich_text": {"equals": source_id}})
+        hits = res.get("results") or []
+        if hits:
+            return _txn_row(hits[0])
+    except Exception as e:
+        print(f"[notion] transaction_find_by_source 失敗：{e}")
+        return None
+    return transaction_get(source_id)
 
 
 def couple_find_by_source(source_id):

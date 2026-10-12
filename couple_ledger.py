@@ -403,6 +403,27 @@ def mark_personal(txn):
     return True
 
 
+_BOX = "Notion 勾選"     # 不知道是誰勾的，紀錄上寫這個
+
+
+def couple_mark_personal(row):
+    """共同帳本勾了「算個人」。
+
+    從交易明細同步來的：改交易明細那筆（金額改回整筆），mark_personal 會順手
+    把這筆刪掉 —— 不然明天重掃，交易明細還是共同，又會同步回來。
+    群組 / 表單記的：沒有對應的交易明細，類型改成個人（留著、不列入結算）。
+    """
+    import notion_db
+
+    admin = os.environ.get("ADMIN_LINE_USER_ID", "")
+    if row.get("source_id"):
+        txn = notion_db.transaction_find_by_source(row["source_id"])
+        if txn and txn.get("page_id"):
+            return mark_personal(txn)
+        return delete_entry(row["page_id"], admin, _BOX, row=row)[0]   # 原本那筆已經不在了
+    return update_entry(row["page_id"], {"kind": "個人"}, admin, _BOX)[0]
+
+
 def sync_checked():
     """在 Notion 勾了「算共同」的，標成共同並記進共同帳本。排程每 5 分鐘跑。
 
@@ -416,6 +437,9 @@ def sync_checked():
     import notion_db
 
     n = 0
+    for row in notion_db.couple_personal_pending():
+        if row.get("page_id") and couple_mark_personal(row):
+            n += 1
     for t in notion_db.transactions_personal_pending():
         if t.get("page_id") and mark_personal(t):
             n += 1

@@ -46,6 +46,7 @@ def env(monkeypatch):
     monkeypatch.setattr(notion_db, "couple_log_add", lambda e: LOGS.append(e) or "log")
     monkeypatch.setattr(notion_db, "couple_log_load", lambda **kw: list(reversed(LOGS)))
     monkeypatch.setattr(notion_db, "transactions_personal_pending", lambda **kw: [])
+    monkeypatch.setattr(notion_db, "couple_personal_pending", lambda **kw: [])
 
 
 def _group(user=ADMIN, gid=GROUP):
@@ -776,3 +777,32 @@ def test_rescan_backfills_checkbox_for_old_shared(env, monkeypatch):
     monkeypatch.setattr(notion_db, "couple_has_source", lambda fp: True)
     cl.rescan()
     assert boxed == ["t1"]
+
+
+def test_couple_box_on_synced_row_undoes_source_txn(env, monkeypatch):
+    # 共同帳本裡從交易明細同步來的那筆勾「算個人」→ 改交易明細那筆
+    txn = _personal(page_id="t1", split_raw="共同", split_type="共同", amount=300,
+                    total=600, total_set=True, fingerprint="fp1")
+    monkeypatch.setattr(notion_db, "couple_personal_pending",
+                        lambda **kw: [{"page_id": "c1", "source_id": "fp1", "kind": "共同"}])
+    monkeypatch.setattr(notion_db, "transaction_find_by_source",
+                        lambda sid: txn if sid == "fp1" else None)
+    monkeypatch.setattr(notion_db, "transactions_checked_pending", lambda: [])
+    splits, deleted = [], []
+    monkeypatch.setattr(notion_db, "transaction_set_split",
+                        lambda pid, s, a=None, t=None: splits.append((pid, s, a, t)) or True)
+    monkeypatch.setattr(notion_db, "couple_find_by_source", lambda fp: "c1")
+    monkeypatch.setattr(cl, "delete_entry", lambda pid, actor, *a, **kw: deleted.append(pid))
+    assert cl.sync_checked() == 1
+    assert splits == [("t1", "個人", 600, 600)] and deleted == ["c1"]
+
+
+def test_couple_box_on_group_row_sets_kind_personal(env, monkeypatch):
+    monkeypatch.setattr(notion_db, "couple_personal_pending",
+                        lambda **kw: [{"page_id": "c2", "source_id": "", "kind": "共同"}])
+    monkeypatch.setattr(notion_db, "transactions_checked_pending", lambda: [])
+    changed = []
+    monkeypatch.setattr(cl, "update_entry",
+                        lambda pid, ch, actor_id, actor=None: changed.append((pid, ch)) or (True, ""))
+    assert cl.sync_checked() == 1
+    assert changed == [("c2", {"kind": "個人"})]
