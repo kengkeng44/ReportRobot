@@ -23,6 +23,7 @@
 
 import hashlib
 import re
+import unicodedata
 from datetime import date, timedelta
 
 import einvoice_pantry
@@ -46,6 +47,12 @@ _ALIASES = {
     "康是美": ("康是美", "COSMED"),
     "屈臣氏": ("屈臣氏", "WATSONS"),
     "寶雅": ("寶雅", "POYA"),
+    # 以下是 2026-10-12 拿真實發票比對時抓到的
+    "和德昌": ("麥當勞", "MCDONALD"),
+    "酷澎": ("COUPANG", "酷澎"),
+    "冠誠": ("GLOBALMALL", "GLOBAL MALL", "環球"),
+    "台北金融大樓": ("101",),
+    "宜家": ("IKEA", "宜家"),
 }
 
 # 公司名裡太常見、不能拿來判斷是同一家的字
@@ -54,8 +61,13 @@ _NOISE = ("股份有限公司", "有限公司", "分公司", "企業社", "商�
           "商店", "門市", "分店", "總店")
 
 
+def _wide(text):
+    """全形轉半形（國泰的店名常是「ＧｌｏｂａｌＭａｌｌ」「１０１」）。"""
+    return unicodedata.normalize("NFKC", text or "").upper()
+
+
 def _norm(text):
-    s = (text or "").upper()
+    s = _wide(text)
     for w in _NOISE:
         s = s.replace(w, "")
     return re.sub(r"[\s\-－_()（）·・.,，]", "", s)
@@ -65,9 +77,9 @@ def same_brand(seller, shop):
     """發票賣方跟刷卡店名是不是同一家。寧可說「不確定」也不要亂配。"""
     if not seller or not shop:
         return False
-    up_shop = (shop or "").upper()
+    up_shop = _wide(shop)
     for key, names in _ALIASES.items():
-        if key in seller and any(n in up_shop or n in shop for n in names):
+        if key in seller and any(n in up_shop for n in names):
             return True
     a, b = _norm(seller), _norm(shop)
     if not a or not b:

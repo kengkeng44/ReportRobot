@@ -85,7 +85,7 @@ def test_keeps_carrier_and_seller_id(invoices):
 
 def test_pipe_delimiter_not_comma():
     """分隔符是 `|`。用逗號切會把店名裡的逗號拆爛。"""
-    csv = "M|開立|AA00000001|20260801|12345678|某某店，好吃|手機條碼|/EK56VW|100\r\n"
+    csv = "M|手機條碼|/EK56VW|20260801|12345678|某某店，好吃|AA00000001|100|開立|\r\n"
 
     inv = einvoice_csv.parse(csv)[0]
 
@@ -135,7 +135,7 @@ def test_voided_invoice_is_excluded_by_default(invoices):
 
 def test_voided_invoice_available_when_asked():
     """但要對帳時看得到,所以留一個開關而不是直接丟棄。"""
-    csv = ("M|作廢|EF11112222|20260817|11112222|退貨測試店|手機條碼|/EK56VW|200\r\n"
+    csv = ("M|手機條碼|/EK56VW|20260817|11112222|退貨測試店|EF11112222|200|作廢|\r\n"
            "D|EF11112222|200.00|退掉的東西\r\n")
 
     kept = einvoice_csv.parse(csv, include_voided=True)
@@ -156,8 +156,8 @@ def test_bad_date_row_is_skipped():
 
     跟 einvoice._parse_invoice_list 同一個原則。
     """
-    csv = ("M|開立|BAD0000001|not-a-date|12345678|壞日期店|手機條碼|/EK56VW|100\r\n"
-           "M|開立|OK00000001|20260801|12345678|正常店|手機條碼|/EK56VW|50\r\n")
+    csv = ("M|手機條碼|/EK56VW|not-a-date|12345678|壞日期店|BAD0000001|100|開立|\r\n"
+           "M|手機條碼|/EK56VW|20260801|12345678|正常店|OK00000001|50|開立|\r\n")
 
     out = einvoice_csv.parse(csv)
 
@@ -174,14 +174,14 @@ def test_short_row_is_skipped():
 def test_unknown_row_kind_is_ignored():
     """財政部之後加新行別(例如 H 表頭)不該讓解析整個失敗。"""
     csv = ("H|這是未來才有的表頭列|whatever\r\n"
-           "M|開立|OK00000001|20260801|12345678|正常店|手機條碼|/EK56VW|50\r\n")
+           "M|手機條碼|/EK56VW|20260801|12345678|正常店|OK00000001|50|開立|\r\n")
 
     assert len(einvoice_csv.parse(csv)) == 1
 
 
 def test_handles_lf_only_line_endings():
     """CRLF 是官方格式,但經過 email/雲端硬碟轉一手常會變 LF。"""
-    csv = "M|開立|OK00000001|20260801|12345678|正常店|手機條碼|/EK56VW|50\n"
+    csv = "M|手機條碼|/EK56VW|20260801|12345678|正常店|OK00000001|50|開立|\n"
 
     assert len(einvoice_csv.parse(csv)) == 1
 
