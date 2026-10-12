@@ -406,7 +406,7 @@ async function loadEdit(book, id) {
   state.payer = e.payer_id || state.data.me;
   renderPayers(); renderAmounts();
   const who = book === "couple" && e.recorder ? `記錄人：${e.recorder}` : "";
-  const src = e.source && !["LINE", "表單", "手動"].includes(e.source) ? `・${e.source}` : "";
+  const src = e.source ? `・${e.source}` : "";
   $("editInfo").textContent = (who || "編輯中") + src;
   $("editbar").classList.remove("hidden");
   $("go").textContent = "儲存修改";

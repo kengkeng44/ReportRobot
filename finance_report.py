@@ -202,8 +202,8 @@ def recent_reply(txns, limit=10):
         sub = (t.get("date") or "")[5:]
         if t.get("split_type") == "共同":
             sub += f"・共同 全額 {_money(t.get('total'))}"
-        if (t.get("source") or "手動") != "手動":
-            sub += "・刷卡同步"
+        if t.get("channel"):
+            sub += f"・{t['channel']}"
         body.append({"type": "separator"})
         body.append({"type": "box", "layout": "horizontal", "spacing": "sm",
                      "alignItems": "center", "contents": [

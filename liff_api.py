@@ -147,6 +147,8 @@ def record(user_id, payload):
     txn = finance_report.build_manual_txn(
         entry["item"], entry["total"], entry["kind"],
         today=date.fromisoformat(day) if day else today_tpe())
+    import sources
+    txn["channel"] = sources.FORM
     if not notion_db.transaction_add(txn):
         return 502, {"ok": False, "message": "寫入 Notion 失敗，請稍後再試。"}
     command_router._remember_txn(txn)
@@ -178,7 +180,7 @@ def _personal_view(t):
         "id": t["page_id"], "item": t.get("shop") or t.get("category") or "",
         "total": t.get("total") or t.get("amount") or 0,
         "kind": t.get("split_type") or "個人", "date": t.get("date"),
-        "source": t.get("source") or "",
+        "source": t.get("channel") or "",
         # 銀行同步的刪了會被下一次同步加回來（去重只看還在的列），所以不給刪
         "deletable": (t.get("source") or "手動") == "手動",
     }

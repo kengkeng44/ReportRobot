@@ -953,6 +953,8 @@ def _handle_finance(kind, arg):
             # 有金額沒分攤類型 —— 第三段。收入不會走到這裡（parse_manual
             # 直接給「個人」），薪水不用跟人分。
             return _manual_split_quick_reply(txn["shop"], txn["total"])
+        import sources
+        txn["channel"] = sources.LINE_DM
         if not notion_db.transaction_add(txn):
             return "寫入 Notion 失敗,請稍後再試。"
         _remember_txn(txn)

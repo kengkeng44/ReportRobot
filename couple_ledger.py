@@ -162,6 +162,7 @@ def _name(user_id, group_id=None):
 
 
 def record(entry, user_id, group_id=None, source="LINE", payer_id=None):
+    # source 是舊的內部值（LINE / 表單），寫入時由 sources.couple_display 換成顯示名稱
     """寫進共同帳本。回 (成功與否, 寫入的列)。
 
     記錄人 = 打字的人；付款人預設也是他，有指定（@某人、表單選別人）就是被指定的人。

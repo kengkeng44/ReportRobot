@@ -214,6 +214,33 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"[couple] 重掃失敗（非致命）：{e}")
 
+    # 來源欄換新名稱 + 補記錄人：開機後跑一次，之後每天跟著重掃跑
+    #（抓在 Notion 直接手打的新帳）。重跑安全，只改不一樣的列。
+    def _run_sources_backfill():
+        try:
+            import sources
+            print(f"[sources] 來源補標：{sources.backfill()}")
+        except Exception as e:
+            print(f"[sources] 來源補標失敗（非致命）：{e}")
+
+    from datetime import datetime, timedelta, timezone
+    from apscheduler.triggers.date import DateTrigger
+    scheduler.add_job(
+        _run_sources_backfill,
+        DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(minutes=2)),
+        id="sources_backfill_boot",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        _run_sources_backfill,
+        CronTrigger(hour=16, minute=5, timezone="Asia/Taipei"),
+        id="sources_backfill_daily",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=1800,
+        replace_existing=True,
+    )
+
     # Notion 勾「算共同」→ 記進共同帳本。Notion 沒有能用的推播，只能輪詢；
     # 一次一個查詢、沒勾的時候撈到 0 筆，5 分鐘一次負擔很小。
     def _run_sync_checked():

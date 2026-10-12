@@ -16,6 +16,7 @@ Notion 持久化基礎設施。
   否則 API 會回 object_not_found / forbidden。
 """
 
+import sources
 import calendar
 import os
 import threading
@@ -266,10 +267,19 @@ _SCHEMAS = {
         "卡末四碼": {"rich_text": {}},
         # 授權 = 當下刷卡紀錄；已結帳 = 月帳單確認後的最終金額（見 spec 4.3）
         "狀態": _select(("授權中", "yellow"), ("已結帳", "green"), ("待確認", "red")),
+        # 在哪裡記的、或哪封信抓來的。顯示名稱與程式內部值的對照見 sources.py
+        # —— 內部值是去重指紋的材料，不能跟著顯示名稱改。
         "來源": _select(
-            ("國泰消費彙整", "blue"), ("國泰電子帳單", "purple"), ("國泰繳款入帳", "brown"),
-            ("富邦轉帳", "orange"), ("PDF對帳單", "gray"), ("手動", "default"),
+            ("💬 LINE私訊", "green"), ("👥 LINE群組", "green"), ("📝 記帳表單", "purple"),
+            ("✍️ Notion手打", "gray"), ("💬 LINE（舊）", "default"),
+            ("📧 國泰通知信", "blue"), ("📧 國泰帳單", "blue"), ("📧 國泰繳款", "brown"),
+            ("📧 富邦轉帳", "orange"), ("📄 PDF對帳單", "gray"),
         ),
+        # 誰記的：人記的寫 LINE 暱稱，信件自動抓的寫「🤖 自動」
+        "記錄人": {"rich_text": {}},
+        # Notion 內建：什麼時候建立、誰建立的（bot 或你在 Notion 手打）
+        "建立時間": {"created_time": {}},
+        "建立者": {"created_by": {}},
         "原信連結": {"url": {}},
         # 共同消費把「金額」存成我實際負擔的那半，整桌多少錢存這裡。
         # 「金額」欄的語意（我實際負擔）維持不變，六處既有報表才不用改。
@@ -293,7 +303,10 @@ _SCHEMAS = {
         # 結算靠 ID 不靠名字：LINE 暱稱會改，改了同一個人就變兩個人
         "付款人ID": {"rich_text": {}},
         "類別": _select(*_SPEND_CATEGORIES),
-        "來源": _select(("LINE", "green"), ("表單", "purple"), ("自動同步", "orange")),
+        "來源": _select(("👥 LINE群組", "green"), ("📝 記帳表單", "purple"),
+                        ("🔁 從交易明細同步", "orange"), ("✍️ Notion手打", "gray")),
+        "建立時間": {"created_time": {}},
+        "建立者": {"created_by": {}},
         # 從交易明細同步過來的那筆的 Fingerprint。有值 = 自動同步的，靠它去重
         "來源ID": {"rich_text": {}},
         # 誰按的記帳，跟付款人分開：可以幫對方記（對方付的、我打的字）。
@@ -1603,7 +1616,10 @@ def transaction_add(txn):
                  if txn.get("category") else None),
         "商店": {"rich_text": [{"text": {"content": txn.get("shop") or ""}}]},
         "狀態": _prop_select(txn.get("status")),
-        "來源": _prop_select(txn.get("source")),
+        "來源": _prop_select(sources.txn_display(txn.get("source"), txn.get("channel"))),
+        "記錄人": (_rich(txn.get("recorder") or (
+            sources.AUTO_RECORDER if sources.is_auto(txn.get("source"))
+            else sources.owner_name())) if txn.get("source") else None),
         # 沒帶就不寫這兩欄 —— 國泰同步走的是同一個函式，硬填「個人」
         # 會把「這個來源沒有分攤概念」偽裝成「已經判斷過是個人」。
         "分攤類型": _prop_select(txn.get("split_type")),
@@ -1651,7 +1667,7 @@ def couple_add(entry):
         "付款人ID": _text(entry.get("payer_id")),
         "類別": (_prop_select(normalize_spend_category(entry["category"]))
                  if entry.get("category") else None),
-        "來源": _prop_select(entry.get("source") or "LINE"),
+        "來源": _prop_select(sources.couple_display(entry.get("source") or "LINE")),
         "來源ID": _text(entry["source_id"]) if entry.get("source_id") else None,
         "記錄人": _text(entry["recorder"]) if entry.get("recorder") else None,
         "記錄人ID": _text(entry["recorder_id"]) if entry.get("recorder_id") else None,
@@ -1678,7 +1694,10 @@ def _couple_row(page):
         "payer": payer,
         "payer_id": payer_id,
         "category": _read_select(props, "類別"),
-        "source": _read_select(props, "來源"),
+        "source": sources.couple_display(_read_select(props, "來源")),
+        "source_raw": _read_select(props, "來源"),
+        "recorder_raw": _read_rich_text(props, "記錄人"),
+        "created_by": (page.get("created_by") or {}).get("id"),
         "source_id": _read_rich_text(props, "來源ID"),
         # 舊資料沒有記錄人 —— 那時只能自己記自己付的，付款人就是記錄人
         "recorder": _read_rich_text(props, "記錄人") or payer,
@@ -1865,6 +1884,57 @@ def member_upsert(user_id, name=None, role=None, page_id=None):
     except Exception as e:
         print(f"[notion] member_upsert 失敗：{e}")
         return None
+
+
+_creator_names = {}
+
+
+def page_creator_name(user_id):
+    """Notion 使用者 ID → 名字（在 Notion 手打的那筆是誰建的）。查不到回 ""。"""
+    client = _get_client()
+    if not client or not user_id:
+        return ""
+    if user_id not in _creator_names:
+        try:
+            u = client.users.retrieve(user_id=user_id)
+            # bot 自己建的不算人；理論上不會走到（bot 寫入一定帶來源）
+            _creator_names[user_id] = "" if u.get("type") == "bot" else (u.get("name") or "")
+        except Exception as e:
+            print(f"[notion] 查建立者失敗：{e}")
+            _creator_names[user_id] = ""
+    return _creator_names[user_id]
+
+
+def transaction_set_origin(page_id, source_display, recorder):
+    """補標交易明細的來源與記錄人（舊資料換新名稱用）。"""
+    client = _get_client()
+    if not client or not page_id:
+        return False
+    props = {"來源": _prop_select(source_display)}
+    if recorder:
+        props["記錄人"] = _rich(recorder)
+    try:
+        client.pages.update(page_id=page_id, properties=props)
+        return True
+    except Exception as e:
+        print(f"[notion] transaction_set_origin 失敗：{e}")
+        return False
+
+
+def couple_set_origin(page_id, source_display, recorder=None):
+    """補標共同帳本的來源（與 Notion 手打那筆的記錄人）。"""
+    client = _get_client()
+    if not client or not page_id:
+        return False
+    props = {"來源": _prop_select(source_display)}
+    if recorder:
+        props["記錄人"] = _rich(recorder)
+    try:
+        client.pages.update(page_id=page_id, properties=props)
+        return True
+    except Exception as e:
+        print(f"[notion] couple_set_origin 失敗：{e}")
+        return False
 
 
 def transaction_get(page_id):
@@ -2071,7 +2141,12 @@ def _txn_row(r):
         "status": _read_select(props, "狀態"),
         # 沒讀這欄就分不出手動記帳與自動同步 —— transaction_add
         # 一直有寫進去，讀不回來只會安靜地得到 None。
-        "source": _read_select(props, "來源"),
+        # Notion 上是顯示名稱，換回內部值（"手動"/"國泰消費彙整"…）給統計用
+        "source": sources.txn_internal(_read_select(props, "來源")),
+        "source_raw": _read_select(props, "來源"),
+        "channel": sources.txn_channel(_read_select(props, "來源")),
+        "recorder": _read_rich_text(props, "記錄人"),
+        "created_by": (r.get("created_by") or {}).get("id"),
         # 遷移前的資料沒有這兩欄。國泰同步的本來就是自己刷的，
         # 一律當個人；原始總額回退成金額 —— 個人消費兩者相等。
         # 沒有這兩條 fallback，所有統計都得特判 None。
