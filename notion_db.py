@@ -299,6 +299,9 @@ _SCHEMAS = {
         # 在 Notion 直接打勾 = 這筆算共同，排程每 5 分鐘撿起來記進共同帳本
         # （couple_ledger.sync_checked）。bot 自己標共同時也會勾上，畫面才一致。
         "算共同": {"checkbox": {}},
+        # 反過來：勾「算個人」= 這筆是我自己的，共同帳本那筆拿掉、金額改回整筆
+        # 兩格互斥，bot 處理時會把另一格取消（couple_ledger.sync_checked）
+        "算個人": {"checkbox": {}},
     },
     # 情侶群組記的帳。跟「交易明細」刻意分開（見 _SECTIONS 的理由）。
     # 「金額」存**整筆**，不像交易明細存我那半 —— 這張表是兩個人的，
@@ -1634,6 +1637,7 @@ def transaction_add(txn):
         # 會把「這個來源沒有分攤概念」偽裝成「已經判斷過是個人」。
         "分攤類型": _prop_select(txn.get("split_type")),
         "算共同": {"checkbox": True} if txn.get("split_type") == "共同" else None,
+        "算個人": {"checkbox": True} if txn.get("split_type") == "個人" else None,
         "原始總額": _prop_number(txn.get("total")),
         "Fingerprint": {"rich_text": [{"text": {"content": txn["fingerprint"]}}]},
         "明細": _rich(txn["items"]) if txn.get("items") else None,
@@ -1979,6 +1983,7 @@ def transaction_update(page_id, fields):
     if "split_type" in f:
         props["分攤類型"] = _prop_select(f["split_type"])
         props["算共同"] = {"checkbox": f["split_type"] == "共同"}
+        props["算個人"] = {"checkbox": f["split_type"] == "個人"}
     if f.get("category"):
         props["類別"] = _prop_select(normalize_spend_category(f["category"]))
     props = {k: v for k, v in props.items() if v is not None}
@@ -2049,7 +2054,8 @@ def transaction_set_split(page_id, split_type, amount=None, total=None):
     if not client or not page_id:
         return False
     props = {"分攤類型": _prop_select(split_type),
-             "算共同": {"checkbox": split_type == "共同"}}
+             "算共同": {"checkbox": split_type == "共同"},
+             "算個人": {"checkbox": split_type == "個人"}}
     if amount is not None:
         props["金額"] = _prop_number(amount)
     if total is not None:
@@ -2175,6 +2181,7 @@ def _txn_row(r):
         "page_id": r.get("id"),
         "split_raw": _read_select(props, "分攤類型"),
         "shared_box": bool((props.get("算共同") or {}).get("checkbox")),
+        "personal_box": bool((props.get("算個人") or {}).get("checkbox")),
         "total_set": _read_number(props, "原始總額") is not None,
         "total": (_read_number(props, "原始總額")
                   if _read_number(props, "原始總額") is not None
@@ -2253,6 +2260,38 @@ def transactions_invoice_review(limit=50):
         database_id=db_id, page_size=min(limit, 100),
         filter={"property": "發票處理", "select": {"is_not_empty": True}})
     return [_txn_row(r) for r in res.get("results", [])]
+
+
+def transactions_personal_pending(limit=50):
+    """「算個人」打勾了、但分攤類型還不是個人的 —— 你剛在 Notion 勾的。"""
+    db_id = get_or_create_db("交易明細")
+    client = _get_client()
+    if not db_id or not client:
+        return []
+    res = client.databases.query(
+        database_id=db_id, page_size=min(limit, 100),
+        filter={"and": [
+            {"property": "算個人", "checkbox": {"equals": True}},
+            {"or": [
+                {"property": "分攤類型", "select": {"is_empty": True}},
+                {"property": "分攤類型", "select": {"does_not_equal": "個人"}},
+            ]},
+        ]})
+    return [_txn_row(r) for r in res.get("results", [])]
+
+
+def transaction_set_personal_box(page_id, checked=True):
+    """只改「算個人」勾勾（舊資料補勾用）。"""
+    client = _get_client()
+    if not client or not page_id:
+        return False
+    try:
+        client.pages.update(page_id=page_id,
+                            properties={"算個人": {"checkbox": bool(checked)}})
+        return True
+    except Exception as e:
+        print(f"[notion] transaction_set_personal_box 失敗：{e}")
+        return False
 
 
 def transaction_set_shared_box(page_id, checked=True):

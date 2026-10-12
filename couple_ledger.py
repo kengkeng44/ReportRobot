@@ -389,8 +389,25 @@ def mark_shared(txn):
     return True
 
 
+def mark_personal(txn):
+    """把交易明細的一筆改回個人：金額改回整筆、共同帳本裡同步的那筆刪掉。"""
+    import notion_db
+
+    total = txn.get("total") if txn.get("total") is not None else txn.get("amount")
+    if not notion_db.transaction_set_split(txn["page_id"], "個人", total, total):
+        return False
+    fp = txn.get("fingerprint") or txn.get("page_id")
+    mirror = notion_db.couple_find_by_source(fp) if fp else None
+    if mirror:
+        delete_entry(mirror, os.environ.get("ADMIN_LINE_USER_ID", ""))
+    return True
+
+
 def sync_checked():
     """在 Notion 勾了「算共同」的，標成共同並記進共同帳本。排程每 5 分鐘跑。
+
+    「算個人」先處理：兩格都勾的時候以個人為準（處理完算共同會被取消，
+    下面那輪就撈不到了）。
 
     不重複記帳靠兩道：撈的條件是「勾了但分攤類型還不是共同」，處理完就不再
     符合；萬一中途失敗重跑，mirror_txn 會用 Fingerprint 查共同帳本有沒有這筆。
@@ -399,6 +416,9 @@ def sync_checked():
     import notion_db
 
     n = 0
+    for t in notion_db.transactions_personal_pending():
+        if t.get("page_id") and mark_personal(t):
+            n += 1
     for t in notion_db.transactions_checked_pending():
         if t.get("direction") == "收入" or not t.get("page_id"):
             continue
@@ -423,6 +443,8 @@ def rescan(limit=1000):
     for t in notion_db.transactions_load(limit=limit):
         if t.get("direction") == "收入" or not t.get("page_id"):
             continue
+        if t.get("split_raw") == "個人" and not t.get("personal_box"):
+            notion_db.transaction_set_personal_box(t["page_id"], True)
         if t.get("split_raw") == "共同":
             # 「算共同」欄是後來才加的：舊的共同那幾筆補勾上，Notion 畫面才一致
             if not t.get("shared_box"):

@@ -45,6 +45,7 @@ def env(monkeypatch):
     LOGS.clear()
     monkeypatch.setattr(notion_db, "couple_log_add", lambda e: LOGS.append(e) or "log")
     monkeypatch.setattr(notion_db, "couple_log_load", lambda **kw: list(reversed(LOGS)))
+    monkeypatch.setattr(notion_db, "transactions_personal_pending", lambda **kw: [])
 
 
 def _group(user=ADMIN, gid=GROUP):
@@ -745,6 +746,22 @@ def test_sync_checked_marks_and_mirrors_once(env, monkeypatch):
     # 中途失敗重跑：同一筆再撈到，也不會在共同帳本多記一次
     cl.sync_checked()
     assert len(couple) == 1
+
+
+def test_sync_checked_personal_box_undoes_shared(env, monkeypatch):
+    # 原本共同（金額存我那半 300、整筆 600），在 Notion 勾「算個人」
+    row = _personal(page_id="t1", split_raw="共同", split_type="共同", amount=300,
+                    total=600, total_set=True, personal_box=True, shared_box=True)
+    splits, deleted = [], []
+    monkeypatch.setattr(notion_db, "transactions_personal_pending", lambda **kw: [row])
+    monkeypatch.setattr(notion_db, "transactions_checked_pending", lambda: [])
+    monkeypatch.setattr(notion_db, "transaction_set_split",
+                        lambda pid, s, a=None, t=None: splits.append((pid, s, a, t)) or True)
+    monkeypatch.setattr(notion_db, "couple_find_by_source", lambda fp: "c1" if fp == "fp1" else None)
+    monkeypatch.setattr(cl, "delete_entry", lambda pid, actor, **kw: deleted.append(pid))
+    assert cl.sync_checked() == 1
+    assert splits == [("t1", "個人", 600, 600)]          # 金額改回整筆
+    assert deleted == ["c1"]                              # 共同帳本那筆拿掉
 
 
 def test_rescan_backfills_checkbox_for_old_shared(env, monkeypatch):
