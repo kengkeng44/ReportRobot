@@ -10,7 +10,8 @@
 列入開發者範圍,門檻是 ISO27001)。手動匯出雖然可行,但要記得每月做一次;
 彙整通知服務開通後財政部會自己把 CSV 寄來,這支就能把最後一段手工也去掉。
 
-**這條線不碰交易明細。** 記帳歸國泰彙整信管,載具負責「買了什麼菜」。
+食材庫存之外,2026-10-12 起也把發票補進交易明細 —— 只補明細、不重複記帳,
+規則見 einvoice_ledger。
 
 2026-09-07 首次以真實信件跑通(寫入 174 筆)
 ────────────────────────────────
@@ -86,11 +87,13 @@ def _header(payload, name):
 
 
 def fetch_rows(service, query=QUERY, max_results=DEFAULT_MAX_RESULTS,
-               with_meta=False):
+               with_meta=False, sink=None):
     """Gmail → 可寫入食材庫存的列。
 
     單封信失敗只略過該封:這個工作跟每日推播共用同一個 process,
     不能因為一封壞信拖垮整批。
+
+    sink:給一個 list 的話,解析出來的原始發票也會放進去(記帳那條線要用)。
 
     with_meta=True 時另回每封命中信件的寄件人與主旨。當初是為了讓系統
     自己回報「財政部用哪個位址寄」,拿到之後 QUERY 已經收窄。留著當
@@ -128,7 +131,10 @@ def fetch_rows(service, query=QUERY, max_results=DEFAULT_MAX_RESULTS,
                 print(f"[einvoice] 附件解碼失敗 {mid}（編碼不是 UTF-8 也不是 BIG5）")
                 continue
 
-            rows.extend(einvoice_pantry.to_pantry_rows(einvoice_csv.parse(text)))
+            invoices = einvoice_csv.parse(text)
+            if sink is not None:
+                sink.extend(invoices)
+            rows.extend(einvoice_pantry.to_pantry_rows(invoices))
             payload = msg.get("payload") or {}
             mails.append({
                 "id": mid,
@@ -154,7 +160,18 @@ def sync(service=None, notion=None):
     if notion is None:
         import notion_db as notion
 
-    rows = fetch_rows(service)
+    invoices = []
+    rows = fetch_rows(service, sink=invoices)
+
+    # 記帳:發票補進交易明細(einvoice_ledger 的規則)。跟食材分開包,
+    # 一邊壞掉不拖累另一邊。
+    if invoices:
+        try:
+            import einvoice_ledger
+            print(f"[einvoice] 交易明細：{einvoice_ledger.sync(invoices, notion)}")
+        except Exception as e:
+            print(f"[einvoice] 交易明細補明細失敗（非致命）：{e}")
+
     if not rows:
         return 0, 0
 

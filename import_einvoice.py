@@ -6,8 +6,7 @@
 一定要走 infisical —— 本機沒有 NOTION_TOKEN，直接 python 跑會連不上。
 先用 --dry-run 看會寫什麼進去，確認沒問題再拿掉旗標實際寫入。
 
-這條線**不碰交易明細**。記帳歸國泰彙整信管（那邊只有總額，本來就夠用），
-載具負責回答「買了什麼菜」與營養分析。兩邊分開，同一筆消費就不會被記兩次。
+食材之外也會把發票補進交易明細（只補明細不重複記帳，見 einvoice_ledger）。
 
 管線：
     einvoice_csv.parse   解析 CSV（兩種格式自動判別）
@@ -131,6 +130,8 @@ def main(argv=None):
                   "所以「已存在跳過」一定是 0 —— 去重沒有實際比對。")
             print("  要看真正的去重結果：infisical run -- python "
                   "import_einvoice.py <csv> --dry-run")
+        else:
+            _ledger(invoices, dry_run=True)
         print("\n（dry-run，什麼都沒寫入。拿掉 --dry-run 才會真的寫。）")
         return 0
 
@@ -141,7 +142,18 @@ def main(argv=None):
         if notion_db.pantry_add(row):
             ok += 1
     print(f"完成：成功 {ok} 筆，失敗 {len(to_add) - ok} 筆。")
+    _ledger(invoices, dry_run=False)
     return 0 if ok == len(to_add) else 1
+
+
+def _ledger(invoices, dry_run):
+    """發票補進交易明細（規則見 einvoice_ledger）。"""
+    import einvoice_ledger
+    actions = einvoice_ledger.plan(invoices, einvoice_ledger.load_txns(invoices))
+    if dry_run:
+        print(f"\n交易明細（預覽）：{einvoice_ledger.summary(actions)}")
+    else:
+        print(f"\n交易明細：{einvoice_ledger.apply(actions)}")
 
 
 if __name__ == "__main__":

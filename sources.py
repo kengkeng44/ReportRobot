@@ -33,6 +33,7 @@ _AUTO = {
     "國泰繳款入帳": "📧 國泰繳款",
     "富邦轉帳": "📧 富邦轉帳",
     "PDF對帳單": "📄 PDF對帳單",
+    "載具發票": "🧾 載具發票",
 }
 _AUTO_BACK = {v: k for k, v in _AUTO.items()}
 _MANUAL = {LINE_DM, LINE_GROUP, FORM, NOTION, LINE_OLD}

@@ -273,8 +273,13 @@ _SCHEMAS = {
             ("💬 LINE私訊", "green"), ("👥 LINE群組", "green"), ("📝 記帳表單", "purple"),
             ("✍️ Notion手打", "gray"), ("💬 LINE（舊）", "default"),
             ("📧 國泰通知信", "blue"), ("📧 國泰帳單", "blue"), ("📧 國泰繳款", "brown"),
-            ("📧 富邦轉帳", "orange"), ("📄 PDF對帳單", "gray"),
+            ("📧 富邦轉帳", "orange"), ("📄 PDF對帳單", "gray"), ("🧾 載具發票", "yellow"),
         ),
+        # 載具發票補進來的品項（「鮮奶 x2、雞胸肉…」），開頭 ❓ 代表比對不確定，
+        # 要人看一下是不是同一筆（einvoice_ledger）
+        "明細": {"rich_text": {}},
+        # 去重用：同一張發票不管匯入幾次都只處理一次
+        "發票號碼": {"rich_text": {}},
         # 誰記的：人記的寫 LINE 暱稱，信件自動抓的寫「🤖 自動」
         "記錄人": {"rich_text": {}},
         # Notion 內建：什麼時候建立、誰建立的（bot 或你在 Notion 手打）
@@ -1626,6 +1631,8 @@ def transaction_add(txn):
         "算共同": {"checkbox": True} if txn.get("split_type") == "共同" else None,
         "原始總額": _prop_number(txn.get("total")),
         "Fingerprint": {"rich_text": [{"text": {"content": txn["fingerprint"]}}]},
+        "明細": _rich(txn["items"]) if txn.get("items") else None,
+        "發票號碼": _rich(txn["invoice_no"]) if txn.get("invoice_no") else None,
     }
     if txn.get("mail_url"):
         candidates["原信連結"] = {"url": txn["mail_url"]}
@@ -2153,6 +2160,8 @@ def _txn_row(r):
         "split_type": _read_select(props, "分攤類型") or "個人",
         # 共同帳本同步靠它去重（couple_ledger.mirror_txn）
         "fingerprint": _read_rich_text(props, "Fingerprint"),
+        "invoice_no": _read_rich_text(props, "發票號碼"),
+        "items": _read_rich_text(props, "明細"),
         # 下面三個給「標成共同」用（couple_ledger.rescan / 整理共同）：
         # split_type 對空值有預設「個人」，分不出「沒標過」跟「標了個人」
         "page_id": r.get("id"),
@@ -2186,6 +2195,20 @@ def transactions_checked_pending(limit=50):
             ]},
         ]})
     return [_txn_row(r) for r in res.get("results", [])]
+
+
+def transaction_attach_invoice(page_id, invoice_no, items):
+    """把載具發票的號碼與品項補進既有那筆（einvoice_ledger）。"""
+    client = _get_client()
+    if not client or not page_id:
+        return False
+    try:
+        client.pages.update(page_id=page_id, properties={
+            "發票號碼": _rich(invoice_no), "明細": _rich(items)})
+        return True
+    except Exception as e:
+        print(f"[notion] transaction_attach_invoice 失敗：{e}")
+        return False
 
 
 def transaction_set_shared_box(page_id, checked=True):
