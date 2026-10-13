@@ -283,6 +283,8 @@ _SCHEMAS = {
         # 比對對不對，你在 Notion 選一個，排程每 5 分鐘處理（einvoice_ledger.review）
         "發票處理": _select(("✅ 正確", "green"), ("➡️ 換下一筆", "yellow"),
                             ("➕ 沒刷卡，新增一筆", "blue")),
+        # 「✅ 正確」的快捷：手機上點下拉選單太麻煩，勾這格一樣效果
+        "發票正確": {"checkbox": {}},
         # 原始發票（JSON），換下一筆 / 新增一筆時要靠它，不用給人看
         "發票資料": {"rich_text": {}},
         # 誰記的：人記的寫 LINE 暱稱，信件自動抓的寫「🤖 自動」
@@ -2235,6 +2237,7 @@ def _txn_row(r):
         "items": _read_rich_text(props, "明細"),
         "invoice_data": _read_rich_text(props, "發票資料"),
         "invoice_action": _read_select(props, "發票處理"),
+        "invoice_ok": bool((props.get("發票正確") or {}).get("checkbox")),
         # 下面三個給「標成共同」用（couple_ledger.rescan / 整理共同）：
         # split_type 對空值有預設「個人」，分不出「沒標過」跟「標了個人」
         "page_id": r.get("id"),
@@ -2289,6 +2292,7 @@ def transaction_attach_invoice(page_id, invoice_no, items, data=None, clear_acti
              "發票資料": _rich_or_clear(data)}
     if clear_action:
         props["發票處理"] = {"select": None}
+        props["發票正確"] = {"checkbox": False}
     try:
         client.pages.update(page_id=page_id, properties=props)
         return True
@@ -2302,7 +2306,8 @@ def transaction_clear_invoice_action(page_id):
     if not client or not page_id:
         return False
     try:
-        client.pages.update(page_id=page_id, properties={"發票處理": {"select": None}})
+        client.pages.update(page_id=page_id, properties={"發票處理": {"select": None},
+                                                         "發票正確": {"checkbox": False}})
         return True
     except Exception as e:
         print(f"[notion] transaction_clear_invoice_action 失敗：{e}")
@@ -2317,7 +2322,8 @@ def transactions_invoice_review(limit=50):
         return []
     res = client.databases.query(
         database_id=db_id, page_size=min(limit, 100),
-        filter={"property": "發票處理", "select": {"is_not_empty": True}})
+        filter={"or": [{"property": "發票處理", "select": {"is_not_empty": True}},
+                       {"property": "發票正確", "checkbox": {"equals": True}}]})
     return [_txn_row(r) for r in res.get("results", [])]
 
 

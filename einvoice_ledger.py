@@ -324,6 +324,8 @@ def review(notion=None):
     done = 0
     for row in notion.transactions_invoice_review():
         pid, choice = row["page_id"], row.get("invoice_action")
+        if not choice and row.get("invoice_ok"):
+            choice = OK                                  # 勾「發票正確」= 選「✅ 正確」
         inv, skip = unpack(row.get("invoice_data"))
         if inv is None:
             print(f"[einvoice] {pid} 沒有發票資料，無法處理「{choice}」")

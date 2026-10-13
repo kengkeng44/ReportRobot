@@ -217,3 +217,11 @@ def test_review_without_data_just_clears():
     n = _Notion([{"page_id": "p1", "invoice_action": L.OK, "invoice_data": ""}])
     L.review(n)
     assert n.cleared == ["p1"] and not n.attached
+
+
+def test_review_ok_checkbox_works_like_menu():
+    row = _review_row("p1", None, INV)
+    row["invoice_ok"] = True
+    n = _Notion([row])
+    assert L.review(n) == 1
+    assert n.attached == [("p1", "A", "鮮奶 x2、高麗菜")]
