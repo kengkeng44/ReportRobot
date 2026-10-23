@@ -287,6 +287,23 @@ async def lifespan(app: FastAPI):
         misfire_grace_time=1800,
         replace_existing=True,
     )
+    # 情侶群組明天預告：⭐ 特別活動 + 到期待辦，兩樣都沒有就不推（每次 2 則額度）
+    def _run_couple_preview():
+        try:
+            import couple_calendar
+            couple_calendar.run_evening_preview()
+        except Exception as e:
+            print(f"[couple_calendar] 明天預告失敗（非致命）：{e}")
+
+    scheduler.add_job(
+        _run_couple_preview,
+        CronTrigger(hour=21, minute=0, timezone="Asia/Taipei"),
+        id="couple_preview",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=1800,      # 重啟補跑有 flag 擋著，不會推兩次
+        replace_existing=True,
+    )
     scheduler.start()
     # 注入 scheduler 給 personal.py 用（提醒功能要排 one-shot job）
     import app_state
