@@ -51,6 +51,10 @@ def _share(service, calendar_id, email):
 
 
 def main():
+    # Windows 中文主控台預設 cp950，印 ↩️ 這類 emoji 會炸 —— 而且炸在「建好日曆
+    # 之後、建下一個之前」，留下只建一半的狀態
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if len(sys.argv) != 2 or "@" not in sys.argv[1]:
         sys.exit("用法：python setup_calendar.py 對方的gmail")
     partner = sys.argv[1].strip()
