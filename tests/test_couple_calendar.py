@@ -1,4 +1,4 @@
-"""情侶群組明天預告：只推 ⭐ 特別活動 + 有截止日的到期待辦，都沒有就不推。"""
+"""情侶群組明天預告：明天有 ⭐ 特別活動才推，到期待辦順便帶；只有待辦不推。"""
 
 from datetime import date
 
@@ -63,8 +63,15 @@ def test_special_event_pushes_to_couple_group(monkeypatch):
     assert "待辦" not in text
 
 
-def test_due_todos_push_even_without_events(monkeypatch):
+def test_todos_alone_do_not_push(monkeypatch):
     _events(monkeypatch, [])
+    personal.add_todo(GROUP, "繳電費", start=TOMORROW)
+    personal.add_todo(GROUP, "退貨", start=date(2026, 10, 21))
+    assert _run() == (None, [])
+
+
+def test_due_todos_ride_along_with_event(monkeypatch):
+    _events(monkeypatch, [{"summary": "生日", "start": {"date": "2026-10-25"}}])
     personal.add_todo(GROUP, "繳電費", start=TOMORROW)
     personal.add_todo(GROUP, "買禮物", start=TODAY)
     personal.add_todo(GROUP, "退貨", start=date(2026, 10, 21))
@@ -72,6 +79,7 @@ def test_due_todos_push_even_without_events(monkeypatch):
     text, sent = _run()
     assert len(sent) == 1
     lines = text.splitlines()
+    assert "⭐ 整天　生日" in lines
     assert "⬜ [3] 退貨（⚠️ 逾期 3 天）" in lines
     assert "⬜ [2] 買禮物（今天）" in lines
     assert "⬜ [1] 繳電費（明天）" in lines
@@ -81,9 +89,10 @@ def test_due_todos_push_even_without_events(monkeypatch):
 
 
 def test_only_group_todos_not_personal(monkeypatch):
-    _events(monkeypatch, [])
+    _events(monkeypatch, [{"summary": "生日", "start": {"date": "2026-10-25"}}])
     personal.add_todo("Uself", "我自己的", start=TOMORROW)
-    assert _run() == (None, [])
+    text, _ = _run()
+    assert "我自己的" not in text and "待辦" not in text
 
 
 def test_same_night_pushes_only_once(monkeypatch):
@@ -94,13 +103,12 @@ def test_same_night_pushes_only_once(monkeypatch):
     assert second is None and sent2 == []
 
 
-def test_calendar_failure_still_pushes_todos(monkeypatch):
+def test_calendar_failure_means_no_push(monkeypatch):
     def boom(day):
         raise RuntimeError("token 過期")
     monkeypatch.setattr(couple_calendar, "fetch_events", boom)
     personal.add_todo(GROUP, "繳電費", start=TOMORROW)
-    text, sent = _run()
-    assert "繳電費" in text and len(sent) == 1
+    assert _run() == (None, [])
 
 
 def test_no_group_configured_skips(monkeypatch):

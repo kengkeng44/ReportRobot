@@ -4,9 +4,9 @@
 - 只有「⭐ 特別活動」那個 Google 日曆裡的行程才推；共用日曆「我們倆」的
   一般行程不推（兩人自己看 App 的通知就夠）。
 - 待辦用群組共用那份（personal.py 以群組 ID 當清單主人），只挑**有截止日**
-  且 ≤ 明天的 —— 也就是明天到期 + 已逾期。沒設日期的 P0 不推：它沒有時效，
-  每晚都推等於每晚扣 2 則額度。
-- 兩樣都沒有就不推。推到群組是每個成員各算一則，兩人 = 每次 2 則。
+  且 ≤ 明天的 —— 也就是明天到期 + 已逾期。沒設日期的 P0 不帶。
+- 2026-10-24 使用者改規則：**明天有特別活動才推**，待辦只是順便帶上；
+  只有待辦、沒有活動 → 不推。推到群組是每個成員各算一則，兩人 = 每次 2 則。
 
 日曆用獨立的 token（CAL_TOKEN_PICKLE_B64，scope 只有 calendar），
 完全不碰財務同步在用的 TOKEN_PICKLE_B64 —— 理由同 setup_send_token.py。
@@ -109,8 +109,9 @@ def _todo_line(t, day):
 
 
 def build_preview(day, events, todos):
-    """組明天預告的文字。兩樣都空回 None（呼叫端據此不推）。"""
-    if not events and not todos:
+    """組明天預告的文字。明天沒有特別活動回 None（呼叫端據此不推）——
+    只有待辦不推，待辦只在有活動那晚順便帶。"""
+    if not events:
         return None
     lines = [f"📅 明天 {day.month}/{day.day}（{_WEEKDAYS[day.weekday()]}）"]
     if events:
@@ -148,13 +149,13 @@ def run_evening_preview(push_func=None, today=None):
     try:
         events = fetch_events(tomorrow)
     except Exception as e:
-        # 日曆掛了仍照推待辦，不讓一邊拖垮另一邊
+        # 讀不到日曆就等於沒有特別活動 → 不推（只有待辦不推）
         print(f"[couple_calendar] 讀日曆失敗（非致命）：{e}")
         events = []
 
     text = build_preview(tomorrow, events, todos_due_by(group_id, tomorrow))
     if not text:
-        print("[couple_calendar] 明天沒有特別活動也沒有到期待辦，不推")
+        print("[couple_calendar] 明天沒有特別活動，不推")
         return None
 
     if push_func is None:

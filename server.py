@@ -287,7 +287,7 @@ async def lifespan(app: FastAPI):
         misfire_grace_time=1800,
         replace_existing=True,
     )
-    # 情侶群組明天預告：⭐ 特別活動 + 到期待辦，兩樣都沒有就不推（每次 2 則額度）
+    # 情侶群組明天預告：明天有 ⭐ 特別活動才推，到期待辦順便帶（每次 2 則額度）
     def _run_couple_preview():
         try:
             import couple_calendar
