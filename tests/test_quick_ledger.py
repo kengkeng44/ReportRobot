@@ -335,7 +335,8 @@ def test_panel_has_form_button_when_configured(env, monkeypatch):
 
 def test_richmenu_ledger_cell(monkeypatch):
     import setup_richmenu as sr
-    main = sr.MENUS["main"]["cells"]
+    # 2026-10-24 記帳表單從主選單搬到「更多」
+    main = sr.MENUS["more"]["cells"]
     ledger = [c for c in main if c[1] == "LEDGER"][0]
     monkeypatch.setenv("LIFF_ID", "123-abc")
     area = sr.build_areas([ledger])[0]["action"]
@@ -343,8 +344,8 @@ def test_richmenu_ledger_cell(monkeypatch):
     monkeypatch.delenv("LIFF_ID")
     assert sr.build_areas([ledger])[0]["action"]["type"] == "message"
     assert sr._ink_for("#FFD400") != "white" and sr._ink_for("#F0AD4E") == "white"
-    # 煮飯沒有消失，只是搬到「更多」
-    assert any(c[3] == ("switch", "kitchen") for c in sr.MENUS["more"]["cells"])
+    # 煮飯沒有消失，搬到「生活」
+    assert any(c[3] == ("switch", "kitchen") for c in sr.MENUS["life"]["cells"])
 
 
 # ── 交易明細 → 共同帳本 自動同步 ────────────────────────────

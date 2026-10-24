@@ -45,6 +45,7 @@ CELL_H = H // ROWS  # 843
 #   ("switch",  "kitchen") → 切換到別的分頁（參數是 MENUS 的 key，同時也是 alias id）
 #   ("prompt",  "買了 ")   → 打開鍵盤並預填文字，使用者接著補後半段就送出
 #   ("liff",    "記一筆")  → 開 LIFF 記帳表單；沒設 LIFF_ID 時退回送出參數那句文字
+#   ("uri",     "https://…") → 直接開網頁（生活紀錄儀表板）
 #
 # ⚠️ 標籤只能放中文與英文：PNG 是用 CJK 字型畫的，沒有彩色 emoji 字型，
 #    放 emoji 或箭頭會變成豆腐字（test_labels_have_no_emoji 會擋）。
@@ -55,15 +56,14 @@ MENUS = {
     "main": {
         "name": "喵管家 主選單",
         "chat_bar": "喵管家",
+        # 2026-10-24 使用者重排：記帳交給情侶群組（私訊打「午餐 120」照樣能記，
+        # 表單搬到「更多」），最常用的待辦放左上，空出來的格子給「生活」。
         "cells": [
-            ("財務", "FINANCE", "#A0826D", ("switch", "finance")),
-            # 主選單最常按的一格，用螢光黃 + 黑字：其他格都是低彩度的
-            # 大地色，這格是整張選單唯一高彩度的地方，一眼就看到。
-            # 煮飯讓出位置，搬到「更多」頁（2026-10-08 使用者指定）。
-            ("記帳", "LEDGER",  "#FFD400", ("liff", "記一筆")),
-            ("投資", "INVEST",  "#D9534F", ("switch", "invest")),
             ("待辦", "TODO",    "#5B8DA6", ("switch", "todo")),
             ("今日", "TODAY",   "#F0AD4E", ("message", "/預覽")),
+            ("生活", "LIFE",    "#6FA287", ("switch", "life")),
+            ("財務", "FINANCE", "#A0826D", ("switch", "finance")),
+            ("投資", "INVEST",  "#D9534F", ("switch", "invest")),
             ("更多", "MORE",    "#8A7A6E", ("switch", "more")),
         ],
     },
@@ -78,6 +78,18 @@ MENUS = {
             # 送裸指令：「記一筆」不帶東西會回一排常記品項，再點金額，
             # 兩下記完。prompt 只會開鍵盤，送不出裸指令（HANDOFF 231）。
             ("記一筆",   "ADD",      "#9A7B63", ("message", "記一筆")),
+            _BACK,
+        ],
+    },
+    "life": {
+        "name": "喵管家 生活",
+        "chat_bar": "生活",
+        "cells": [
+            ("整理定位", "LOCATION", "#6FA287", ("message", "整理定位")),
+            ("生活紀錄", "DASHBOARD", "#5E9277", ("uri", "https://claude.ai/artifact/BSHSTuJnCJkxKgm9Q6YGMj")),
+            ("共同帳本", "SHARED",   "#7FB297", ("message", "共同明細")),
+            ("明天行程", "TOMORROW", "#4E8267", ("message", "明天行程")),
+            ("煮飯",     "KITCHEN",  "#88B07A", ("switch", "kitchen")),
             _BACK,
         ],
     },
@@ -131,8 +143,8 @@ MENUS = {
         "name": "喵管家 更多",
         "chat_bar": "更多",
         "cells": [
-            # 提醒在「待辦」頁也有，這格讓給從主選單搬來的煮飯
-            ("煮飯", "KITCHEN", "#88B07A", ("switch", "kitchen")),
+            # 記帳表單從主選單搬來（煮飯搬去「生活」頁）
+            ("記帳表單", "LEDGER", "#C9A227", ("liff", "記一筆")),
             ("額度", "QUOTA",   "#4A7A92", ("message", "/額度")),
             ("成本", "COST",    "#6B9CB5", ("message", "/cost")),
             ("預覽", "PREVIEW", "#3E6A80", ("message", "/預覽")),
@@ -291,6 +303,8 @@ def build_areas(cells):
             url = liff_api.liff_url()
             line_action = ({"type": "uri", "uri": url} if url
                            else {"type": "message", "text": param})
+        elif kind == "uri":
+            line_action = {"type": "uri", "uri": param}
         elif kind == "prompt":
             # 需要接著打字的功能（查哪支股票）。「買了」與「記一筆」都改
             # 送裸指令了 —— 它們會回 quick reply，點兩下完成，不必打字。
@@ -408,8 +422,11 @@ def setup():
     _delete_existing_aliases()
     _delete_existing_menus()
 
+    sig = menus_signature()
     menu_ids = {}
     for key, menu in MENUS.items():
+        # 名稱帶版本簽章：開機時 ensure_current 比對得出「選單內容有沒有改過」
+        menu = {**menu, "name": f"{menu['name']} #{sig}"}
         img_path = os.path.join(tmp_dir, f"richmenu_{key}.png")
         generate_image(menu["cells"], img_path)
         size_kb = os.path.getsize(img_path) / 1024
@@ -429,6 +446,32 @@ def setup():
     _set_default(menu_ids["main"])
     print(f"[richmenu] ✅ 完成，{len(menu_ids)} 個分頁，default = main")
     return menu_ids
+
+
+def menus_signature():
+    import hashlib
+    import json
+    raw = json.dumps(MENUS, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
+
+
+def ensure_current():
+    """開機時跑：LINE 上的選單版本跟程式碼不一樣才重建。
+
+    以前改選單要另外呼叫 /admin/setup-richmenu（要管理員 token），
+    忘了呼叫就會「程式改了、手機上還是舊的」。現在 push 就生效。
+    """
+    if not LINE_CHANNEL_TOKEN:
+        return "skip: no token"
+    sig = menus_signature()
+    r = requests.get(f"{LINE_API_BASE}/richmenu/list", headers=_headers(), timeout=10)
+    if r.status_code != 200:
+        return f"skip: list {r.status_code}"
+    names = [m.get("name", "") for m in (r.json().get("richmenus") or [])]
+    if any(n.endswith(f"#{sig}") for n in names) and len(names) == len(MENUS):
+        return "up-to-date"
+    setup()
+    return f"rebuilt #{sig}"
 
 
 if __name__ == "__main__":

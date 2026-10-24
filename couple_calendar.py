@@ -128,6 +128,27 @@ def _flag_path(day):
     return os.path.join(tempfile.gettempdir(), f"couple_preview_{day:%Y%m%d}.flag")
 
 
+TOMORROW_KEYWORDS = {"明天行程", "明天", "明日行程"}
+
+
+def tomorrow_reply(today=None):
+    """私訊「明天行程」：回覆明天的 ⭐ 特別活動與到期群組待辦（reply 不吃 push 額度）。"""
+    import couple_ledger
+    today = today or now_tpe().date()
+    tomorrow = today + timedelta(days=1)
+    try:
+        events = fetch_events(tomorrow)
+    except Exception as e:
+        print(f"[couple_calendar] 讀日曆失敗：{e}")
+        events = []
+    gid = couple_ledger.couple_group_id()
+    todos = todos_due_by(gid, tomorrow) if gid else []
+    text = build_preview(tomorrow, events, todos)
+    if not text and todos:
+        text = build_preview(tomorrow, [{"summary": "（沒有特別活動）", "start": {"date": tomorrow.isoformat()}}], todos)
+    return text or f"📅 明天（{tomorrow.month}/{tomorrow.day}）沒有特別活動，也沒有到期的待辦。"
+
+
 def run_evening_preview(push_func=None, today=None):
     """排程進入點（21:00 TPE）。回傳推出去的文字，沒推回 None。"""
     import couple_ledger

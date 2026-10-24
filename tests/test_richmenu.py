@@ -168,3 +168,25 @@ def test_grid_positions_are_row_major():
     assert (areas[0]["bounds"]["x"], areas[0]["bounds"]["y"]) == (0, 0)
     assert (areas[2]["bounds"]["x"], areas[2]["bounds"]["y"]) == (2 * rm.CELL_W, 0)
     assert (areas[3]["bounds"]["x"], areas[3]["bounds"]["y"]) == (0, rm.CELL_H)
+
+
+def test_life_menu_and_uri_action():
+    cells = rm.MENUS["life"]["cells"]
+    dash = [c for c in cells if c[1] == "DASHBOARD"][0]
+    assert rm.build_areas([dash])[0]["action"]["type"] == "uri"
+    assert rm.MENUS["main"]["cells"][0][1] == "TODO"          # 最常用的放左上
+    assert not any(c[1] == "LEDGER" for c in rm.MENUS["main"]["cells"])
+
+
+def test_signature_changes_with_menu(monkeypatch):
+    before = rm.menus_signature()
+    monkeypatch.setitem(rm.MENUS["main"], "chat_bar", "改過")
+    assert rm.menus_signature() != before
+
+
+def test_private_shortcuts_never_reach_paid_ai():
+    import command_router as cr
+    ctx = {"source_type": "user", "user_id": "Usomeone_else"}
+    for t in ("整理定位", "明天行程"):
+        assert cr.parse(t)[0] == "private_shortcut"
+        assert "🔒" in cr.handle(t, ctx)

@@ -309,6 +309,9 @@ def _find_tw_ticker_by_name(query):
         return None
 
 
+_PRIVATE_SHORTCUTS = {"整理定位", "定位整理", "整理今天定位", "明天行程", "明日行程", "共同明細", "共同最近", "共同帳本"}
+
+
 def parse(text):
     """回 (kind, arg) 或 None。kind ∈ {'help', 'portfolio', 'stock', 'compare', 'free_query'}。"""
     if not text:
@@ -320,6 +323,11 @@ def parse(text):
 
     if cleaned in _HELP_KEYWORDS:
         return ("help", None)
+
+    # 生活選單的本人專用按鈕（整理定位、明天行程、共同明細）。本人在 handle()
+    # 最前面就被接走了；走到這裡的是家人按到 —— 回一句說明，不能掉進付費 AI 問答
+    if cleaned in _PRIVATE_SHORTCUTS:
+        return ("private_shortcut", cleaned)
 
     if cleaned in _COST_KEYWORDS:
         return ("cost", None)
@@ -1133,6 +1141,10 @@ def handle(text, ctx=None):
     import owntracks
     if (text or "").strip().lstrip("/") in owntracks.REFRESH_KEYWORDS and _is_admin(ctx):
         return owntracks.refresh_today_reply()
+    # 私訊「明天行程」：生活選單那格（只限本人）
+    import couple_calendar
+    if (text or "").strip().lstrip("/") in couple_calendar.TOMORROW_KEYWORDS and _is_admin(ctx):
+        return couple_calendar.tomorrow_reply()
     reply = couple_ledger.setup_reply(text, ctx)
     if reply is None and couple_ledger.is_couple_chat(ctx):
         reply = couple_ledger.handle(text, ctx)
@@ -1182,6 +1194,9 @@ def _dispatch(text, ctx, parsed):
     try:
         if kind == "help":
             return HELP_TEXT
+
+        if kind == "private_shortcut":
+            return "🔒 這是仁和自己用的功能（共同帳本要在記帳群組裡的人才看得到）。"
 
         if kind == "cost":
             from usage_tracker import get_stats

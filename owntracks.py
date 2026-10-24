@@ -42,10 +42,10 @@ PLACES_DB_ID = os.environ.get("LIFE_PLACES_DB_ID", "fa6d0bdf350b4be6bc74c0c920b4
 MARK = "📡 "               # 行程欄開頭有這個 = 程式寫的，可以覆蓋
 PARTIAL = "📡⏳ "           # 當天還沒過完（私訊「整理定位」）寫的：地點統計還沒算
 PLACE_RADIUS_M = 150       # 離既有地點多近算「在那裡」
-STOP_MIN_MINUTES = 20      # 沒對到地點、停多久才新增地點（這段至少要 2 個點）
+STOP_MIN_MINUTES = 60      # 沒對到地點、停多久才新增地點（使用者 2026-10-24：只留待超過一小時的）
 STOP_SINGLE_MIN_MINUTES = 60   # 只有 1 個點的段落要停更久才算：省電模式下路上
                                # 也常常一點之後隔 30 分鐘才有下一點，那只是在移動
-VISIT_MIN_MINUTES = 10     # 待多久才算「去過」
+VISIT_MIN_MINUTES = 60     # 待多久才算「去過」（同上，路過的店不算）
 MAX_ACCURACY_M = 500       # 比這更不準的點直接丟掉
 KM_MAX_ACCURACY_M = 200    # 算距離只用夠準的點，否則原地飄移會累積成好幾公里
 KM_MAX_SPEED_KMH = 300     # 兩點之間換算速度超過這個 = 定位跳點，不算距離

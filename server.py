@@ -242,6 +242,20 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"[taxonomy] 補標失敗（非致命）：{e}")
 
+    # 圖文選單：程式碼裡的選單改了，開機就自動重建（不用再手動打 admin 端點）
+    def _ensure_richmenu():
+        try:
+            import setup_richmenu
+            print(f"[richmenu] {setup_richmenu.ensure_current()}")
+        except Exception as e:
+            print(f"[richmenu] 自動更新失敗（非致命）：{e}")
+
+    scheduler.add_job(
+        _ensure_richmenu,
+        DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(minutes=1)),
+        id="richmenu_ensure_boot",
+        replace_existing=True,
+    )
     scheduler.add_job(
         _run_taxonomy_backfill,
         DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(minutes=6)),
