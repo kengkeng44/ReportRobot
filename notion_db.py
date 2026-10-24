@@ -262,6 +262,12 @@ _SCHEMAS = {
         "金額": {"number": {"format": "number"}},
         "方向": _select(("支出", "red"), ("收入", "green"), ("轉帳", "gray"), ("還款", "blue")),
         "類別": _select(*_SPEND_CATEGORIES),
+        # 依「錢花在什麼上」分的兩層分類（spend_taxonomy.py）；「類別」是銀行給的店家類型，保留不動
+        "大類": _select(("🍚 飲食", "orange"), ("🏠 居家", "brown"), ("🚇 交通", "blue"),
+                        ("✈️ 旅遊", "yellow"), ("👕 服飾美容", "pink"), ("📱 數位訂閱", "purple"),
+                        ("📚 學習", "green"), ("🏃 運動健康", "red"), ("💑 社交娛樂", "pink"),
+                        ("🛡️ 保險規費", "gray"), ("❓待分類", "default")),
+        "細項": {"select": {"options": []}},
         "商店": {"rich_text": {}},
         # 國泰的彙整通知連海外消費都已換算台幣，所以目前這欄一律 TWD。
         # 先建起來，之後接券商 / 訂閱扣款信才不必再動一次 schema 與既有資料。
@@ -1655,6 +1661,8 @@ def transaction_add(txn):
     if not db_id or not client:
         return None
 
+    import spend_taxonomy
+    txn = spend_taxonomy.apply(txn)
     title = txn.get("shop") or txn.get("category") or "消費"
     candidates = {
         "摘要": {"title": [{"text": {"content": title}}]},
@@ -1671,6 +1679,8 @@ def transaction_add(txn):
         "類別": (_prop_select(normalize_spend_category(txn["category"]))
                  if txn.get("category") else None),
         "商店": {"rich_text": [{"text": {"content": txn.get("shop") or ""}}]},
+        "大類": _prop_select(txn.get("main_category")),
+        "細項": _prop_select(txn.get("sub_category")),
         "狀態": _prop_select(txn.get("status")),
         "來源": _prop_select(sources.txn_display(txn.get("source"), txn.get("channel"))),
         "記錄人": (_rich(txn.get("recorder") or (

@@ -234,6 +234,29 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"[finance] 轉帳信補抓失敗（非致命）：{e}")
 
+    # 大類／細項補標：開機一次 + 每天 17:00（載具發票 16:30 補完品項之後，待分類的才分得出來）
+    def _run_taxonomy_backfill():
+        try:
+            import spend_taxonomy
+            spend_taxonomy.backfill()
+        except Exception as e:
+            print(f"[taxonomy] 補標失敗（非致命）：{e}")
+
+    scheduler.add_job(
+        _run_taxonomy_backfill,
+        DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(minutes=6)),
+        id="taxonomy_backfill_boot",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        _run_taxonomy_backfill,
+        CronTrigger(hour=17, minute=0, timezone="Asia/Taipei"),
+        id="taxonomy_backfill_daily",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
+        replace_existing=True,
+    )
     scheduler.add_job(
         _run_transfer_backfill,
         DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(minutes=4)),
