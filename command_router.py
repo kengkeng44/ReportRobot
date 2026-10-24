@@ -1129,6 +1129,10 @@ def handle(text, ctx=None):
         except Exception as e:
             print(f"整理共同失敗：{e}")
             return "交易明細暫時連不上，等一下再試。"
+    # 私訊「整理定位」：OwnTracks 今天到現在的定位馬上寫進每日紀錄（只限本人）
+    import owntracks
+    if (text or "").strip().lstrip("/") in owntracks.REFRESH_KEYWORDS and _is_admin(ctx):
+        return owntracks.refresh_today_reply()
     reply = couple_ledger.setup_reply(text, ctx)
     if reply is None and couple_ledger.is_couple_chat(ctx):
         reply = couple_ledger.handle(text, ctx)

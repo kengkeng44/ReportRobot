@@ -252,3 +252,18 @@ def test_load_points_uses_title_timestamp_not_minute_truncated_date(monkeypatch)
     monkeypatch.setattr(notion_db, "_query_all", lambda *a, **k: rows)
     pts = owntracks.load_points(None, 0, 2**31)
     assert [p["tst"] for p in pts] == [1792822117, 1792822121]   # 重送的去重、同分鐘的不合併
+
+
+def test_refresh_command_admin_only(monkeypatch):
+    import command_router
+    monkeypatch.setenv("ADMIN_LINE_USER_ID", "Uadmin")
+    monkeypatch.setattr(owntracks, "refresh_today_reply", lambda: "OK")
+    assert command_router.handle("整理定位", {"source_type": "user", "user_id": "Uadmin"}) == "OK"
+    assert command_router.handle("整理定位", {"source_type": "user", "user_id": "Uother"}) != "OK"
+
+
+def test_refresh_reply_explains_failure(monkeypatch):
+    def boom(day):
+        raise RuntimeError("Could not find database")
+    monkeypatch.setattr(owntracks, "run_for_day", boom)
+    assert "生活紀錄" in owntracks.refresh_today_reply()

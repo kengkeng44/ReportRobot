@@ -459,6 +459,30 @@ def run_for_day(day=None):
     return result
 
 
+REFRESH_KEYWORDS = {"整理定位", "定位整理", "整理今天定位"}
+
+
+def refresh_today_reply():
+    """私訊「整理定位」：馬上整理今天到現在為止，回一句摘要。"""
+    try:
+        r = run_for_day(now_tpe().date())
+    except Exception as e:
+        print(f"[owntracks] 手動整理失敗：{e}")
+        return f"📡 整理失敗：{str(e)[:150]}\n（常見原因：「📔 生活紀錄」那頁沒連到 Notion integration）"
+    if not r.get("ok"):
+        return f"📡 整理失敗：{r.get('reason')}"
+    if r.get("skipped"):
+        return f"📡 今天還沒有定位點（{r['skipped']}）"
+    msg = (f"📡 今天到現在整理好了（{r['points']} 個點）\n"
+           f"外出 {r['out_h']} 小時・在家 {r['home_h']}・在公司 {r['work_h']}\n"
+           f"移動 {r['km']} 公里・去過 {r['visited']} 個地點")
+    if r["new_places"]:
+        msg += f"（新增 {r['new_places']} 個，去 Notion 地點表改名字）"
+    if not r["overwrote_numbers"]:
+        msg += "\n今天的行程是手動填的，只補了地點、沒動時數"
+    return msg
+
+
 def purge_old(keep_days=KEEP_DAYS):
     """封存超過 keep_days 的原始點。座標留太久沒用處，只是多一份隱私風險。"""
     client = notion_db._get_client()
