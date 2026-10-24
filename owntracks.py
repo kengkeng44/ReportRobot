@@ -333,24 +333,118 @@ def load_places(client):
             "visits": _num(p, "造訪次數") or 0,
             "hours": _num(p, "總停留時數") or 0,
             "first": ((p.get("首次造訪", {}) or {}).get("date") or {}).get("start"),
+            "auto": _text(p, "備註").startswith("📡"),
         })
     return places, max_no
 
 
+# ── 反查地名（OpenStreetMap Nominatim）──────────────────
+# 2026-10-24 使用者選的：要精確到店名／門牌，接受新地點座標送到 OSM。
+# 只送「新地點」，不送原始軌跡；每天幾筆。Nominatim 規定 1 秒最多 1 次、要帶 User-Agent。
+_NOMINATIM = "https://nominatim.openstreetmap.org/reverse"
+_UA = "ReportRobot-life-record/1.0 (+https://github.com/kengkeng44/ReportRobot)"
+_GEOCODE_PACE = 1.1
+_POI_CLASSES = {"amenity", "shop", "tourism", "leisure", "office", "craft",
+                "healthcare", "railway", "aeroway", "historic", "building"}
+_CATEGORY_MAP = {
+    ("amenity", "restaurant"): "餐廳", ("amenity", "fast_food"): "餐廳",
+    ("amenity", "food_court"): "餐廳", ("amenity", "bar"): "餐廳", ("amenity", "pub"): "餐廳",
+    ("amenity", "cafe"): "咖啡廳", ("shop", "coffee"): "咖啡廳", ("shop", "tea"): "咖啡廳",
+    ("leisure", "fitness_centre"): "運動", ("leisure", "sports_centre"): "運動",
+    ("leisure", "stadium"): "運動", ("leisure", "swimming_pool"): "運動",
+    ("amenity", "university"): "公司/學校", ("amenity", "school"): "公司/學校",
+    ("amenity", "college"): "公司/學校",
+}
+
+
+def _area(addr):
+    city = addr.get("city") or addr.get("county") or ""
+    district = (addr.get("city_district") or addr.get("district")
+                or addr.get("suburb") or addr.get("town") or "")
+    return city + (district if district not in city else "")
+
+
+def name_from_nominatim(d):
+    """Nominatim 回傳 → (名稱, 類別)；什麼都抓不到回 (None, None)。"""
+    if not isinstance(d, dict) or d.get("error"):
+        return None, None
+    addr = d.get("address") or {}
+    cls, typ = d.get("category") or "", d.get("type") or ""
+    area = _area(addr)
+    poi = (d.get("name") or "").strip() if cls in _POI_CLASSES else ""
+    if poi:
+        name = f"{poi}（{area}）" if area else poi
+    elif addr.get("road"):
+        name = f"{area}{addr['road']}{addr.get('house_number', '')}"
+        if addr.get("house_number") and not addr["house_number"].endswith("號"):
+            name += "號"
+    else:
+        name = area or None
+    if not name:
+        return None, None
+    if (cls, typ) in _CATEGORY_MAP:
+        cat = _CATEGORY_MAP[(cls, typ)]
+    elif cls == "shop":
+        cat = "購物"
+    elif cls in ("tourism", "leisure", "historic"):
+        cat = "景點/玩樂"
+    else:
+        cat = "其他"
+    return name[:80], cat
+
+
+def reverse_geocode(lat, lon):
+    """失敗一律回 (None, None) —— 名字抓不到就先叫「地點 #NNN」，下次整理再試。"""
+    try:
+        import requests
+        r = requests.get(_NOMINATIM, params={
+            "format": "jsonv2", "lat": f"{lat:.6f}", "lon": f"{lon:.6f}",
+            "zoom": 18, "addressdetails": 1, "accept-language": "zh-TW",
+        }, headers={"User-Agent": _UA}, timeout=8)
+        r.raise_for_status()
+        return name_from_nominatim(r.json())
+    except Exception as e:
+        print(f"[owntracks] 反查地名失敗：{e}")
+        return None, None
+
+
+def rename_unnamed(client, places, limit=5):
+    """之前反查失敗、還叫「地點 #NNN」的自動地點，再試一次。你自己改過名字的不會動。"""
+    n = 0
+    for pl in places:
+        if n >= limit:
+            break
+        if not (pl.get("auto") and re.fullmatch(r"地點 #\d+", pl["name"])):
+            continue
+        n += 1
+        time.sleep(_GEOCODE_PACE)
+        name, cat = reverse_geocode(pl["lat"], pl["lon"])
+        if not name:
+            continue
+        props = {"名稱": {"title": [{"text": {"content": name}}]}}
+        if pl.get("category") in ("", "其他") and cat:
+            props["類別"] = {"select": {"name": cat}}
+            pl["category"] = cat
+        client.pages.update(page_id=pl["id"], properties=props)
+        pl["name"] = name
+
+
 def _create_place(client, number, lat, lon, day):
+    name, cat = reverse_geocode(lat, lon)
+    name, cat = name or f"地點 #{number:03d}", cat or "其他"
     page = client.pages.create(
         parent={"database_id": PLACES_DB_ID},
         properties={
-            "名稱": {"title": [{"text": {"content": f"地點 #{number:03d}"}}]},
-            "類別": {"select": {"name": "其他"}},
+            "名稱": {"title": [{"text": {"content": name}}]},
+            "類別": {"select": {"name": cat}},
             "緯度": {"number": round(lat, 6)},
             "經度": {"number": round(lon, 6)},
             "Google Maps": {"url": f"https://www.google.com/maps?q={lat:.6f},{lon:.6f}"},
-            "備註": {"rich_text": [{"text": {"content": f"📡 OwnTracks {day} 自動新增，改個名字吧"}}]},
+            "備註": {"rich_text": [{"text": {"content": f"📡 OwnTracks {day} 自動新增（名稱來自 OpenStreetMap，不對就改）"}}]},
         },
     )
-    return {"id": page["id"], "name": f"地點 #{number:03d}", "lat": lat, "lon": lon,
-            "category": "其他", "visits": 0, "hours": 0, "first": None}
+    return {"id": page["id"], "name": name, "lat": lat, "lon": lon, "auto": True,
+            "category": cat, "visits": 0, "hours": 0, "first": None}
 
 
 def _find_daily(client, day):
@@ -383,6 +477,10 @@ def run_for_day(day=None):
     points = before + in_day
 
     places, max_no = load_places(client)
+    try:
+        rename_unnamed(client, places)
+    except Exception as e:
+        print(f"[owntracks] 補地名失敗（非致命）：{e}")
     summary = summarize(points, places, day_start, day_end)
 
     # 久停但沒對到地點 → 新增地點。同一天兩段停在同一個新地方只建一次。
@@ -453,6 +551,7 @@ def run_for_day(day=None):
         "ok": True, "day": day.isoformat(), "points": len(in_day),
         "out_h": summary["out_h"], "home_h": summary["home_h"], "work_h": summary["work_h"],
         "km": summary["km"], "visited": len(visited), "new_places": len(created),
+        "places": [by_id[pid]["name"] for pid in visited if pid in by_id],
         "overwrote_numbers": overwrite,
     }
     print(f"[owntracks] 每日整理：{result}")
@@ -477,7 +576,9 @@ def refresh_today_reply():
            f"外出 {r['out_h']} 小時・在家 {r['home_h']}・在公司 {r['work_h']}\n"
            f"移動 {r['km']} 公里・去過 {r['visited']} 個地點")
     if r["new_places"]:
-        msg += f"（新增 {r['new_places']} 個，去 Notion 地點表改名字）"
+        msg += f"（新增 {r['new_places']} 個）"
+    if r.get("places"):
+        msg += "\n📍 " + "、".join(r["places"])
     if not r["overwrote_numbers"]:
         msg += "\n今天的行程是手動填的，只補了地點、沒動時數"
     return msg

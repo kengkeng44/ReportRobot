@@ -198,6 +198,7 @@ def _setup(monkeypatch, fake, points):
                         lambda c: ([_place_row(HOME), _place_row(WORK)], 64))
     monkeypatch.setattr(owntracks.time, "sleep", lambda s: None)
     monkeypatch.setattr(owntracks.time, "time", lambda: DAY1 + 3600)
+    monkeypatch.setattr(owntracks, "reverse_geocode", lambda lat, lon: (None, None))
     return date(2026, 10, 25)
 
 
@@ -270,3 +271,54 @@ def test_refresh_reply_explains_failure(monkeypatch):
         raise RuntimeError("Could not find database")
     monkeypatch.setattr(owntracks, "run_for_day", boom)
     assert "生活紀錄" in owntracks.refresh_today_reply()
+
+
+# ── 反查地名 ─────────────────────────────────────────
+
+def test_poi_name_with_district():
+    d = {"category": "amenity", "type": "cafe", "name": "路易莎咖啡",
+         "address": {"city": "臺中市", "suburb": "西區", "road": "公益路"}}
+    assert owntracks.name_from_nominatim(d) == ("路易莎咖啡（臺中市西區）", "咖啡廳")
+
+
+def test_street_address_when_no_poi():
+    d = {"category": "highway", "type": "residential", "name": "公益路",
+         "address": {"city": "臺中市", "city_district": "西區", "road": "公益路", "house_number": "123"}}
+    assert owntracks.name_from_nominatim(d) == ("臺中市西區公益路123號", "其他")
+
+
+def test_area_only_and_errors():
+    assert owntracks.name_from_nominatim({"address": {"county": "南投縣", "town": "仁愛鄉"}}) == ("南投縣仁愛鄉", "其他")
+    assert owntracks.name_from_nominatim({"error": "Unable to geocode"}) == (None, None)
+    assert owntracks.name_from_nominatim(None) == (None, None)
+
+
+def test_shop_maps_to_shopping():
+    d = {"category": "shop", "type": "supermarket", "name": "全聯", "address": {"city": "臺北市", "suburb": "大安區"}}
+    assert owntracks.name_from_nominatim(d)[1] == "購物"
+
+
+def test_new_place_gets_geocoded_name(monkeypatch):
+    cafe = dict(lat=25.0600, lon=121.5300)
+    pts = [pt(at(0), HOME), pt(at(14), None, **cafe), pt(at(14, 40), None, **cafe), pt(at(16), HOME)]
+    fake = _FakeNotion()
+    day = _setup(monkeypatch, fake, pts)
+    monkeypatch.setattr(owntracks, "reverse_geocode", lambda lat, lon: ("某咖啡（臺北市中山區）", "咖啡廳"))
+    owntracks.run_for_day(day)
+    place = next(p for _, p in fake.created if "名稱" in p)
+    assert place["名稱"]["title"][0]["text"]["content"] == "某咖啡（臺北市中山區）"
+    assert place["類別"]["select"]["name"] == "咖啡廳"
+
+
+def test_rename_only_touches_auto_unnamed(monkeypatch):
+    monkeypatch.setattr(owntracks.time, "sleep", lambda s: None)
+    monkeypatch.setattr(owntracks, "reverse_geocode", lambda lat, lon: ("新名字", "餐廳"))
+    fake = _FakeNotion()
+    places = [
+        {"id": "a", "name": "地點 #065", "auto": True, "category": "其他", "lat": 1, "lon": 1},
+        {"id": "b", "name": "地點 #001", "auto": False, "category": "其他", "lat": 1, "lon": 1},  # Google 匯入的
+        {"id": "c", "name": "我改過的名字", "auto": True, "category": "其他", "lat": 1, "lon": 1},
+    ]
+    owntracks.rename_unnamed(fake, places)
+    assert [pid for pid, _ in fake.updated] == ["a"]
+    assert places[0]["name"] == "新名字"
