@@ -129,9 +129,12 @@ def test_inaccurate_points_dropped():
     assert s["home_h"] == 24.0
 
 
-def test_first_point_covers_from_midnight_when_no_prior_point():
-    s = owntracks.summarize([pt(at(7), HOME)], [HOME], DAY0, DAY1)
-    assert s["home_h"] == 24.0
+def test_no_data_before_first_point_is_not_counted():
+    """2026-10-24 第一天開 OwnTracks：14:08 才有第一點，卻被算成外出 14.3 小時。"""
+    cafe = dict(lat=24.1367, lon=120.6951)
+    s = owntracks.summarize([pt(at(14), None, **cafe)], [HOME], DAY0, at(14, 20))
+    assert s["out_h"] == 0.3
+    assert owntracks.summarize([pt(at(7), HOME)], [HOME], DAY0, DAY1)["home_h"] == 17.0
 
 
 def test_km_ignores_teleport_jumps():

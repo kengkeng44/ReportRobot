@@ -10,7 +10,8 @@
 
 時數怎麼算：每一點代表「從這點到下一點之間都在這裡」。iPhone 預設的
 significant-change 模式靜止時不送點，所以在家睡一整晚只會有睡前一點、
-起床出門一點 —— 這樣算剛好是對的。第一點之前的時間算在第一點的地方。
+起床出門一點 —— 這樣算剛好是對的。第一點之前（往前 12 小時都沒有點）
+的時間不算，三個時數加起來可能不到 24。
 
 手動改過的每日紀錄不覆蓋：行程欄不是 📡 開頭（Google 時間軸匯入、或你自己
 更正過的）就只補「去過的地點」，數字跟行程都不動。
@@ -186,10 +187,9 @@ def build_segments(points, places, day_start, day_end):
     segs = []
     for i, s in enumerate(raw):
         end = raw[i + 1]["start"] if i + 1 < len(raw) else day_end
-        start = s["start"]
-        if i == 0:
-            start = min(start, day_start)    # 第一點之前算在這裡
-        start, end = max(start, day_start), min(end, day_end)
+        # 第一點之前沒有資料就不算（剛開始用、或手機關機），不要猜人在哪。
+        # 半夜在哪由前一天最後一點決定 —— 它會被裁到 00:00 開始。
+        start, end = max(s["start"], day_start), min(end, day_end)
         if end > start:
             segs.append({"place": s["place"], "start": start, "end": end, "pts": s["pts"]})
     return segs
