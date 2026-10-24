@@ -361,3 +361,65 @@ def test_no_key_skips_google(monkeypatch):
     monkeypatch.setattr(owntracks, "_google_nearby", lambda *a: (_ for _ in ()).throw(AssertionError))
     monkeypatch.setattr(owntracks, "_osm_reverse", lambda lat, lon: ("OSM", "其他"))
     assert owntracks.reverse_geocode(24.1, 120.6)[0] == "OSM"
+
+
+# ── 風險修補 ─────────────────────────────────────────
+
+def test_partial_day_writes_hours_but_not_place_stats(monkeypatch):
+    fake = _FakeNotion()
+    day = _setup(monkeypatch, fake, _workday())
+    monkeypatch.setattr(owntracks.time, "time", lambda: at(20))     # 當天 20:00 手動整理
+    owntracks.run_for_day(day)
+    trip = fake.updated[0][1]["行程"]["rich_text"][0]["text"]["content"]
+    assert trip.startswith(owntracks.PARTIAL)
+    assert len(fake.updated) == 1                                    # 只更新每日紀錄，地點沒動
+
+
+def test_full_run_after_partial_counts_all_places(monkeypatch):
+    row = {"id": "d1", "properties": {
+        "行程": {"rich_text": [{"plain_text": owntracks.PARTIAL + "09:00–18:00 公司"}]},
+        "去過的地點": {"relation": [{"id": "home"}, {"id": "work"}]},
+    }}
+    fake = _FakeNotion(daily_row=row)
+    day = _setup(monkeypatch, fake, _workday())
+    r = owntracks.run_for_day(day)
+    assert r["overwrote_numbers"]
+    assert sorted(pid for pid, _ in fake.updated[1:]) == ["home", "work"]
+    trip = fake.updated[0][1]["行程"]["rich_text"][0]["text"]["content"]
+    assert trip.startswith(owntracks.MARK) and not trip.startswith(owntracks.PARTIAL)
+
+
+def test_inaccurate_place_is_matched_but_ignored():
+    bad = {"id": "bad", "name": "誤判", "lat": 25.06, "lon": 121.53, "category": "其他", "bad": True}
+    pts = [pt(at(0), HOME), pt(at(14), bad), pt(at(15), bad), pt(at(16), HOME)]
+    s = owntracks.summarize(pts, [HOME, bad], DAY0, DAY1)
+    assert s["new_stops"] == []          # 不會再建一筆新地點
+    assert "bad" not in s["stays"]
+
+
+def test_google_far_poi_becomes_nearby_label():
+    d = {"places": [{"displayName": {"text": "7-ELEVEN 公益門市"},
+                     "formattedAddress": "403台灣臺中市西區公益路100號",
+                     "primaryType": "convenience_store",
+                     "location": {"latitude": 24.1371, "longitude": 120.6951}}]}   # 約 45 公尺
+    name, cat = owntracks.name_from_google(d, 24.1367, 120.6951)
+    assert name == "7-ELEVEN 公益門市附近（臺中市西區）" and cat == "其他"
+    name, cat = owntracks.name_from_google(d, 24.1371, 120.6951)
+    assert name == "7-ELEVEN 公益門市（臺中市西區）" and cat == "購物"
+
+
+def test_busy_lock_returns_reason(monkeypatch):
+    class Busy:
+        def acquire(self, timeout=None):
+            return False
+    monkeypatch.setattr(owntracks, "_RUN_LOCK", Busy())
+    r = owntracks.run_for_day()
+    assert r["ok"] is False and "還在跑" in r["reason"]
+
+
+def test_nightly_also_reruns_day_before(monkeypatch):
+    days = []
+    monkeypatch.setattr(owntracks, "run_for_day", lambda d=None: days.append(d))
+    monkeypatch.setattr(owntracks, "purge_old", lambda: 0)
+    owntracks.nightly()
+    assert len(days) == 2 and (days[1] - days[0]).days == 1

@@ -27,6 +27,7 @@ import hmac
 import math
 import os
 import re
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -39,6 +40,7 @@ DAILY_DB_ID = os.environ.get("LIFE_DAILY_DB_ID", "d874622ec5bc4a92bbde839f8bc3f7
 PLACES_DB_ID = os.environ.get("LIFE_PLACES_DB_ID", "fa6d0bdf350b4be6bc74c0c920b445ad")
 
 MARK = "📡 "               # 行程欄開頭有這個 = 程式寫的，可以覆蓋
+PARTIAL = "📡⏳ "           # 當天還沒過完（私訊「整理定位」）寫的：地點統計還沒算
 PLACE_RADIUS_M = 150       # 離既有地點多近算「在那裡」
 STOP_MIN_MINUTES = 20      # 沒對到地點、停多久才新增地點（這段至少要 2 個點）
 STOP_SINGLE_MIN_MINUTES = 60   # 只有 1 個點的段落要停更久才算：省電模式下路上
@@ -51,6 +53,7 @@ KEEP_DAYS = 30             # 原始點保留天數
 _PACE = 0.35               # Notion 限流 3 req/s
 
 _WEEKDAYS = "一二三四五六日"
+_RUN_LOCK = threading.Lock()   # 排程跟私訊同時整理會重複建地點
 
 
 # ─────────────────────────────────────────────────────────
@@ -218,6 +221,8 @@ def summarize(points, places, day_start, day_end):
     for s in segs:
         dur = s["end"] - s["start"]
         pl = s["place"]
+        if pl is not None and pl.get("bad"):
+            continue                     # 不準的地點：當成路上，不算停留也不新增
         if pl is not None:
             if pl.get("category") == "家":
                 home += dur
@@ -302,7 +307,7 @@ def load_points(client, start_ts, end_ts):
         # Notion 日期欄會把秒數截掉（實測 06:08:41 存成 06:08:00），
         # 同一分鐘的點會撞在一起 —— 精確時間戳以標題「裝置-tst」為準
         m = re.search(r"-(\d{9,})$", _title(p, "點"))
-        tst = int(m.group(1)) if m else int(datetime.fromisoformat(when).timestamp())
+        tst = int(m.group(1)) if m else int(datetime.fromisoformat(when.replace("Z", "+00:00")).timestamp())
         if tst in seen:            # 手機重送會有同一點兩列
             continue
         seen.add(tst)
@@ -321,8 +326,6 @@ def load_places(client):
         m = re.fullmatch(r"地點 #(\d+)", name.strip())
         if m:
             max_no = max(max_no, int(m.group(1)))
-        if (p.get("不準", {}) or {}).get("checkbox"):
-            continue
         lat, lon = _num(p, "緯度"), _num(p, "經度")
         if lat is None or lon is None:
             continue
@@ -334,6 +337,8 @@ def load_places(client):
             "hours": _num(p, "總停留時數") or 0,
             "first": ((p.get("首次造訪", {}) or {}).get("date") or {}).get("start"),
             "auto": _text(p, "備註").startswith("📡"),
+            # 勾了「不準」的地點仍拿來比對 —— 否則下次經過會被當成新地方再建一筆
+            "bad": bool((p.get("不準", {}) or {}).get("checkbox")),
         })
     return places, max_no
 
@@ -397,6 +402,7 @@ def name_from_nominatim(d):
 # Places API (New) Nearby Search，依距離排序取最近一間。每月免費額度遠超過每天幾筆。
 _PLACES_URL = "https://places.googleapis.com/v1/places:searchNearby"
 _PLACES_RADIUS_M = 50
+_PLACES_EXACT_M = 30   # 超過這距離寫「XX附近」：住家樓下的超商不該變成你待了一晚的地方
 _AREA_RE = re.compile(r"([^\d\s]{2}[市縣])([^\d\s]{1,3}?[區鄉鎮市])")
 
 
@@ -419,8 +425,11 @@ def _google_category(primary, types):
     return "其他"
 
 
-def name_from_google(d):
-    """Places searchNearby 回傳 → (名稱, 類別)；沒有結果回 (None, None)。"""
+def name_from_google(d, lat=None, lon=None):
+    """Places searchNearby 回傳 → (名稱, 類別)；沒有結果回 (None, None)。
+
+    最近那間離停留點超過 _PLACES_EXACT_M 就只當地標（「XX附近」、類別其他）。
+    """
     places = (d or {}).get("places") or []
     if not places:
         return None, None
@@ -430,8 +439,13 @@ def name_from_google(d):
         return None, None
     m = _AREA_RE.search(p.get("formattedAddress") or "")
     area = (m.group(1) + m.group(2)) if m else ""
+    cat = _google_category(p.get("primaryType"), p.get("types"))
+    loc = p.get("location") or {}
+    if lat is not None and "latitude" in loc and "longitude" in loc:
+        if haversine_m(lat, lon, loc["latitude"], loc["longitude"]) > _PLACES_EXACT_M:
+            name, cat = f"{name}附近", "其他"
     full = f"{name}（{area}）" if area else name
-    return full[:80], _google_category(p.get("primaryType"), p.get("types"))
+    return full[:80], cat
 
 
 def _google_nearby(lat, lon, key):
@@ -445,10 +459,10 @@ def _google_nearby(lat, lon, key):
     }, headers={
         "X-Goog-Api-Key": key,
         # 只要這幾欄：欄位越少計費等級越低
-        "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.primaryType,places.types",
+        "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.primaryType,places.types,places.location",
     }, timeout=8)
     r.raise_for_status()
-    return name_from_google(r.json())
+    return name_from_google(r.json(), lat, lon)
 
 
 def reverse_geocode(lat, lon):
@@ -488,7 +502,7 @@ def rename_unnamed(client, places, limit=5):
     for pl in places:
         if n >= limit:
             break
-        if not (pl.get("auto") and re.fullmatch(r"地點 #\d+", pl["name"])):
+        if pl.get("bad") or not (pl.get("auto") and re.fullmatch(r"地點 #\d+", pl["name"])):
             continue
         n += 1
         time.sleep(_GEOCODE_PACE)
@@ -533,6 +547,15 @@ def _find_daily(client, day):
 
 def run_for_day(day=None):
     """整理某一天（預設昨天，台北時間）。回摘要 dict 方便 admin 端點看。"""
+    if not _RUN_LOCK.acquire(timeout=120):
+        return {"ok": False, "reason": "另一個整理還在跑，等一下再試"}
+    try:
+        return _run_for_day(day)
+    finally:
+        _RUN_LOCK.release()
+
+
+def _run_for_day(day=None):
     client = notion_db._get_client()
     if not client:
         return {"ok": False, "reason": "Notion 未設定"}
@@ -541,6 +564,9 @@ def run_for_day(day=None):
     day_end = day_start + 86400
     # 今天還沒過完就整理到現在，不要把未來算進去
     day_end = min(day_end, int(time.time()))
+    # 當天還沒過完：時數照寫，但地點的造訪次數／停留時數等那天過完的排程再算，
+    # 不然下午算一次「待了 1 小時」，半夜那次看到已經連過就不再更新
+    partial = day_end < day_start + 86400
 
     # 往前多抓 12 小時，只為了知道半夜 00:00 人在哪
     points = load_points(client, day_start - 12 * 3600, day_end)
@@ -571,12 +597,14 @@ def run_for_day(day=None):
         s["place"] = dup
         summary["stays"][dup["id"]] = summary["stays"].get(dup["id"], 0) + (s["end"] - s["start"])
 
-    names = {i: s["place"]["name"] for i, s in enumerate(summary["segments"]) if s["place"]}
+    names = {i: s["place"]["name"] for i, s in enumerate(summary["segments"])
+             if s["place"] and not s["place"].get("bad")}
     trip = itinerary(summary["segments"], names, day_start + 86400)
     visited = [pid for pid, sec in summary["stays"].items() if sec >= VISIT_MIN_MINUTES * 60]
 
     row = _find_daily(client, day)
     existing_rel = []
+    row_was_partial = False
     if row is None:
         props = {
             "日期標題": {"title": [{"text": {"content": f"{day.isoformat()}（{_WEEKDAYS[day.weekday()]}）"}}]},
@@ -589,11 +617,19 @@ def run_for_day(day=None):
         rp = row["properties"]
         existing_rel = [x["id"] for x in (rp.get("去過的地點", {}) or {}).get("relation", [])]
         old_trip = _text(rp, "行程")
-        overwrite = (not old_trip) or old_trip.startswith(MARK)
+        overwrite = (not old_trip) or old_trip.startswith("📡")
+        row_was_partial = old_trip.startswith(PARTIAL)
 
     norm = lambda x: x.replace("-", "")
     have = {norm(x) for x in existing_rel}
     new_links = [pid for pid in visited if norm(pid) not in have]
+    # 地點統計算哪些：「當天未完」那次連上的都還沒算過
+    if partial:
+        to_count = []
+    elif row_was_partial:
+        to_count = visited
+    else:
+        to_count = new_links
     update = {"去過的地點": {"relation": [{"id": x} for x in existing_rel + new_links]}}
     if overwrite:
         update.update({
@@ -601,13 +637,13 @@ def run_for_day(day=None):
             "在家時數": {"number": summary["home_h"]},
             "在公司時數": {"number": summary["work_h"]},
             "移動公里": {"number": summary["km"]},
-            "行程": {"rich_text": [{"text": {"content": (MARK + trip)[:2000]}}]},
+            "行程": {"rich_text": [{"text": {"content": ((PARTIAL if partial else MARK) + trip)[:2000]}}]},
         })
     client.pages.update(page_id=row["id"], properties=update)
 
-    # 地點統計只在「這天第一次連上」時累加，重跑同一天不會重複算
+    # 地點統計只在「這天第一次完整整理」時累加，重跑同一天不會重複算
     by_id = {pl["id"]: pl for pl in places + created}
-    for pid in new_links:
+    for pid in to_count:
         pl = by_id.get(pid)
         if not pl:
             continue
@@ -678,7 +714,10 @@ def purge_old(keep_days=KEEP_DAYS):
 def nightly():
     """排程入口：整理昨天 + 清舊點。各自吞例外，一段壞了不拖另一段。"""
     try:
-        run_for_day()
+        # 前天也重跑：昨晚若剛好在部署、排程沒跑到，今天補上（重跑安全）
+        today = now_tpe().date()
+        for back in (2, 1):
+            run_for_day(today - timedelta(days=back))
     except Exception as e:
         print(f"[owntracks] 每日整理失敗：{e}")
         try:

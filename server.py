@@ -554,7 +554,7 @@ async def line_webhook(
         if len(lines) > 1:
             parts = []
             for line in lines[:3]:
-                r = command_router.handle(line, ctx=ctx)
+                r = await asyncio.to_thread(command_router.handle, line, ctx=ctx)
                 if r is None:
                     continue
                 # response 可能是 str / dict / list；攤平成 list
@@ -567,7 +567,9 @@ async def line_webhook(
                 await reply_message(reply_token, parts)
             continue
 
-        response = command_router.handle(text, ctx=ctx)
+        # 丟執行緒：指令多半要查 Notion（「整理定位」要十幾秒），
+        # 在事件迴圈上直接跑會卡住同時間進來的 OwnTracks 定位與其他訊息
+        response = await asyncio.to_thread(command_router.handle, text, ctx=ctx)
         if response:
             print(f"LINE 指令命中：{text[:30]} → 回覆 {len(response)} 字")
             await reply_message(reply_token, response)
