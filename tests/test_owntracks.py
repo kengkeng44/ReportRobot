@@ -326,41 +326,14 @@ def test_rename_only_touches_auto_unnamed(monkeypatch):
 
 # ── Google Places ─────────────────────────────────────
 
-def test_google_name_with_district():
-    d = {"places": [{"displayName": {"text": "春水堂 公益店"},
-                     "formattedAddress": "403台灣臺中市西區公益路二段51號",
-                     "primaryType": "tea_house", "types": ["tea_house", "food"]}]}
-    assert owntracks.name_from_google(d) == ("春水堂 公益店（臺中市西區）", "咖啡廳")
 
 
-def test_google_category_mapping():
-    assert owntracks._google_category("ramen_restaurant", []) == "餐廳"
-    assert owntracks._google_category("convenience_store", []) == "購物"
-    assert owntracks._google_category(None, ["point_of_interest"]) == "其他"
 
 
-def test_google_empty_falls_back_to_osm(monkeypatch):
-    monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "k")
-    monkeypatch.setattr(owntracks, "_google_nearby", lambda lat, lon, key: (None, None))
-    monkeypatch.setattr(owntracks, "_osm_reverse", lambda lat, lon: ("臺中市西區公益路1號", "其他"))
-    assert owntracks.reverse_geocode(24.1, 120.6) == ("臺中市西區公益路1號", "其他")
 
 
-def test_google_error_falls_back_to_osm(monkeypatch):
-    monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "k")
-
-    def boom(lat, lon, key):
-        raise RuntimeError("403")
-    monkeypatch.setattr(owntracks, "_google_nearby", boom)
-    monkeypatch.setattr(owntracks, "_osm_reverse", lambda lat, lon: ("OSM", "其他"))
-    assert owntracks.reverse_geocode(24.1, 120.6) == ("OSM", "其他")
 
 
-def test_no_key_skips_google(monkeypatch):
-    monkeypatch.delenv("GOOGLE_PLACES_API_KEY", raising=False)
-    monkeypatch.setattr(owntracks, "_google_nearby", lambda *a: (_ for _ in ()).throw(AssertionError))
-    monkeypatch.setattr(owntracks, "_osm_reverse", lambda lat, lon: ("OSM", "其他"))
-    assert owntracks.reverse_geocode(24.1, 120.6)[0] == "OSM"
 
 
 # ── 風險修補 ─────────────────────────────────────────
@@ -397,15 +370,6 @@ def test_inaccurate_place_is_matched_but_ignored():
     assert "bad" not in s["stays"]
 
 
-def test_google_far_poi_becomes_nearby_label():
-    d = {"places": [{"displayName": {"text": "7-ELEVEN 公益門市"},
-                     "formattedAddress": "403台灣臺中市西區公益路100號",
-                     "primaryType": "convenience_store",
-                     "location": {"latitude": 24.1371, "longitude": 120.6951}}]}   # 約 45 公尺
-    name, cat = owntracks.name_from_google(d, 24.1367, 120.6951)
-    assert name == "7-ELEVEN 公益門市附近（臺中市西區）" and cat == "其他"
-    name, cat = owntracks.name_from_google(d, 24.1371, 120.6951)
-    assert name == "7-ELEVEN 公益門市（臺中市西區）" and cat == "購物"
 
 
 def test_busy_lock_returns_reason(monkeypatch):
@@ -423,3 +387,70 @@ def test_nightly_also_reruns_day_before(monkeypatch):
     monkeypatch.setattr(owntracks, "purge_old", lambda: 0)
     owntracks.nightly()
     assert len(days) == 2 and (days[1] - days[0]).days == 1
+
+
+
+# ── 地標附近／行政區命名（2026-10-25）────────────────
+
+def test_landmark_name_with_area(monkeypatch):
+    monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "k")
+    monkeypatch.setattr(owntracks, "_osm_area", lambda lat, lon: "臺中市西屯區")
+    monkeypatch.setattr(owntracks, "_google_landmark", lambda lat, lon, key: ("逢甲大學", "university"))
+    assert owntracks.reverse_geocode(24.18, 120.65) == ("逢甲大學附近（臺中市西屯區）", "其他")
+
+
+def test_park_landmark_is_leisure(monkeypatch):
+    monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "k")
+    monkeypatch.setattr(owntracks, "_osm_area", lambda lat, lon: "臺中市東區")
+    monkeypatch.setattr(owntracks, "_google_landmark", lambda lat, lon, key: ("湖濱公園", "park"))
+    assert owntracks.reverse_geocode(24.13, 120.69) == ("湖濱公園附近（臺中市東區）", "景點/玩樂")
+
+
+def test_no_landmark_uses_district(monkeypatch):
+    monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "k")
+    monkeypatch.setattr(owntracks, "_osm_area", lambda lat, lon: "臺中市東區")
+    monkeypatch.setattr(owntracks, "_google_landmark", lambda lat, lon, key: (None, None))
+    assert owntracks.reverse_geocode(24.13, 120.69) == ("臺中市東區", "其他")
+
+
+def test_google_error_still_gives_district(monkeypatch):
+    monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "k")
+    monkeypatch.setattr(owntracks, "_osm_area", lambda lat, lon: "臺中市東區")
+
+    def boom(*a):
+        raise RuntimeError("403")
+    monkeypatch.setattr(owntracks, "_google_landmark", boom)
+    assert owntracks.reverse_geocode(24.13, 120.69)[0] == "臺中市東區"
+
+
+def test_nothing_found_returns_none(monkeypatch):
+    monkeypatch.delenv("GOOGLE_PLACES_API_KEY", raising=False)
+    monkeypatch.setattr(owntracks, "_osm_area", lambda lat, lon: "")
+    assert owntracks.reverse_geocode(0, 0) == (None, None)
+
+
+def test_old_shop_names_get_renamed_but_manual_names_kept(monkeypatch):
+    monkeypatch.setattr(owntracks.time, "sleep", lambda s: None)
+    monkeypatch.setattr(owntracks, "reverse_geocode", lambda lat, lon: ("湖濱公園附近（臺中市東區）", "景點/玩樂"))
+    fake = _FakeNotion()
+    old_note = "📡 OwnTracks 2026-10-24 自動新增（名稱是地圖反查的，不對就改）"
+    places = [
+        {"id": "a", "name": "【信義房屋】湖濱公園店（臺中市東區）", "auto": True, "note": old_note, "category": "其他", "lat": 1, "lon": 1},
+        {"id": "b", "name": "湖濱公園", "auto": True, "note": "📡 手動改過", "category": "其他", "lat": 1, "lon": 1},
+        {"id": "c", "name": "湖濱公園附近（臺中市東區）", "auto": True, "note": "📡 OwnTracks（區域命名）", "category": "其他", "lat": 1, "lon": 1},
+    ]
+    owntracks.rename_unnamed(fake, places)
+    assert [pid for pid, _ in fake.updated] == ["a"]
+
+
+def test_same_area_name_reuses_existing_place(monkeypatch):
+    cafe = dict(lat=25.0600, lon=121.5300)
+    pts = [pt(at(0), HOME), pt(at(14), None, **cafe), pt(at(14, 40), None, **cafe), pt(at(16), HOME)]
+    fake = _FakeNotion()
+    day = _setup(monkeypatch, fake, pts)
+    existing = {"id": "near", "name": "臺北車站附近（臺北市中正區）", "lat": 25.07, "lon": 121.54,
+                "category": "其他", "visits": 2, "hours": 3, "first": "2026-10-01", "auto": True}
+    monkeypatch.setattr(owntracks, "load_places", lambda c: ([_place_row(HOME), existing], 64))
+    monkeypatch.setattr(owntracks, "reverse_geocode", lambda lat, lon: ("臺北車站附近（臺北市中正區）", "其他"))
+    r = owntracks.run_for_day(day)
+    assert r["new_places"] == 0 and "臺北車站附近（臺北市中正區）" in r["places"]

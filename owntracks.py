@@ -337,6 +337,7 @@ def load_places(client):
             "hours": _num(p, "總停留時數") or 0,
             "first": ((p.get("首次造訪", {}) or {}).get("date") or {}).get("start"),
             "auto": _text(p, "備註").startswith("📡"),
+            "note": _text(p, "備註"),
             # 勾了「不準」的地點仍拿來比對 —— 否則下次經過會被當成新地方再建一筆
             "bad": bool((p.get("不準", {}) or {}).get("checkbox")),
         })
@@ -398,88 +399,81 @@ def name_from_nominatim(d):
     return name[:80], cat
 
 
-# ── Google Places（有 GOOGLE_PLACES_API_KEY 才用；台灣小店比 OSM 齊很多）──
-# Places API (New) Nearby Search，依距離排序取最近一間。每月免費額度遠超過每天幾筆。
+# ── 地點命名：地標附近 / 行政區（2026-10-25 使用者定的）──────────────
+# 店家級名稱太不準（樓下的房仲、隔壁的蛋糕店），改成大一點的範圍：
+#   800 公尺內（約走路 10 分鐘）有知名地標 → 「逢甲大學附近（臺中市西屯區）」
+#   沒有 → 只寫行政區「臺中市東區」
+# 地標用 Google Places 依熱門度排第一的；區名用 OSM（Google 地址字串切區名不穩）。
+LANDMARK_RADIUS_M = 800
 _PLACES_URL = "https://places.googleapis.com/v1/places:searchNearby"
-_PLACES_RADIUS_M = 50
-_PLACES_EXACT_M = 30   # 超過這距離寫「XX附近」：住家樓下的超商不該變成你待了一晚的地方
-_AREA_RE = re.compile(r"([^\d\s]{2}[市縣])([^\d\s]{1,3}?[區鄉鎮市])")
+LANDMARK_TYPES = [
+    "train_station", "subway_station", "light_rail_station", "airport",
+    "university", "shopping_mall", "department_store", "tourist_attraction",
+    "park", "stadium", "museum", "zoo", "amusement_park", "night_club",
+    "hospital", "city_hall", "historical_landmark", "market",
+]
+_LEISURE_TYPES = {"park", "tourist_attraction", "museum", "zoo", "amusement_park",
+                  "stadium", "historical_landmark", "market"}
 
 
-def _google_category(primary, types):
-    allt = [primary or ""] + list(types or [])
-    for t in allt:
-        if t in ("cafe", "coffee_shop", "tea_house"):
-            return "咖啡廳"
-        if t.endswith("restaurant") or t in ("meal_takeaway", "bar", "bakery", "food_court", "fast_food_restaurant"):
-            return "餐廳"
-        if t in ("gym", "fitness_center", "stadium", "swimming_pool", "sports_complex") or t.startswith("sports_"):
-            return "運動"
-        if t in ("park", "tourist_attraction", "museum", "amusement_park", "zoo", "movie_theater",
-                 "hiking_area", "national_park", "aquarium", "art_gallery", "night_club"):
-            return "景點/玩樂"
-        if t in ("university", "school", "secondary_school", "primary_school"):
-            return "公司/學校"
-        if t.endswith("_store") or t in ("shopping_mall", "supermarket", "department_store", "market", "grocery_store"):
-            return "購物"
-    return "其他"
-
-
-def name_from_google(d, lat=None, lon=None):
-    """Places searchNearby 回傳 → (名稱, 類別)；沒有結果回 (None, None)。
-
-    最近那間離停留點超過 _PLACES_EXACT_M 就只當地標（「XX附近」、類別其他）。
-    """
-    places = (d or {}).get("places") or []
-    if not places:
-        return None, None
-    p = places[0]
-    name = ((p.get("displayName") or {}).get("text") or "").strip()
-    if not name:
-        return None, None
-    m = _AREA_RE.search(p.get("formattedAddress") or "")
-    area = (m.group(1) + m.group(2)) if m else ""
-    cat = _google_category(p.get("primaryType"), p.get("types"))
-    loc = p.get("location") or {}
-    if lat is not None and "latitude" in loc and "longitude" in loc:
-        if haversine_m(lat, lon, loc["latitude"], loc["longitude"]) > _PLACES_EXACT_M:
-            name, cat = f"{name}附近", "其他"
-    full = f"{name}（{area}）" if area else name
-    return full[:80], cat
-
-
-def _google_nearby(lat, lon, key):
+def _google_landmark(lat, lon, key):
+    """800 公尺內最熱門的地標 → (名稱, 類型)；沒有回 (None, None)。"""
     import requests
     r = requests.post(_PLACES_URL, json={
+        "includedTypes": LANDMARK_TYPES,
         "locationRestriction": {"circle": {"center": {"latitude": lat, "longitude": lon},
-                                           "radius": _PLACES_RADIUS_M}},
+                                           "radius": LANDMARK_RADIUS_M}},
         "maxResultCount": 1,
-        "rankPreference": "DISTANCE",
+        "rankPreference": "POPULARITY",
         "languageCode": "zh-TW",
     }, headers={
         "X-Goog-Api-Key": key,
-        # 只要這幾欄：欄位越少計費等級越低
-        "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.primaryType,places.types,places.location",
+        "X-Goog-FieldMask": "places.displayName,places.primaryType",
     }, timeout=8)
     r.raise_for_status()
-    return name_from_google(r.json(), lat, lon)
+    places = r.json().get("places") or []
+    if not places:
+        return None, None
+    name = ((places[0].get("displayName") or {}).get("text") or "").strip()
+    return (name or None), places[0].get("primaryType")
+
+
+def _osm_area(lat, lon):
+    """行政區（臺中市東區）；失敗回空字串。"""
+    try:
+        import requests
+        r = requests.get(_NOMINATIM, params={
+            "format": "jsonv2", "lat": f"{lat:.6f}", "lon": f"{lon:.6f}",
+            "zoom": 14, "addressdetails": 1, "accept-language": "zh-TW",
+        }, headers={"User-Agent": _UA}, timeout=8)
+        r.raise_for_status()
+        return _area((r.json() or {}).get("address") or {})
+    except Exception as e:
+        print(f"[owntracks] 查行政區失敗：{e}")
+        return ""
+
+
+def area_name(landmark, area):
+    if landmark and area:
+        return f"{landmark}附近（{area}）"
+    return f"{landmark}附近" if landmark else (area or None)
 
 
 def reverse_geocode(lat, lon):
-    """先問 Google（有金鑰的話），沒結果再問 OSM。
-
-    失敗一律回 (None, None) —— 名字抓不到就先叫「地點 #NNN」，下次整理再試。
-    """
+    """回 (名稱, 類別)。地標附近 > 行政區；都查不到回 (None, None)，下次整理再試。"""
+    area = _osm_area(lat, lon)
+    landmark, kind = None, None
     key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
     if key:
         try:
-            name, cat = _google_nearby(lat, lon, key)
-            if name:
-                return name, cat
+            landmark, kind = _google_landmark(lat, lon, key)
         except Exception as e:
-            # 金鑰放在 header 不在網址，requests 的錯誤訊息不會帶出來
-            print(f"[owntracks] Google 地點查詢失敗，改用 OSM：{e}")
-    return _osm_reverse(lat, lon)
+            # 金鑰放在 header 不在網址，錯誤訊息不會帶出來
+            print(f"[owntracks] Google 地標查詢失敗，只用行政區：{e}")
+    name = area_name(landmark, area)
+    if not name:
+        return None, None
+    return name, ("景點/玩樂" if kind in _LEISURE_TYPES else "其他")
 
 
 def _osm_reverse(lat, lon):
@@ -496,29 +490,42 @@ def _osm_reverse(lat, lon):
         return None, None
 
 
-def rename_unnamed(client, places, limit=5):
-    """之前反查失敗、還叫「地點 #NNN」的自動地點，再試一次。你自己改過名字的不會動。"""
+_NEW_NOTE = "區域命名"
+
+
+def _needs_rename(pl):
+    if pl.get("bad") or not pl.get("auto"):
+        return False
+    if re.fullmatch(r"地點 #\d+", pl["name"]):
+        return True
+    # 2026-10-25 前用店家名命名的（備註寫「地圖反查」）一律換成地標／行政區
+    note = pl.get("note") or ""
+    return ("地圖反查" in note or "改個名字" in note) and _NEW_NOTE not in note
+
+
+def rename_unnamed(client, places, limit=10):
+    """還叫「地點 #NNN」、或還是舊的店家級名稱的自動地點，重新命名。你自己改過名字的不會動。"""
     n = 0
     for pl in places:
         if n >= limit:
             break
-        if pl.get("bad") or not (pl.get("auto") and re.fullmatch(r"地點 #\d+", pl["name"])):
+        if not _needs_rename(pl):
             continue
         n += 1
         time.sleep(_GEOCODE_PACE)
         name, cat = reverse_geocode(pl["lat"], pl["lon"])
         if not name:
             continue
-        props = {"名稱": {"title": [{"text": {"content": name}}]}}
-        if pl.get("category") in ("", "其他") and cat:
+        props = {"名稱": {"title": [{"text": {"content": name}}]},
+                 "備註": {"rich_text": [{"text": {"content": f"📡 OwnTracks 自動新增（{_NEW_NOTE}）"}}]}}
+        if pl.get("category") in ("", "其他", "餐廳", "購物", "咖啡廳") and cat:
             props["類別"] = {"select": {"name": cat}}
             pl["category"] = cat
         client.pages.update(page_id=pl["id"], properties=props)
         pl["name"] = name
 
 
-def _create_place(client, number, lat, lon, day):
-    name, cat = reverse_geocode(lat, lon)
+def _create_place(client, number, lat, lon, day, name=None, cat=None):
     name, cat = name or f"地點 #{number:03d}", cat or "其他"
     page = client.pages.create(
         parent={"database_id": PLACES_DB_ID},
@@ -528,7 +535,7 @@ def _create_place(client, number, lat, lon, day):
             "緯度": {"number": round(lat, 6)},
             "經度": {"number": round(lon, 6)},
             "Google Maps": {"url": f"https://www.google.com/maps?q={lat:.6f},{lon:.6f}"},
-            "備註": {"rich_text": [{"text": {"content": f"📡 OwnTracks {day} 自動新增（名稱是地圖反查的，不對就改）"}}]},
+            "備註": {"rich_text": [{"text": {"content": f"📡 OwnTracks {day} 自動新增（{_NEW_NOTE}：{LANDMARK_RADIUS_M} 公尺內有地標寫「地標附近」，不然寫行政區）"}}]},
         },
     )
     return {"id": page["id"], "name": name, "lat": lat, "lon": lon, "auto": True,
@@ -590,8 +597,13 @@ def _run_for_day(day=None):
         dup = next((c for c in created
                     if haversine_m(stop["lat"], stop["lon"], c["lat"], c["lon"]) <= PLACE_RADIUS_M), None)
         if dup is None:
+            name, cat = reverse_geocode(stop["lat"], stop["lon"])
+            # 同一個地標附近／同一區已經有自動地點就併進去，不要一直長新的
+            dup = next((pl for pl in places + created
+                        if name and pl["name"] == name and not pl.get("bad")), None)
+        if dup is None:
             max_no += 1
-            dup = _create_place(client, max_no, stop["lat"], stop["lon"], day.isoformat())
+            dup = _create_place(client, max_no, stop["lat"], stop["lon"], day.isoformat(), name, cat)
             created.append(dup)
             time.sleep(_PACE)
         s["place"] = dup
