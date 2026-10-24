@@ -85,3 +85,16 @@ def test_schema_and_scheduler_wired():
 ])
 def test_second_batch(shop, items, bank, want):
     assert classify(shop, "", items, bank, "TW") == want
+
+
+@pytest.mark.parametrize("shop, items, bank, region, want", [
+    ("US TREAS TAX PYMT", "", "其他", "US", ("🛡️ 保險規費", "規費稅金")),
+    ("SPRINTAX NR TAX", "", "其他", "US", ("🛡️ 保險規費", "規費稅金")),
+    ("Trip.com", "", "旅遊", "GB", ("✈️ 旅遊", "機票住宿")),
+    ("諾貝爾書城－文心店", "", "一般購物", "TW", ("📚 學習", "書籍")),
+    ("一般購物", "自由搭配-小番茄,杏鮑菇,舒肥板腱牛", "一般購物", "TW", ("🍚 飲食", "正餐外食")),
+    ("一般購物", "寶拉珍選2水楊酸精華液30ml", "一般購物", "TW", ("👕 服飾美容", "美髮保養")),
+    ("誠品生活股份有限公司南西分公", "詮勝CHAKO LAB， 水壺.瓶器", "一般購物", "TW", ("🏠 居家", "日用品")),
+])
+def test_third_batch(shop, items, bank, region, want):
+    assert classify(shop, "", items, bank, region) == want
