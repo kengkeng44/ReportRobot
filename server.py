@@ -304,6 +304,20 @@ async def lifespan(app: FastAPI):
         misfire_grace_time=1800,      # 重啟補跑有 flag 擋著，不會推兩次
         replace_existing=True,
     )
+    # OwnTracks：00:20 把昨天的定位點整理進每日紀錄 + 封存 30 天前的原始點
+    def _run_owntracks_nightly():
+        import owntracks
+        owntracks.nightly()
+
+    scheduler.add_job(
+        _run_owntracks_nightly,
+        CronTrigger(hour=0, minute=20, timezone="Asia/Taipei"),
+        id="owntracks_nightly",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3 * 3600,  # 重跑同一天安全（地點統計只在第一次連上時累加）
+        replace_existing=True,
+    )
     scheduler.start()
     # 注入 scheduler 給 personal.py 用（提醒功能要排 one-shot job）
     import app_state
@@ -669,6 +683,36 @@ def couple_backfill(request: Request):
         raise HTTPException(status_code=403, detail="Forbidden")
     import couple_ledger
     return {"ok": True, "added": couple_ledger.backfill()}
+
+
+@app.post("/owntracks")
+async def owntracks_ingest(request: Request):
+    """iPhone OwnTracks（HTTP 模式）送定位進來。驗證走 HTTP Basic（OWNTRACKS_PASSWORD）。
+
+    寫 Notion 失敗回 500：OwnTracks 會把訊息留在手機佇列裡之後重送，不會掉點。
+    """
+    from fastapi.responses import JSONResponse
+    import owntracks
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = None
+    status, body = await asyncio.to_thread(
+        owntracks.handle_post, request.headers.get("Authorization"), payload)
+    return JSONResponse(status_code=status, content=body)
+
+
+@app.post("/admin/owntracks-summarize")
+def owntracks_summarize(request: Request, day: str = ""):
+    """手動整理某天的定位（?day=YYYY-MM-DD，預設昨天）。重跑安全。"""
+    admin_token = os.environ.get("ADMIN_TOKEN", "")
+    if not admin_token:
+        raise HTTPException(status_code=503, detail="Admin disabled")
+    if request.headers.get("X-Admin-Token") != admin_token:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    from datetime import date as _date
+    import owntracks
+    return owntracks.run_for_day(_date.fromisoformat(day) if day else None)
 
 
 @app.post("/admin/setup-richmenu")

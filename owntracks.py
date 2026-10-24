@@ -1,0 +1,490 @@
+"""OwnTracks 定位 → Notion 生活紀錄。
+
+兩段：
+1. 接收：iPhone 上的 OwnTracks（HTTP 模式）把定位 POST 到 /owntracks，
+   每一點寫一列進「定位」區塊的「定位點」DB。原始點只是中間產物，30 天後封存。
+2. 整理：每天 00:20 TPE 把昨天的點整理進「📔 生活紀錄」：
+   - 📅 每日紀錄：外出／在家／在公司時數、移動公里、行程、去過的地點
+   - 📍 地點：比對既有地點的座標；沒對到、但停留 ≥ 20 分鐘的地方新增「地點 #NNN」，
+     之後改成看得懂的名字，下次再去就會自動對上
+
+時數怎麼算：每一點代表「從這點到下一點之間都在這裡」。iPhone 預設的
+significant-change 模式靜止時不送點，所以在家睡一整晚只會有睡前一點、
+起床出門一點 —— 這樣算剛好是對的。第一點之前的時間算在第一點的地方。
+
+手動改過的每日紀錄不覆蓋：行程欄不是 📡 開頭（Google 時間軸匯入、或你自己
+更正過的）就只補「去過的地點」，數字跟行程都不動。
+
+設定（Infisical）：
+- OWNTRACKS_PASSWORD：OwnTracks App 裡 Authentication 填的密碼（帳號隨意）
+- LIFE_DAILY_DB_ID / LIFE_PLACES_DB_ID：可不設，預設就是現在那兩張表
+- 「📔 生活紀錄」那頁要在 Notion 連到 integration，否則讀不到每日紀錄／地點
+"""
+
+import base64
+import hmac
+import math
+import os
+import re
+import time
+from datetime import datetime, timedelta, timezone
+
+import notion_db
+from tz_utils import now_tpe
+
+_TPE = timezone(timedelta(hours=8))
+
+DAILY_DB_ID = os.environ.get("LIFE_DAILY_DB_ID", "d874622ec5bc4a92bbde839f8bc3f7c2")
+PLACES_DB_ID = os.environ.get("LIFE_PLACES_DB_ID", "fa6d0bdf350b4be6bc74c0c920b445ad")
+
+MARK = "📡 "               # 行程欄開頭有這個 = 程式寫的，可以覆蓋
+PLACE_RADIUS_M = 150       # 離既有地點多近算「在那裡」
+STOP_MIN_MINUTES = 20      # 沒對到地點、停多久才新增地點（這段至少要 2 個點）
+STOP_SINGLE_MIN_MINUTES = 60   # 只有 1 個點的段落要停更久才算：省電模式下路上
+                               # 也常常一點之後隔 30 分鐘才有下一點，那只是在移動
+VISIT_MIN_MINUTES = 10     # 待多久才算「去過」
+MAX_ACCURACY_M = 500       # 比這更不準的點直接丟掉
+KM_MAX_ACCURACY_M = 200    # 算距離只用夠準的點，否則原地飄移會累積成好幾公里
+KM_MAX_SPEED_KMH = 300     # 兩點之間換算速度超過這個 = 定位跳點，不算距離
+KEEP_DAYS = 30             # 原始點保留天數
+_PACE = 0.35               # Notion 限流 3 req/s
+
+_WEEKDAYS = "一二三四五六日"
+
+
+# ─────────────────────────────────────────────────────────
+# 1. 接收
+# ─────────────────────────────────────────────────────────
+
+def check_auth(authorization):
+    """驗 HTTP Basic 的密碼；帳號不看。沒設密碼 = 整支端點關閉。"""
+    expected = os.environ.get("OWNTRACKS_PASSWORD", "")
+    if not expected:
+        return False
+    if not authorization or not authorization.startswith("Basic "):
+        return False
+    try:
+        decoded = base64.b64decode(authorization[6:]).decode("utf-8")
+    except Exception:
+        return False
+    _, _, password = decoded.partition(":")
+    return hmac.compare_digest(password.encode(), expected.encode())
+
+
+def parse_location(payload):
+    """OwnTracks 的 JSON → 點 dict；不是定位訊息或欄位壞掉就回 None。
+
+    OwnTracks 還會送 transition / waypoint / lwt / status 等訊息，那些不用存。
+    """
+    if not isinstance(payload, dict) or payload.get("_type") != "location":
+        return None
+    try:
+        lat = float(payload["lat"])
+        lon = float(payload["lon"])
+        tst = int(payload["tst"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return None
+    acc = payload.get("acc")
+    vel = payload.get("vel")
+    return {
+        "lat": lat, "lon": lon, "tst": tst,
+        "acc": float(acc) if isinstance(acc, (int, float)) else None,
+        "vel": float(vel) if isinstance(vel, (int, float)) and vel >= 0 else None,
+        "tid": str(payload.get("tid") or "")[:8],
+    }
+
+
+def save_point(point):
+    """寫一列進定位點 DB。失敗就 raise —— 端點回 500，手機會留著重送。"""
+    client = notion_db._get_client()
+    db_id = notion_db.get_or_create_db("定位點")
+    if not client or not db_id:
+        raise RuntimeError("Notion 定位點 DB 不可用")
+    when = datetime.fromtimestamp(point["tst"], _TPE)
+    props = {
+        "點": {"title": [{"text": {"content": f"{point['tid'] or 'ot'}-{point['tst']}"}}]},
+        "時間": {"date": {"start": when.isoformat()}},
+        "緯度": {"number": point["lat"]},
+        "經度": {"number": point["lon"]},
+        "裝置": {"rich_text": [{"text": {"content": point["tid"]}}]},
+    }
+    if point["acc"] is not None:
+        props["精確度"] = {"number": point["acc"]}
+    if point["vel"] is not None:
+        props["速度"] = {"number": point["vel"]}
+    client.pages.create(parent={"database_id": db_id}, properties=props)
+
+
+def handle_post(authorization, payload):
+    """端點本體（server.py 只是轉接，因為 server.py 本機 import 不了）。
+
+    回 (HTTP 狀態碼, body)。OwnTracks 要求成功時回 JSON 陣列。
+    """
+    if not check_auth(authorization):
+        return 401, {"detail": "unauthorized"}
+    point = parse_location(payload)
+    if point is None:
+        return 200, []
+    try:
+        save_point(point)
+    except Exception as e:
+        print(f"[owntracks] 寫入失敗，回 500 讓手機重送：{e}")
+        return 500, {"detail": "store failed"}
+    return 200, []
+
+
+# ─────────────────────────────────────────────────────────
+# 2. 整理（純函式，好測）
+# ─────────────────────────────────────────────────────────
+
+def haversine_m(lat1, lon1, lat2, lon2):
+    r = 6371000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = p2 - p1
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def _nearest_place(pt, places):
+    best, best_d = None, None
+    for pl in places:
+        d = haversine_m(pt["lat"], pt["lon"], pl["lat"], pl["lon"])
+        if d <= PLACE_RADIUS_M and (best_d is None or d < best_d):
+            best, best_d = pl, d
+    return best
+
+
+def build_segments(points, places, day_start, day_end):
+    """把點切成連續的段落，回 list of dict：
+    {place（dict 或 None）, start, end（unix 秒，已裁到當天）, pts（這段的點）}
+
+    points：當天的點 + 前一天最後一點（決定半夜在哪），已依 tst 排序、去重。
+    """
+    pts = [p for p in points
+           if p["acc"] is None or p["acc"] <= MAX_ACCURACY_M]
+    if not pts:
+        return []
+
+    raw = []   # 先不裁切，每段 start = 第一點時間
+    for p in pts:
+        pl = _nearest_place(p, places)
+        last = raw[-1] if raw else None
+        if last is not None:
+            if pl is not None and last["place"] is pl:
+                last["pts"].append(p)
+                continue
+            if pl is None and last["place"] is None:
+                anchor = last["pts"][0]
+                if haversine_m(p["lat"], p["lon"], anchor["lat"], anchor["lon"]) <= PLACE_RADIUS_M:
+                    last["pts"].append(p)
+                    continue
+        raw.append({"place": pl, "start": p["tst"], "pts": [p]})
+
+    segs = []
+    for i, s in enumerate(raw):
+        end = raw[i + 1]["start"] if i + 1 < len(raw) else day_end
+        start = s["start"]
+        if i == 0:
+            start = min(start, day_start)    # 第一點之前算在這裡
+        start, end = max(start, day_start), min(end, day_end)
+        if end > start:
+            segs.append({"place": s["place"], "start": start, "end": end, "pts": s["pts"]})
+    return segs
+
+
+def moved_km(points, day_start, day_end):
+    good = [p for p in points
+            if day_start <= p["tst"] < day_end
+            and (p["acc"] is None or p["acc"] <= KM_MAX_ACCURACY_M)]
+    total = 0.0
+    for a, b in zip(good, good[1:]):
+        d = haversine_m(a["lat"], a["lon"], b["lat"], b["lon"])
+        dt = max(b["tst"] - a["tst"], 1)
+        if d / dt * 3.6 > KM_MAX_SPEED_KMH:
+            continue
+        total += d
+    return round(total / 1000, 1)
+
+
+def summarize(points, places, day_start, day_end):
+    """回當天摘要 dict。新地點（沒對到、停夠久）放在 new_stops，place 為 None。"""
+    segs = build_segments(points, places, day_start, day_end)
+    home = work = 0
+    stays = {}           # place id → 秒
+    new_stops = []       # 沒對到既有地點的久停：{lat, lon, start, end}
+    for s in segs:
+        dur = s["end"] - s["start"]
+        pl = s["place"]
+        if pl is not None:
+            if pl.get("category") == "家":
+                home += dur
+            elif pl.get("category") == "公司/學校":
+                work += dur
+            stays[pl["id"]] = stays.get(pl["id"], 0) + dur
+        elif dur >= (STOP_MIN_MINUTES if len(s["pts"]) >= 2 else STOP_SINGLE_MIN_MINUTES) * 60:
+            lat = sum(p["lat"] for p in s["pts"]) / len(s["pts"])
+            lon = sum(p["lon"] for p in s["pts"]) / len(s["pts"])
+            s["stop"] = {"lat": lat, "lon": lon}
+            new_stops.append(s)
+    covered = sum(s["end"] - s["start"] for s in segs)
+    return {
+        "segments": segs,
+        "home_h": round(home / 3600, 1),
+        "work_h": round(work / 3600, 1),
+        "out_h": round((covered - home) / 3600, 1),
+        "km": moved_km(points, day_start, day_end),
+        "stays": stays,
+        "new_stops": new_stops,
+    }
+
+
+def itinerary(segments, names, day_end):
+    """「08:10–09:02 家；09:30–18:40 公司」格式（跟 Google 時間軸匯入的一樣）。
+
+    names：segment index → 顯示名稱；沒名字的（路上）略過。相鄰同名合併。
+    """
+    items = []
+    for i, s in enumerate(segments):
+        name = names.get(i)
+        if not name or s["end"] - s["start"] < VISIT_MIN_MINUTES * 60:
+            continue
+        if items and items[-1][0] == name and s["start"] - items[-1][2] < 30 * 60:
+            items[-1][2] = s["end"]
+            continue
+        items.append([name, s["start"], s["end"]])
+
+    def hm(ts):
+        if ts >= day_end:
+            return "00:00"
+        return datetime.fromtimestamp(ts, _TPE).strftime("%H:%M")
+
+    return "；".join(f"{hm(a)}–{hm(b)} {n}" for n, a, b in items)
+
+
+# ─────────────────────────────────────────────────────────
+# 3. Notion 讀寫
+# ─────────────────────────────────────────────────────────
+
+def _title(props, name):
+    return "".join(t.get("plain_text", "") for t in (props.get(name, {}) or {}).get("title", []))
+
+
+def _text(props, name):
+    return "".join(t.get("plain_text", "") for t in (props.get(name, {}) or {}).get("rich_text", []))
+
+
+def _num(props, name):
+    return (props.get(name, {}) or {}).get("number")
+
+
+def load_points(client, start_ts, end_ts):
+    db_id = notion_db.get_or_create_db("定位點")
+    if not db_id:
+        return []
+    rows = notion_db._query_all(
+        db_id, client, 5000,
+        filter={"and": [
+            {"property": "時間", "date": {"on_or_after": datetime.fromtimestamp(start_ts, _TPE).isoformat()}},
+            {"property": "時間", "date": {"before": datetime.fromtimestamp(end_ts, _TPE).isoformat()}},
+        ]},
+        sorts=[{"property": "時間", "direction": "ascending"}],
+    )
+    seen, out = set(), []
+    for r in rows:
+        p = r["properties"]
+        when = ((p.get("時間", {}) or {}).get("date") or {}).get("start")
+        lat, lon = _num(p, "緯度"), _num(p, "經度")
+        if not when or lat is None or lon is None:
+            continue
+        tst = int(datetime.fromisoformat(when).timestamp())
+        if tst in seen:            # 手機重送會有同一點兩列
+            continue
+        seen.add(tst)
+        out.append({"lat": lat, "lon": lon, "tst": tst,
+                    "acc": _num(p, "精確度"), "vel": _num(p, "速度"), "tid": _text(p, "裝置")})
+    out.sort(key=lambda x: x["tst"])
+    return out
+
+
+def load_places(client):
+    rows = notion_db._query_all(PLACES_DB_ID, client, 2000)
+    places, max_no = [], 0
+    for r in rows:
+        p = r["properties"]
+        name = _title(p, "名稱")
+        m = re.fullmatch(r"地點 #(\d+)", name.strip())
+        if m:
+            max_no = max(max_no, int(m.group(1)))
+        if (p.get("不準", {}) or {}).get("checkbox"):
+            continue
+        lat, lon = _num(p, "緯度"), _num(p, "經度")
+        if lat is None or lon is None:
+            continue
+        places.append({
+            "id": r["id"], "name": name or "（沒有名稱）",
+            "lat": lat, "lon": lon,
+            "category": notion_db._read_select(p, "類別"),
+            "visits": _num(p, "造訪次數") or 0,
+            "hours": _num(p, "總停留時數") or 0,
+            "first": ((p.get("首次造訪", {}) or {}).get("date") or {}).get("start"),
+        })
+    return places, max_no
+
+
+def _create_place(client, number, lat, lon, day):
+    page = client.pages.create(
+        parent={"database_id": PLACES_DB_ID},
+        properties={
+            "名稱": {"title": [{"text": {"content": f"地點 #{number:03d}"}}]},
+            "類別": {"select": {"name": "其他"}},
+            "緯度": {"number": round(lat, 6)},
+            "經度": {"number": round(lon, 6)},
+            "Google Maps": {"url": f"https://www.google.com/maps?q={lat:.6f},{lon:.6f}"},
+            "備註": {"rich_text": [{"text": {"content": f"📡 OwnTracks {day} 自動新增，改個名字吧"}}]},
+        },
+    )
+    return {"id": page["id"], "name": f"地點 #{number:03d}", "lat": lat, "lon": lon,
+            "category": "其他", "visits": 0, "hours": 0, "first": None}
+
+
+def _find_daily(client, day):
+    res = client.databases.query(
+        database_id=DAILY_DB_ID,
+        filter={"property": "日期", "date": {"equals": day.isoformat()}},
+        page_size=5,
+    )
+    rows = res.get("results", [])
+    return rows[0] if rows else None
+
+
+def run_for_day(day=None):
+    """整理某一天（預設昨天，台北時間）。回摘要 dict 方便 admin 端點看。"""
+    client = notion_db._get_client()
+    if not client:
+        return {"ok": False, "reason": "Notion 未設定"}
+    day = day or (now_tpe().date() - timedelta(days=1))
+    day_start = int(datetime(day.year, day.month, day.day, tzinfo=_TPE).timestamp())
+    day_end = day_start + 86400
+    # 今天還沒過完就整理到現在，不要把未來算進去
+    day_end = min(day_end, int(time.time()))
+
+    # 往前多抓 12 小時，只為了知道半夜 00:00 人在哪
+    points = load_points(client, day_start - 12 * 3600, day_end)
+    in_day = [p for p in points if p["tst"] >= day_start]
+    if not in_day:
+        return {"ok": True, "day": day.isoformat(), "points": 0, "skipped": "當天沒有定位點"}
+    before = [p for p in points if p["tst"] < day_start][-1:]
+    points = before + in_day
+
+    places, max_no = load_places(client)
+    summary = summarize(points, places, day_start, day_end)
+
+    # 久停但沒對到地點 → 新增地點。同一天兩段停在同一個新地方只建一次。
+    created = []
+    for s in summary["new_stops"]:
+        stop = s["stop"]
+        dup = next((c for c in created
+                    if haversine_m(stop["lat"], stop["lon"], c["lat"], c["lon"]) <= PLACE_RADIUS_M), None)
+        if dup is None:
+            max_no += 1
+            dup = _create_place(client, max_no, stop["lat"], stop["lon"], day.isoformat())
+            created.append(dup)
+            time.sleep(_PACE)
+        s["place"] = dup
+        summary["stays"][dup["id"]] = summary["stays"].get(dup["id"], 0) + (s["end"] - s["start"])
+
+    names = {i: s["place"]["name"] for i, s in enumerate(summary["segments"]) if s["place"]}
+    trip = itinerary(summary["segments"], names, day_start + 86400)
+    visited = [pid for pid, sec in summary["stays"].items() if sec >= VISIT_MIN_MINUTES * 60]
+
+    row = _find_daily(client, day)
+    existing_rel = []
+    if row is None:
+        props = {
+            "日期標題": {"title": [{"text": {"content": f"{day.isoformat()}（{_WEEKDAYS[day.weekday()]}）"}}]},
+            "日期": {"date": {"start": day.isoformat()}},
+            "星期": {"select": {"name": _WEEKDAYS[day.weekday()]}},
+        }
+        row = client.pages.create(parent={"database_id": DAILY_DB_ID}, properties=props)
+        overwrite = True
+    else:
+        rp = row["properties"]
+        existing_rel = [x["id"] for x in (rp.get("去過的地點", {}) or {}).get("relation", [])]
+        old_trip = _text(rp, "行程")
+        overwrite = (not old_trip) or old_trip.startswith(MARK)
+
+    norm = lambda x: x.replace("-", "")
+    have = {norm(x) for x in existing_rel}
+    new_links = [pid for pid in visited if norm(pid) not in have]
+    update = {"去過的地點": {"relation": [{"id": x} for x in existing_rel + new_links]}}
+    if overwrite:
+        update.update({
+            "外出時數": {"number": summary["out_h"]},
+            "在家時數": {"number": summary["home_h"]},
+            "在公司時數": {"number": summary["work_h"]},
+            "移動公里": {"number": summary["km"]},
+            "行程": {"rich_text": [{"text": {"content": (MARK + trip)[:2000]}}]},
+        })
+    client.pages.update(page_id=row["id"], properties=update)
+
+    # 地點統計只在「這天第一次連上」時累加，重跑同一天不會重複算
+    by_id = {pl["id"]: pl for pl in places + created}
+    for pid in new_links:
+        pl = by_id.get(pid)
+        if not pl:
+            continue
+        time.sleep(_PACE)
+        props = {
+            "造訪次數": {"number": pl["visits"] + 1},
+            "總停留時數": {"number": round(pl["hours"] + summary["stays"][pid] / 3600, 1)},
+            "最近造訪": {"date": {"start": day.isoformat()}},
+        }
+        if not pl["first"]:
+            props["首次造訪"] = {"date": {"start": day.isoformat()}}
+        client.pages.update(page_id=pid, properties=props)
+
+    result = {
+        "ok": True, "day": day.isoformat(), "points": len(in_day),
+        "out_h": summary["out_h"], "home_h": summary["home_h"], "work_h": summary["work_h"],
+        "km": summary["km"], "visited": len(visited), "new_places": len(created),
+        "overwrote_numbers": overwrite,
+    }
+    print(f"[owntracks] 每日整理：{result}")
+    return result
+
+
+def purge_old(keep_days=KEEP_DAYS):
+    """封存超過 keep_days 的原始點。座標留太久沒用處，只是多一份隱私風險。"""
+    client = notion_db._get_client()
+    db_id = notion_db.get_or_create_db("定位點")
+    if not client or not db_id:
+        return 0
+    cutoff = (now_tpe() - timedelta(days=keep_days)).isoformat()
+    rows = notion_db._query_all(db_id, client, 2000,
+                                filter={"property": "時間", "date": {"before": cutoff}})
+    for r in rows:
+        client.pages.update(page_id=r["id"], archived=True)
+        time.sleep(_PACE)
+    if rows:
+        print(f"[owntracks] 封存 {len(rows)} 個舊定位點")
+    return len(rows)
+
+
+def nightly():
+    """排程入口：整理昨天 + 清舊點。各自吞例外，一段壞了不拖另一段。"""
+    try:
+        run_for_day()
+    except Exception as e:
+        print(f"[owntracks] 每日整理失敗：{e}")
+        try:
+            from admin_notify import notify_admin
+            notify_admin(e, context={"module": "owntracks", "function": "nightly"})
+        except Exception:
+            pass
+    try:
+        purge_old()
+    except Exception as e:
+        print(f"[owntracks] 清舊點失敗（非致命）：{e}")

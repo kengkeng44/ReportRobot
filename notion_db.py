@@ -55,6 +55,12 @@ _SECTIONS = {
         "icon": "💑",
         "dbs": ("共同帳本", "共同帳本紀錄", "記帳成員"),
     },
+    # OwnTracks 原始定位點。刻意不放進「生活紀錄」那頁：那頁會給女友看，
+    # 原始座標只是中間產物（每晚整理成每日紀錄後 30 天自動封存）。
+    "定位": {
+        "icon": "📡",
+        "dbs": ("定位點",),
+    },
 }
 
 _DB_SECTION = {db: sec for sec, cfg in _SECTIONS.items() for db in cfg["dbs"]}
@@ -388,6 +394,17 @@ _SCHEMAS = {
         "股票市值": {"number": {"format": "number"}},
         "信用卡未繳": {"number": {"format": "number"}},
         "淨值": {"number": {"format": "number"}},
+    },
+
+    # ── 定位（OwnTracks，見 owntracks.py）──────────────
+    "定位點": {
+        "點": {"title": {}},                                     # 裝置-時間戳，看得懂就好
+        "時間": {"date": {}},
+        "緯度": {"number": {"format": "number"}},
+        "經度": {"number": {"format": "number"}},
+        "精確度": {"number": {"format": "number"}},              # 公尺
+        "速度": {"number": {"format": "number"}},                # km/h，iPhone 常給 -1 或不給
+        "裝置": {"rich_text": {}},
     },
 
     # ── 煮飯模板 ────────────────────────────────────────
