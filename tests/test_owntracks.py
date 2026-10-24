@@ -322,3 +322,42 @@ def test_rename_only_touches_auto_unnamed(monkeypatch):
     owntracks.rename_unnamed(fake, places)
     assert [pid for pid, _ in fake.updated] == ["a"]
     assert places[0]["name"] == "新名字"
+
+
+# ── Google Places ─────────────────────────────────────
+
+def test_google_name_with_district():
+    d = {"places": [{"displayName": {"text": "春水堂 公益店"},
+                     "formattedAddress": "403台灣臺中市西區公益路二段51號",
+                     "primaryType": "tea_house", "types": ["tea_house", "food"]}]}
+    assert owntracks.name_from_google(d) == ("春水堂 公益店（臺中市西區）", "咖啡廳")
+
+
+def test_google_category_mapping():
+    assert owntracks._google_category("ramen_restaurant", []) == "餐廳"
+    assert owntracks._google_category("convenience_store", []) == "購物"
+    assert owntracks._google_category(None, ["point_of_interest"]) == "其他"
+
+
+def test_google_empty_falls_back_to_osm(monkeypatch):
+    monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "k")
+    monkeypatch.setattr(owntracks, "_google_nearby", lambda lat, lon, key: (None, None))
+    monkeypatch.setattr(owntracks, "_osm_reverse", lambda lat, lon: ("臺中市西區公益路1號", "其他"))
+    assert owntracks.reverse_geocode(24.1, 120.6) == ("臺中市西區公益路1號", "其他")
+
+
+def test_google_error_falls_back_to_osm(monkeypatch):
+    monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "k")
+
+    def boom(lat, lon, key):
+        raise RuntimeError("403")
+    monkeypatch.setattr(owntracks, "_google_nearby", boom)
+    monkeypatch.setattr(owntracks, "_osm_reverse", lambda lat, lon: ("OSM", "其他"))
+    assert owntracks.reverse_geocode(24.1, 120.6) == ("OSM", "其他")
+
+
+def test_no_key_skips_google(monkeypatch):
+    monkeypatch.delenv("GOOGLE_PLACES_API_KEY", raising=False)
+    monkeypatch.setattr(owntracks, "_google_nearby", lambda *a: (_ for _ in ()).throw(AssertionError))
+    monkeypatch.setattr(owntracks, "_osm_reverse", lambda lat, lon: ("OSM", "其他"))
+    assert owntracks.reverse_geocode(24.1, 120.6)[0] == "OSM"

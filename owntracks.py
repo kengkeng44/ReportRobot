@@ -393,8 +393,82 @@ def name_from_nominatim(d):
     return name[:80], cat
 
 
+# ── Google Places（有 GOOGLE_PLACES_API_KEY 才用；台灣小店比 OSM 齊很多）──
+# Places API (New) Nearby Search，依距離排序取最近一間。每月免費額度遠超過每天幾筆。
+_PLACES_URL = "https://places.googleapis.com/v1/places:searchNearby"
+_PLACES_RADIUS_M = 50
+_AREA_RE = re.compile(r"([^\d\s]{2}[市縣])([^\d\s]{1,3}?[區鄉鎮市])")
+
+
+def _google_category(primary, types):
+    allt = [primary or ""] + list(types or [])
+    for t in allt:
+        if t in ("cafe", "coffee_shop", "tea_house"):
+            return "咖啡廳"
+        if t.endswith("restaurant") or t in ("meal_takeaway", "bar", "bakery", "food_court", "fast_food_restaurant"):
+            return "餐廳"
+        if t in ("gym", "fitness_center", "stadium", "swimming_pool", "sports_complex") or t.startswith("sports_"):
+            return "運動"
+        if t in ("park", "tourist_attraction", "museum", "amusement_park", "zoo", "movie_theater",
+                 "hiking_area", "national_park", "aquarium", "art_gallery", "night_club"):
+            return "景點/玩樂"
+        if t in ("university", "school", "secondary_school", "primary_school"):
+            return "公司/學校"
+        if t.endswith("_store") or t in ("shopping_mall", "supermarket", "department_store", "market", "grocery_store"):
+            return "購物"
+    return "其他"
+
+
+def name_from_google(d):
+    """Places searchNearby 回傳 → (名稱, 類別)；沒有結果回 (None, None)。"""
+    places = (d or {}).get("places") or []
+    if not places:
+        return None, None
+    p = places[0]
+    name = ((p.get("displayName") or {}).get("text") or "").strip()
+    if not name:
+        return None, None
+    m = _AREA_RE.search(p.get("formattedAddress") or "")
+    area = (m.group(1) + m.group(2)) if m else ""
+    full = f"{name}（{area}）" if area else name
+    return full[:80], _google_category(p.get("primaryType"), p.get("types"))
+
+
+def _google_nearby(lat, lon, key):
+    import requests
+    r = requests.post(_PLACES_URL, json={
+        "locationRestriction": {"circle": {"center": {"latitude": lat, "longitude": lon},
+                                           "radius": _PLACES_RADIUS_M}},
+        "maxResultCount": 1,
+        "rankPreference": "DISTANCE",
+        "languageCode": "zh-TW",
+    }, headers={
+        "X-Goog-Api-Key": key,
+        # 只要這幾欄：欄位越少計費等級越低
+        "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.primaryType,places.types",
+    }, timeout=8)
+    r.raise_for_status()
+    return name_from_google(r.json())
+
+
 def reverse_geocode(lat, lon):
-    """失敗一律回 (None, None) —— 名字抓不到就先叫「地點 #NNN」，下次整理再試。"""
+    """先問 Google（有金鑰的話），沒結果再問 OSM。
+
+    失敗一律回 (None, None) —— 名字抓不到就先叫「地點 #NNN」，下次整理再試。
+    """
+    key = os.environ.get("GOOGLE_PLACES_API_KEY", "").strip()
+    if key:
+        try:
+            name, cat = _google_nearby(lat, lon, key)
+            if name:
+                return name, cat
+        except Exception as e:
+            # 金鑰放在 header 不在網址，requests 的錯誤訊息不會帶出來
+            print(f"[owntracks] Google 地點查詢失敗，改用 OSM：{e}")
+    return _osm_reverse(lat, lon)
+
+
+def _osm_reverse(lat, lon):
     try:
         import requests
         r = requests.get(_NOMINATIM, params={
@@ -440,7 +514,7 @@ def _create_place(client, number, lat, lon, day):
             "緯度": {"number": round(lat, 6)},
             "經度": {"number": round(lon, 6)},
             "Google Maps": {"url": f"https://www.google.com/maps?q={lat:.6f},{lon:.6f}"},
-            "備註": {"rich_text": [{"text": {"content": f"📡 OwnTracks {day} 自動新增（名稱來自 OpenStreetMap，不對就改）"}}]},
+            "備註": {"rich_text": [{"text": {"content": f"📡 OwnTracks {day} 自動新增（名稱是地圖反查的，不對就改）"}}]},
         },
     )
     return {"id": page["id"], "name": name, "lat": lat, "lon": lon, "auto": True,
