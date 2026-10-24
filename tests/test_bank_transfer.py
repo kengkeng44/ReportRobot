@@ -182,3 +182,28 @@ def test_webhook_routes_images_to_ocr():
     assert 'msg.get("type") == "image"' in src and "transfer_ocr.handle_line_image" in src
     assert "_is_admin(img_ctx)" in src            # 只有本人私訊的圖才處理
     assert 'id="transfer_backfill_boot"' in src
+
+
+def test_fingerprints_skip_source_options_not_yet_in_notion(monkeypatch):
+    """第一次部署時「📧 國泰轉帳」還不是 Notion 的選項，拿它篩會 400 → 整批放棄。"""
+    import notion_db
+    calls = []
+
+    class DB:
+        def retrieve(self, database_id):
+            return {"properties": {"來源": {"select": {"options": [{"name": "📧 富邦轉帳"}]}}}}
+
+        def query(self, **kw):
+            calls.append(kw["filter"])
+            return {"results": [{"properties": {"Fingerprint": {"rich_text": [{"plain_text": "fp1"}]}}}],
+                    "has_more": False}
+
+    class Client:
+        databases = DB()
+
+    monkeypatch.setattr(notion_db, "get_or_create_db", lambda n: "db")
+    monkeypatch.setattr(notion_db, "_get_client", lambda: Client())
+    got = notion_db.transactions_existing_fingerprints(source_names=["📧 富邦轉帳", "📧 國泰轉帳"])
+    assert got == {"fp1"}
+    assert calls[0] == {"or": [{"property": "來源", "select": {"equals": "📧 富邦轉帳"}}]}
+    assert notion_db.transactions_existing_fingerprints(source_names=["📸 截圖辨識"]) == set()

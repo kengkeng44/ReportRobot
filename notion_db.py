@@ -1607,6 +1607,19 @@ def transactions_existing_fingerprints(limit=400, source_names=None):
     if not db_id or not client:
         return set()
 
+    if source_names:
+        # 篩一個 Notion 上還不存在的 select 選項會直接 400（第一次部署時「📧 國泰轉帳」
+        # 還沒有任何一列用過）→ 整批被當成「讀不到指紋」放棄。只留已存在的選項；
+        # 一個都不存在 = 還沒有任何一列是這些來源，空集合就是正確答案。
+        props = _retrieve_props(db_id, "交易明細")
+        if props is None:
+            return None
+        existing = {o.get("name") for o in
+                    ((props.get("來源") or {}).get("select") or {}).get("options", [])}
+        source_names = [n for n in source_names if n in existing]
+        if not source_names:
+            return set()
+
     out = set()
     cursor = None
     try:
