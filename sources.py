@@ -32,10 +32,14 @@ _AUTO = {
     "國泰電子帳單": "📧 國泰帳單",
     "國泰繳款入帳": "📧 國泰繳款",
     "富邦轉帳": "📧 富邦轉帳",
+    "國泰轉帳": "📧 國泰轉帳",
+    "截圖辨識": "📸 截圖辨識",
     "PDF對帳單": "📄 PDF對帳單",
     "載具發票": "🧾 載具發票",
 }
 _AUTO_BACK = {v: k for k, v in _AUTO.items()}
+# 轉帳類（信件＋截圖）的顯示名稱：這幾種共用 bank_transfer.transfer_fingerprint 去重
+TRANSFER_DISPLAY = [_AUTO["富邦轉帳"], _AUTO["國泰轉帳"], _AUTO["截圖辨識"]]
 _MANUAL = {LINE_DM, LINE_GROUP, FORM, NOTION, LINE_OLD}
 
 # 共同帳本：舊值 → 顯示名稱

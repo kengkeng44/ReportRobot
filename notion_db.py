@@ -279,7 +279,8 @@ _SCHEMAS = {
             ("💬 LINE私訊", "green"), ("👥 LINE群組", "green"), ("📝 記帳表單", "purple"),
             ("✍️ Notion手打", "gray"), ("💬 LINE（舊）", "default"),
             ("📧 國泰通知信", "blue"), ("📧 國泰帳單", "blue"), ("📧 國泰繳款", "brown"),
-            ("📧 富邦轉帳", "orange"), ("📄 PDF對帳單", "gray"), ("🧾 載具發票", "yellow"),
+            ("📧 富邦轉帳", "orange"), ("📧 國泰轉帳", "orange"), ("📸 截圖辨識", "pink"),
+            ("📄 PDF對帳單", "gray"), ("🧾 載具發票", "yellow"),
         ),
         # 載具發票補進來的品項（「鮮奶 x2、雞胸肉…」），開頭 ❓ 代表比對不確定，
         # 要人看一下是不是同一筆（einvoice_ledger）
@@ -1591,8 +1592,12 @@ def pantry_load(status="在庫", limit=1000):
 # 交易明細：一筆交易 = 一個 page，靠 Fingerprint 去重
 # ─────────────────────────────────────────────────────────
 
-def transactions_existing_fingerprints(limit=400):
+def transactions_existing_fingerprints(limit=400, source_names=None):
     """撈近期已存在的指紋集合。
+
+    source_names：只撈這些「來源」顯示名稱的列。轉帳信一次補抓一年份，
+    只看最近 400 筆會漏掉舊的、每次開機重寫一遍 —— 那條路要帶來源、limit 開大。
+    用來源不用方向：你把房租那筆的方向改成支出，用方向篩就會漏掉、又被寫回來。
 
     一次撈起來在記憶體比對，而不是每筆交易各查一次 Notion ——
     一天幾十筆的話那是幾十次 API 往返，而且 Notion 有 3 req/s 限流。
@@ -1608,6 +1613,9 @@ def transactions_existing_fingerprints(limit=400):
         while len(out) < limit:
             kwargs = {"database_id": db_id, "page_size": 100,
                       "sorts": [{"property": "日期", "direction": "descending"}]}
+            if source_names:
+                kwargs["filter"] = {"or": [{"property": "來源", "select": {"equals": n}}
+                                           for n in source_names]}
             if cursor:
                 kwargs["start_cursor"] = cursor
             res = client.databases.query(**kwargs)

@@ -223,6 +223,23 @@ async def lifespan(app: FastAPI):
 
     from datetime import datetime, timedelta, timezone
     from apscheduler.triggers.date import DateTrigger
+    # 轉帳通知信一年份補抓：只跑轉帳那兩種信（不碰國泰刷卡，那條線的起點是 8/7，
+    # 往前撈會把 Notion 還沒有的舊刷卡寫進來）。每次開機都跑，有指紋擋著重跑安全
+    def _run_transfer_backfill():
+        try:
+            import finance_sync
+            stats = finance_sync.sync(lookback_days=400, sources=finance_sync.TRANSFER_SOURCES,
+                                      max_results=200)
+            print(f"[finance] 轉帳信補抓：{stats}")
+        except Exception as e:
+            print(f"[finance] 轉帳信補抓失敗（非致命）：{e}")
+
+    scheduler.add_job(
+        _run_transfer_backfill,
+        DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(minutes=4)),
+        id="transfer_backfill_boot",
+        replace_existing=True,
+    )
     scheduler.add_job(
         _run_sources_backfill,
         DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(minutes=2)),
@@ -526,6 +543,16 @@ async def line_webhook(
             print(f"[webhook] event={event_type} source={mask_source(source)}")
             continue
         msg = event.get("message", {}) or {}
+        # 本人私訊傳圖片 = 轉帳截圖（入帳／LINE 轉帳沒有 Email，只能截圖，見 transfer_ocr）
+        if msg.get("type") == "image" and reply_token:
+            img_ctx = {"source_type": source.get("type"), "user_id": source.get("userId")}
+            if command_router._is_admin(img_ctx) and msg.get("id"):
+                import transfer_ocr
+                print(f"[webhook] 轉帳截圖 source={mask_source(source)}")
+                response = await asyncio.to_thread(transfer_ocr.handle_line_image, msg["id"])
+                if response:
+                    await reply_message(reply_token, response)
+            continue
         if msg.get("type") != "text":
             continue
         text = msg.get("text", "")

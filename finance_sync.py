@@ -16,12 +16,17 @@ import os
 from datetime import date as _date
 
 import finance_report
-from parsers import cathay_daily
+import sources as _sources   # 參數 sources 會遮住模組名稱
+from parsers import bank_transfer, cathay_daily
 
 
 # (Gmail 查詢, parser 模組)。之後新增發信人只要往這裡加一列。
 SOURCES = [
     ('from:service@pxbillrc01.cathaybk.com.tw subject:"消費彙整通知"', cathay_daily),
+    # 轉給別人的錢（2026-10-24 加）：方向＝轉帳，不算花費；繳卡費、轉給自己會被 parser 跳過
+    # 富邦這個寄件人只寄行動銀行通知；不是轉帳成功的信 parser 會回空，不用靠主旨過濾
+    ('from:mbank@dfm.taipeifubon.com.tw', bank_transfer.fubon),
+    ('from:service@pxbillrc01.cathaybk.com.tw subject:"CUBE App轉帳通知"', bank_transfer.cathay_cube),
 ]
 
 DEFAULT_LOOKBACK_DAYS = 7
@@ -69,7 +74,10 @@ def fetch_messages(service, query, max_results=50):
     return out
 
 
-def sync(service=None, lookback_days=DEFAULT_LOOKBACK_DAYS, notion=None):
+TRANSFER_SOURCES = [s for s in SOURCES if s[1] in (bank_transfer.fubon, bank_transfer.cathay_cube)]
+
+
+def sync(service=None, lookback_days=DEFAULT_LOOKBACK_DAYS, notion=None, sources=None, max_results=50):
     """主流程。回統計 dict {parsed, written, skipped, sources}。
 
     lookback 預設 7 天而非 1 天：排程漏跑或 Railway 重啟時能自動補回來，
@@ -97,16 +105,19 @@ def sync(service=None, lookback_days=DEFAULT_LOOKBACK_DAYS, notion=None):
         print("[finance] 無法取得 Gmail service，跳過")
         return stats
 
-    seen = notion.transactions_existing_fingerprints()
+    if sources is not None and all(s in TRANSFER_SOURCES for s in sources):
+        seen = notion.transactions_existing_fingerprints(limit=20000, source_names=_sources.TRANSFER_DISPLAY)
+    else:
+        seen = notion.transactions_existing_fingerprints()
     if seen is None:
         # 讀不到既有指紋就不要寫 —— 寧可這次不同步，也不要製造一堆重複
         print("[finance] 讀不到既有指紋，本次放棄以免寫入重複")
         return stats
 
-    for query, parser in SOURCES:
+    for query, parser in (sources or SOURCES):
         stats["sources"] += 1
         full_query = f"{query} newer_than:{lookback_days}d"
-        for mid, html in fetch_messages(service, full_query):
+        for mid, html in fetch_messages(service, full_query, max_results=max_results):
             try:
                 txns = parser.parse(html)
             except Exception as e:
