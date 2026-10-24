@@ -74,3 +74,14 @@ def test_schema_and_scheduler_wired():
     assert "大類" in notion_db._SCHEMAS["交易明細"] and "細項" in notion_db._SCHEMAS["交易明細"]
     src = (Path(__file__).resolve().parent.parent / "server.py").read_text(encoding="utf-8")
     assert 'id="taxonomy_backfill_daily"' in src
+
+
+@pytest.mark.parametrize("shop, items, bank, want", [
+    ("ＣＯＵＰＡＮＧ", "Mobby 莫比 貓用化毛配方乾飼料 雞肉米 7.5kg", "一般購物", ("🏠 居家", "寵物")),
+    ("樂購蝦皮股份有限公司", "推測：Mercusys MB110-4G 4G 分享器（給貓", "家電∕３Ｃ通訊", ("🏠 居家", "寵物")),
+    ("可樂", "", "其他", ("🍚 飲食", "飲料咖啡")),
+    ("早餐 雙人", "", "餐飲", ("🍚 飲食", "早餐・超商")),
+    ("交通∕運輸", "", "其他", ("🚇 交通", "其他")),
+])
+def test_second_batch(shop, items, bank, want):
+    assert classify(shop, "", items, bank, "TW") == want
