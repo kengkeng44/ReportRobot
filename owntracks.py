@@ -299,7 +299,10 @@ def load_points(client, start_ts, end_ts):
         lat, lon = _num(p, "緯度"), _num(p, "經度")
         if not when or lat is None or lon is None:
             continue
-        tst = int(datetime.fromisoformat(when).timestamp())
+        # Notion 日期欄會把秒數截掉（實測 06:08:41 存成 06:08:00），
+        # 同一分鐘的點會撞在一起 —— 精確時間戳以標題「裝置-tst」為準
+        m = re.search(r"-(\d{9,})$", _title(p, "點"))
+        tst = int(m.group(1)) if m else int(datetime.fromisoformat(when).timestamp())
         if tst in seen:            # 手機重送會有同一點兩列
             continue
         seen.add(tst)

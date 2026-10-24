@@ -235,3 +235,20 @@ def test_new_place_numbered_after_existing(monkeypatch):
     assert r["new_places"] == 1
     names = [p["名稱"]["title"][0]["text"]["content"] for _, p in fake.created if "名稱" in p]
     assert names == ["地點 #065"]
+
+
+def test_load_points_uses_title_timestamp_not_minute_truncated_date(monkeypatch):
+    import notion_db
+
+    def row(title, lat):
+        return {"properties": {
+            "點": {"title": [{"plain_text": title}]},
+            "時間": {"date": {"start": "2026-10-24T06:08:00.000Z"}},   # Notion 截掉秒數
+            "緯度": {"number": lat}, "經度": {"number": 120.69},
+            "精確度": {"number": 8}, "速度": {"number": 0}, "裝置": {"rich_text": []},
+        }}
+    rows = [row("52-1792822117", 24.1), row("52-1792822117", 24.1), row("52-1792822121", 24.2)]
+    monkeypatch.setattr(notion_db, "get_or_create_db", lambda n: "db")
+    monkeypatch.setattr(notion_db, "_query_all", lambda *a, **k: rows)
+    pts = owntracks.load_points(None, 0, 2**31)
+    assert [p["tst"] for p in pts] == [1792822117, 1792822121]   # 重送的去重、同分鐘的不合併
