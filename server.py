@@ -120,8 +120,16 @@ def _today_flag_path():
     return os.path.join(_DAILY_FLAG_DIR, f"daily_report_{date.today():%Y%m%d}.flag")
 
 
+# 2026-10-25 使用者要求暫停：天氣、今日一則都靠 Claude API，API 掛了只會推出
+# 「天氣資料暫時無法取得」的空卡。找到原因後改回 False（或 env 設 0）就恢復。
+DAILY_REPORT_PAUSED = os.environ.get("DAILY_REPORT_PAUSED", "1") == "1"
+
+
 async def _idempotent_daily_report(force_premarket=False):
     """執行前檢查 today flag；已跑過則 skip。"""
+    if DAILY_REPORT_PAUSED:
+        print("[daily_report] 暫停中（DAILY_REPORT_PAUSED），今天不推")
+        return
     flag = _today_flag_path()
     if os.path.exists(flag):
         print(f"[daily_report] 冪等保護觸發，今日已執行（{flag}）")
