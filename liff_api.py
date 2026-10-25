@@ -113,7 +113,14 @@ def _clean(payload):
         return None
     total = int(total) if total == int(total) else round(total, 2)
     kind = "個人" if (payload or {}).get("kind") == "個人" else "共同"
-    return {"item": item, "total": total, "kind": kind}
+    # 其中幫對方付的金額（只有共同帳本用得到）：0 到整筆，超過就當整筆
+    try:
+        helped = float((payload or {}).get("helped") or 0)
+    except (TypeError, ValueError):
+        helped = 0
+    helped = min(max(helped, 0), total)
+    helped = int(helped) if helped == int(helped) else round(helped, 2)
+    return {"item": item, "total": total, "kind": kind, "helped": helped}
 
 
 def record(user_id, payload):
@@ -200,6 +207,7 @@ def get_entry(user_id, book, page_id):
         return 200, {"ok": True, "entry": {
             "id": row["page_id"], "item": row.get("item"), "total": row.get("total"),
             "kind": row.get("kind"), "date": row.get("date"),
+            "helped": row.get("helped") or 0,
             "payer_id": row.get("payer_id"), "payer": row.get("payer"),
             "recorder": row.get("recorder"), "source": row.get("source") or "",
             "deletable": True,

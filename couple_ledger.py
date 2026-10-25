@@ -179,6 +179,8 @@ def record(entry, user_id, group_id=None, source="LINE", payer_id=None):
         "item": entry["item"],
         "total": entry["total"],
         "kind": entry["kind"],
+        "helped": entry.get("helped") or 0,
+        "other": _other_name(payer_id) if entry.get("helped") else "",
         "payer": payer,
         "payer_id": payer_id,
         "recorder": recorder,
@@ -196,11 +198,38 @@ def record(entry, user_id, group_id=None, source="LINE", payer_id=None):
     return True, row
 
 
+def _other_name(payer_id):
+    """付款人以外的那位記帳成員叫什麼。查不到寫「對方」—— 確認訊息兩個人都看得到，寫名字比「對方」清楚。"""
+    try:
+        import couple_members
+        names = [m["name"] for m in couple_members.for_form() if m["id"] != payer_id]
+    except Exception:
+        names = []
+    return names[0] if len(names) == 1 else "對方"
+
+
+def owed_to_payer(row):
+    """這筆另一個人要還付款人多少：幫對方付的全額 + 共同部分的一半。"""
+    total = row.get("total") or 0
+    helped = min(max(row.get("helped") or 0, 0), total)
+    rest = total - helped
+    return helped + (rest / 2 if row.get("kind") != "個人" else 0)
+
+
 def confirm_text(row):
     who = row.get("payer") or "你"
     by = ""
     if row.get("recorder_id") and row.get("recorder_id") != row.get("payer_id"):
         by = f"，{row.get('recorder') or '別人'}記"
+    helped = row.get("helped") or 0
+    if helped:
+        owe = owed_to_payer(row)
+        other = row.get("other") or "對方"
+        if helped >= row["total"]:
+            how = f"全部幫{other}付"
+        else:
+            how = f"其中幫{other}付 NT${_fmt(helped)}，剩下{'平分' if row['kind'] != '個人' else '是' + who + '的'}"
+        return f"✅ {row['item']} NT${row['total']:,}（{who}付・{how}，{other}要還{who} NT${_fmt(owe)}{by}）"
     if row["kind"] == "個人":
         return f"✅ {row['item']} NT${row['total']:,}（{who} 個人，不列入結算{by}）"
     return f"✅ {row['item']} NT${row['total']:,}（共同・{who}付{by}）"
@@ -209,8 +238,10 @@ def confirm_text(row):
 def describe(row):
     """一筆帳的一行摘要，紀錄與訊息共用。"""
     who = row.get("payer") or "?"
+    helped = row.get("helped") or 0
+    extra = f"・其中幫對方付 {_fmt(helped)}" if helped else ""
     return (f"{(row.get('date') or '')[5:]} {row.get('item')} "
-            f"NT${_fmt(row.get('total') or 0)} {row.get('kind') or '共同'}・{who}付")
+            f"NT${_fmt(row.get('total') or 0)} {row.get('kind') or '共同'}・{who}付{extra}")
 
 
 # ── 編輯 / 刪除 / 異動紀錄 ───────────────────────────────
@@ -234,14 +265,14 @@ def _log(action, actor_id, actor, row, detail):
 
 
 _FIELD_LABELS = (("item", "品項"), ("total", "金額"), ("date", "日期"),
-                 ("kind", "類型"), ("payer", "付款人"))
+                 ("kind", "類型"), ("payer", "付款人"), ("helped", "幫對方付"))
 
 
 def _diff(old, new):
     parts = []
     for key, label in _FIELD_LABELS:
         a, b = old.get(key), new.get(key)
-        if key == "total":
+        if key in ("total", "helped"):
             a, b = _fmt(a or 0), _fmt(b or 0)
         if a != b:
             parts.append(f"{label} {a or '（空）'}→{b or '（空）'}")
@@ -263,6 +294,8 @@ def update_entry(page_id, changes, actor_id, actor=None):
     for k in ("item", "total", "kind", "date"):
         if changes.get(k) not in (None, ""):
             new[k] = changes[k]
+    if changes.get("helped") is not None:
+        new["helped"] = changes["helped"]
     if changes.get("payer_id") and changes["payer_id"] != old.get("payer_id"):
         new["payer_id"] = changes["payer_id"]
         new["payer"] = _name(changes["payer_id"])
@@ -270,7 +303,7 @@ def update_entry(page_id, changes, actor_id, actor=None):
     if not diff:
         return True, "沒有變動。"
 
-    fields = {k: new[k] for k in ("item", "total", "kind", "date", "payer", "payer_id")
+    fields = {k: new[k] for k in ("item", "total", "kind", "date", "payer", "payer_id", "helped")
               if new.get(k) != old.get(k)}
     if "item" in fields:
         fields["category"] = finance_report.guess_category(new["item"])
@@ -581,52 +614,67 @@ def review_postback(page_id, choice):
 def settle_text(rows, label):
     """這段期間誰該給誰多少。rows 是 couple_load 的輸出。
 
-    共同的每筆兩人各負擔一半，所以 A 的淨額 = A 付的 − 共同總額 / 2。
-    正的是多付了、該收錢；負的是該給錢。只有一個人付過錢時另一個人
-    的名字無從得知，寫「對方」。
+    每筆另一個人欠付款人 owed_to_payer(r)：幫對方付的全額 + 共同部分的一半。
+    兩個人的話互相抵銷；只有一個人付過錢時另一個人的名字無從得知，寫「對方」。
     """
-    shared = [r for r in rows if r.get("kind") != "個人" and r.get("total")]
-    personal = [r for r in rows if r.get("kind") == "個人" and r.get("total")]
-    if not shared and not personal:
+    rows = [r for r in rows if r.get("total")]
+    if not rows:
         return f"💑 {label}還沒有記帳。"
 
-    names, paid = {}, {}
-    for r in shared + personal:
-        pid = r.get("payer_id") or r.get("payer") or "?"
+    def pid_of(r):
+        return r.get("payer_id") or r.get("payer") or "?"
+
+    names = {}
+    for r in rows:
         if r.get("payer"):
-            names.setdefault(pid, r["payer"])
-    for r in shared:
-        pid = r.get("payer_id") or r.get("payer") or "?"
-        paid[pid] = paid.get(pid, 0) + r["total"]
+            names.setdefault(pid_of(r), r["payer"])
 
-    total = sum(r["total"] for r in shared)
-    lines = [f"💑 {label}共同支出 NT${_fmt(total)}（{len(shared)} 筆）"]
-    for pid, amt in sorted(paid.items(), key=lambda kv: -kv[1]):
-        lines.append(f"・{names.get(pid, '對方')} 付了 NT${_fmt(amt)}")
+    def helped(r):
+        return min(max(r.get("helped") or 0, 0), r["total"])
 
-    half = total / 2
-    if len(paid) == 1:
-        (pid, amt), = paid.items()
-        owe = amt - half
-        if owe >= 1:
-            lines.append(f"→ 對方要給 {names.get(pid, '付款的人')} NT${_fmt(owe)}")
-    elif len(paid) == 2:
-        (a, pa), (b, pb) = sorted(paid.items(), key=lambda kv: -kv[1])
-        owe = pa - half
-        if owe >= 1:
-            lines.append(f"→ {names.get(b, '對方')} 要給 {names.get(a, '對方')} "
-                         f"NT${_fmt(owe)}")
+    shared = [r for r in rows if r.get("kind") != "個人" and r["total"] - helped(r) > 0]
+    paid, helps, own, owed = {}, {}, {}, {}
+    for r in rows:
+        pid = pid_of(r)
+        owed[pid] = owed.get(pid, 0) + owed_to_payer(r)
+        rest = r["total"] - helped(r)
+        if r.get("kind") != "個人":
+            paid[pid] = paid.get(pid, 0) + rest
+        elif rest > 0:
+            own[pid] = own.get(pid, 0) + rest
+        if helped(r):
+            helps[pid] = helps.get(pid, 0) + helped(r)
+
+    lines = []
+    if shared:
+        total = sum(r["total"] - helped(r) for r in shared)
+        lines.append(f"💑 {label}共同支出 NT${_fmt(total)}（{len(shared)} 筆）")
+        for pid, amt in sorted(paid.items(), key=lambda kv: -kv[1]):
+            if amt:
+                lines.append(f"・{names.get(pid, '對方')} 付了 NT${_fmt(amt)}")
+    else:
+        lines.append(f"💑 {label}沒有共同支出")
+    for pid, amt in sorted(helps.items(), key=lambda kv: -kv[1]):
+        other = next((names[p] for p in names if p != pid), "對方")
+        lines.append(f"・{names.get(pid, '對方')} 幫 {other} 付了 NT${_fmt(amt)}")
+
+    payers = [p for p, v in owed.items() if v or p in paid]
+    if len(payers) == 1:
+        pid = payers[0]
+        if owed[pid] >= 1:
+            lines.append(f"→ 對方要給 {names.get(pid, '付款的人')} NT${_fmt(owed[pid])}")
+    elif len(payers) == 2:
+        (a, oa), (b, ob) = sorted(((p, owed[p]) for p in payers), key=lambda kv: -kv[1])
+        diff = oa - ob
+        if diff >= 1:
+            lines.append(f"→ {names.get(b, '對方')} 要給 {names.get(a, '對方')} NT${_fmt(diff)}")
         else:
             lines.append("→ 剛好打平 👍")
-    elif paid:
+    elif payers:
         lines.append("（付款人超過兩位，請到 Notion 看明細）")
 
-    if personal:
-        per = {}
-        for r in personal:
-            pid = r.get("payer_id") or r.get("payer") or "?"
-            per[pid] = per.get(pid, 0) + r["total"]
-        parts = [f"{names.get(p, '對方')} NT${_fmt(v)}" for p, v in per.items()]
+    if own:
+        parts = [f"{names.get(p, '對方')} NT${_fmt(v)}" for p, v in own.items()]
         lines.append("")
         lines.append("個人（不列入結算）：" + "、".join(parts))
     return "\n".join(lines)

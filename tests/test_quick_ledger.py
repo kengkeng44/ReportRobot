@@ -820,3 +820,39 @@ def test_backfill_personal_box_only_unticked_personal(env, monkeypatch):
     import time
     monkeypatch.setattr(time, "sleep", lambda s: None)
     assert cl.backfill_personal_box() == 1 and boxed == ["c1"]
+
+
+def test_settle_helped_part():
+    """付款人一筆裡幫對方付的部分，對方要全額還；剩下照類型（共同平分、個人不算）。"""
+    rows = [
+        # 家豪付 1000：其中 300 幫小美付，剩下 700 平分 → 小美欠 300 + 350
+        {"kind": "共同", "total": 1000, "helped": 300, "payer": "家豪", "payer_id": ADMIN},
+        # 小美付 450，全部幫家豪付 → 家豪欠 450
+        {"kind": "個人", "total": 450, "helped": 450, "payer": "小美", "payer_id": GF},
+        # 小美付 500：其中 100 幫家豪付，剩下是她自己的 → 家豪欠 100
+        {"kind": "個人", "total": 500, "helped": 100, "payer": "小美", "payer_id": GF},
+    ]
+    assert [cl.owed_to_payer(r) for r in rows] == [650, 450, 100]
+    text = cl.settle_text(rows, "10 月")
+    assert "共同支出 NT$700（1 筆）" in text
+    assert "家豪 幫 小美 付了 NT$300" in text
+    assert "小美 幫 家豪 付了 NT$550" in text
+    assert "小美 要給 家豪 NT$100" in text            # 650 − 550
+    assert "個人（不列入結算）：小美 NT$400" in text
+
+
+def test_settle_only_helped_single_payer():
+    rows = [{"kind": "個人", "total": 300, "helped": 300, "payer": "家豪", "payer_id": ADMIN}]
+    text = cl.settle_text(rows, "10 月")
+    assert "沒有共同支出" in text
+    assert "對方要給 家豪 NT$300" in text
+
+
+def test_confirm_text_helped():
+    row = {"item": "藥局", "total": 1000, "kind": "共同", "helped": 300, "payer": "家豪",
+           "payer_id": ADMIN, "recorder_id": ADMIN}
+    assert "其中幫對方付 NT$300，剩下平分，對方要還家豪 NT$650" in cl.confirm_text(row)
+    named = dict(row, other="小美")
+    assert "家豪付・其中幫小美付 NT$300，剩下平分，小美要還家豪 NT$650" in cl.confirm_text(named)
+    full = dict(named, total=450, helped=450, kind="個人")
+    assert "全部幫小美付，小美要還家豪 NT$450" in cl.confirm_text(full)

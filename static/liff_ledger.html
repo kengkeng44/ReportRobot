@@ -112,6 +112,19 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   border-top: 1px dashed var(--rule); padding-top: 8px; }
 .history b { color: var(--ink); font-weight: 600; }
 body.editing .presets, body.editing #presetLabel, body.editing .books button { display: none; }
+/* 怎麼分（只有共同帳本）：四個選項，選「自訂」才多一行 */
+.ways { display: flex; flex-direction: column; gap: 8px; }
+.ways .chips { margin: 0; padding: 0; }
+.ways .chips button { padding: 6px 12px; font-size: 14px; }
+.custom { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; color: var(--ink-soft); }
+.custom .helped { min-width: 84px; padding: 5px 12px; border-radius: 999px; background: var(--key);
+  font: 600 18px var(--font-display); font-variant-numeric: tabular-nums; color: var(--ink); text-align: right;
+  border: 2px solid transparent; }
+.custom .helped.on { border-color: var(--accent); }
+.custom .split button { padding: 4px 11px; font-size: 13px; }
+.owe { font-size: 14px; color: var(--ink); }
+.owe b { color: var(--accent); font-variant-numeric: tabular-nums; }
+.amount.target-off { opacity: .45; }
 .toast { font-size: 14px; }
 .toast:empty { display: none; }
 .toast.err { color: var(--cinnabar); }
@@ -145,6 +158,21 @@ body.editing .presets, body.editing #presetLabel, body.editing .books button { d
   <input type="date" id="date" aria-label="日期">
 </div>
 
+<div class="ways hidden" id="ways">
+  <div class="label">怎麼分</div>
+  <div class="chips" id="wayBtns"></div>
+  <div class="custom hidden" id="custom">
+    <span id="helpLabel">其中幫對方付了</span>
+    <button class="helped" id="helped" type="button">0</button>
+    <span id="restNote"></span>
+    <div class="split" id="restSplit">
+      <button data-rest="共同" aria-pressed="true">平分</button>
+      <button data-rest="個人" aria-pressed="false" id="restOwn">付的人自己的</button>
+    </div>
+  </div>
+  <div class="owe" id="owe"></div>
+</div>
+
 <div class="editbar hidden" id="editbar">
   <span id="editInfo"></span>
   <a href="#" id="cancelEdit">改記新的一筆</a>
@@ -173,7 +201,9 @@ body.editing .presets, body.editing #presetLabel, body.editing .books button { d
 const LIFF_ID = "__LIFF_ID__";
 const $ = (id) => document.getElementById(id);
 const state = { mode: "couple", kind: "共同", amount: "", data: null, busy: false,
-                payer: null, edit: null };
+                payer: null, edit: null,
+                // 共同帳本的分法：even 平分 / own 付的人自己的 / other 全部幫對方付 / custom 自訂
+                way: "even", helped: "", rest: "共同", target: "amount" };
 
 function today() {
   const d = new Date(Date.now() + 8 * 3600 * 1000);   // 台北時間
@@ -226,6 +256,72 @@ function setMode(mode) {
   setKind(mode === "couple" ? "共同" : "個人");
   renderSuggestions();
   renderPayers();
+  setWay("even");
+}
+
+function payerMember() { return members().find((m) => m.id === state.payer); }
+function otherMember() { return members().find((m) => m.id !== state.payer); }
+function nameOf(m) { return !m ? "對方" : (m.id === state.data.me ? "我" : m.name); }
+
+// 分法 → 送出的 kind / helped
+function split() {
+  const total = Number(state.amount) || 0;
+  if (state.way === "own") return { kind: "個人", helped: 0 };
+  if (state.way === "other") return { kind: "個人", helped: total };
+  if (state.way === "custom") return { kind: state.rest, helped: Math.min(Number(state.helped) || 0, total) };
+  return { kind: "共同", helped: 0 };
+}
+
+function setWay(way) {
+  const on = state.mode === "couple" && members().length > 1;
+  $("ways").classList.toggle("hidden", !on);
+  $("split").classList.toggle("hidden", on);
+  if (!on) { state.way = "even"; state.target = "amount"; return renderWays(); }
+  state.way = way;
+  if (way !== "custom") state.target = "amount";
+  else if (!state.helped) state.target = "helped";
+  renderWays();
+}
+
+function renderWays() {
+  $("amount").parentElement.classList.toggle("target-off", state.target === "helped");
+  $("helped").classList.toggle("on", state.target === "helped");
+  if ($("ways").classList.contains("hidden")) return;
+  const P = nameOf(payerMember()), O = nameOf(otherMember());
+  const opts = [["even", "平分"], ["own", P === "我" ? "都是我的" : `都是${P}的`],
+                ["other", O === "我" ? `都是我的（${P}幫我付）` : `都是${O}的（幫${O}付）`], ["custom", "自訂"]];
+  const box = $("wayBtns");
+  box.innerHTML = "";
+  for (const [k, label] of opts) {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.setAttribute("aria-pressed", state.way === k);
+    b.onclick = () => setWay(k);
+    box.appendChild(b);
+  }
+  $("custom").classList.toggle("hidden", state.way !== "custom");
+  // 主詞跟著看的人換：我付的寫「其中幫小螢付了」，對方付的寫「其中仁和幫我付了」
+  const Ps = P === "我" ? "" : P;
+  $("helpLabel").textContent = `其中${Ps}幫${O}付了`;
+  $("helped").textContent = state.helped ? fmt(state.helped) : "0";
+  $("restOwn").textContent = P === "我" ? "是我的" : `是${P}的`;
+  for (const b of $("restSplit").children) b.setAttribute("aria-pressed", b.dataset.rest === state.rest);
+  const total = Number(state.amount) || 0;
+  const { kind, helped } = split();
+  $("restNote").textContent = `剩下 ${fmt(Math.max(total - helped, 0))}`;
+  setKind(kind);
+  $("splitNote").textContent = { even: "兩人平分", own: `${P === "我" ? "我" : P}自己的，不列入結算`,
+    other: `${Ps}全部幫${O}付`, custom: `其中${Ps}幫${O}付 ${fmt(helped)}` }[state.way];
+  // 預覽：另一個人要還付款人多少（同 couple_ledger.owed_to_payer）
+  const owe = helped + (kind === "共同" ? (total - helped) / 2 : 0);
+  const oweBox = $("owe");
+  oweBox.textContent = "";
+  if (!total) return;
+  if (owe < 1) { oweBox.textContent = "→ 不列入結算"; return; }
+  const who = O === "我" ? `我要還 ${P}` : (P === "我" ? `${O} 要還我` : `${O} 要還 ${P}`);
+  const b = document.createElement("b");
+  b.textContent = "NT$" + fmt(Math.round(owe * 100) / 100);
+  oweBox.append("→ " + who + " ", b);
 }
 
 function members() { return (state.data && state.data.members) || []; }
@@ -244,7 +340,7 @@ function renderPayers() {
     const b = document.createElement("button");
     b.textContent = m.id === state.data.me ? m.name + "（我）" : m.name;
     b.setAttribute("aria-pressed", m.id === state.payer);
-    b.onclick = () => { state.payer = m.id; renderPayers(); };
+    b.onclick = () => { state.payer = m.id; renderPayers(); renderWays(); };
     box.appendChild(b);
   }
 }
@@ -253,6 +349,12 @@ function setAmount(v) {
   state.amount = v.replace(/^0+(?=\d)/, "").slice(0, 7);
   $("amount").textContent = state.amount ? fmt(state.amount) : "0";
   refreshGo();
+  renderWays();
+}
+
+function setHelped(v) {
+  state.helped = v.replace(/^0+(?=\d)/, "").slice(0, 7);
+  renderWays();
 }
 
 function refreshGo() {
@@ -325,11 +427,13 @@ async function submit(entry) {
     toast(r.message);
     // 在聊天室裡開的就留一句話在聊天室，對方也看得到記了什麼。
     // 結尾刻意是括號：bot 的「午餐 120」解析要求數字或分攤結尾，這句不會被再記一次。
-    const tag = entry.kind === "個人" ? "個人" : "共同";
+    const tag = entry.helped && entry.helped >= entry.amount ? "幫付"
+              : entry.kind === "個人" ? "個人" : "共同";
     const payer = members().find((m) => m.id === entry.payer_id);
     const by = payer && entry.payer_id !== state.data.me ? `・${payer.name}付` : "";
-    tell(`📝 ${entry.item} NT$${fmt(entry.amount)}・${tag}${by}`);
-    $("item").value = ""; setAmount(""); renderAmounts();
+    const part = entry.helped && entry.helped < entry.amount ? `・其中幫付 ${fmt(entry.helped)}` : "";
+    tell(`📝 ${entry.item} NT$${fmt(entry.amount)}・${tag}${by}${part}`);
+    $("item").value = ""; state.helped = ""; setAmount(""); setWay("even"); renderAmounts();
   } catch (e) {
     toast(e.message, true);
   } finally {
@@ -405,6 +509,12 @@ async function loadEdit(book, id) {
   $("date").value = e.date || today();
   state.payer = e.payer_id || state.data.me;
   renderPayers(); renderAmounts();
+  if (book === "couple") {
+    const h = Number(e.helped) || 0, t = Number(e.total) || 0;
+    state.helped = h ? String(h) : "";
+    state.rest = e.kind === "個人" ? "個人" : "共同";
+    setWay(!h ? (e.kind === "個人" ? "own" : "even") : (h >= t ? "other" : "custom"));
+  }
   const who = book === "couple" && e.recorder ? `記錄人：${e.recorder}` : "";
   const src = e.source ? `・${e.source}` : "";
   $("editInfo").textContent = (who || "編輯中") + src;
@@ -423,6 +533,7 @@ function exitEdit() {
   $("go").textContent = "記下";
   $("item").value = ""; setAmount(""); $("date").value = today();
   state.payer = state.data.me;
+  state.helped = ""; state.rest = "共同";
   setMode(state.mode);
 }
 
@@ -437,10 +548,18 @@ function wire() {
   $("pad").onclick = (e) => {
     if (e.target.tagName !== "BUTTON") return;
     const k = e.target.textContent;
+    // 自訂時數字鍵打的是「幫對方付」那格；點上面的金額切回來
+    if (state.target === "helped") return setHelped(k === "⌫" ? state.helped.slice(0, -1) : state.helped + k);
     setAmount(k === "⌫" ? state.amount.slice(0, -1) : state.amount + k);
   };
+  $("helped").onclick = () => { state.target = "helped"; renderWays(); };
+  $("amount").parentElement.onclick = () => { state.target = "amount"; renderWays(); };
+  $("restSplit").onclick = (e) => { const r = e.target.dataset.rest; if (r) { state.rest = r; renderWays(); } };
   $("item").oninput = () => { renderAmounts(); refreshGo(); };
-  $("go").onclick = () => submit({ item: $("item").value.trim(), amount: Number(state.amount), kind: state.kind });
+  $("go").onclick = () => {
+    const base = { item: $("item").value.trim(), amount: Number(state.amount), kind: state.kind };
+    submit(state.mode === "couple" && !$("ways").classList.contains("hidden") ? Object.assign(base, split()) : base);
+  };
 }
 
 async function main() {

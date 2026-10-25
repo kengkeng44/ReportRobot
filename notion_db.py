@@ -344,6 +344,9 @@ _SCHEMAS = {
         # 勾了 = 這筆其實是個人的，排程每 5 分鐘處理（couple_ledger.sync_checked）：
         # 從交易明細同步來的 → 那邊改回個人、這筆拿掉；群組/表單記的 → 類型改個人
         "算個人": {"checkbox": {}},
+        # 這筆裡面全額算對方的部分（幫對方付）。剩下的照「類型」：共同就平分、個人就是付款人自己的。
+        # 空白 = 0，舊資料不受影響
+        "幫對方付": {"number": {"format": "number"}},
     },
     # 共同帳本的異動紀錄：誰在什麼時候新增 / 改 / 刪了哪一筆。
     # 另開一張而不是在帳目上加欄位：刪掉的那筆進了垃圾桶，紀錄還要看得到。
@@ -1742,6 +1745,7 @@ def couple_add(entry):
         "記錄人": _text(entry["recorder"]) if entry.get("recorder") else None,
         "記錄人ID": _text(entry["recorder_id"]) if entry.get("recorder_id") else None,
         "算個人": {"checkbox": True} if entry.get("kind") == "個人" else None,
+        "幫對方付": _prop_number(entry["helped"]) if entry.get("helped") else None,
     }
     props = {k: v for k, v in props.items() if v is not None}
     try:
@@ -1761,6 +1765,7 @@ def _couple_row(page):
         "date": (_read_date(props, "日期") or "")[:10],
         "item": _read_title(props, "摘要"),
         "total": _read_number(props, "金額"),
+        "helped": _read_number(props, "幫對方付") or 0,
         "kind": _read_select(props, "類型") or "共同",
         "personal_box": bool((props.get("算個人") or {}).get("checkbox")),
         "payer": payer,
@@ -1819,6 +1824,7 @@ _COUPLE_FIELDS = {
     "kind": ("類型", lambda v: _prop_select(v)),
     "payer": ("付款人", _rich),
     "payer_id": ("付款人ID", _rich),
+    "helped": ("幫對方付", lambda v: _prop_number(v or 0)),
     "category": ("類別", lambda v: _prop_select(normalize_spend_category(v)) if v else None),
 }
 
