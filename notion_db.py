@@ -2427,6 +2427,75 @@ def transaction_set_shared_box(page_id, checked=True):
         return False
 
 
+# 「共同記帳 → 小螢交易明細」：女友的載具發票帳。不在 _SCHEMAS 裡 —— 表是在
+# Notion 匯入建的，程式只讀她勾的「算共同／算個人」、寫回分攤類型，不負責建表。
+# ID 不是機密（沒有 token 打不開），環境變數只是留給換表時用。
+PARTNER_TXN_DB_ID = os.environ.get("PARTNER_TXN_DB_ID", "ce55917a941d4f7db32989cd71607eac")
+
+
+def _partner_txn_row(r):
+    props = r.get("properties", {}) or {}
+    date_obj = (props.get("日期", {}) or {}).get("date") or {}
+    return {
+        "page_id": r.get("id"),
+        "date": (date_obj.get("start") or "")[:10],
+        "item": _read_title(props, "摘要"),
+        "amount": _read_number(props, "金額"),
+        "category": _read_select(props, "類別"),
+        "direction": _read_select(props, "方向") or "支出",
+        "split_raw": _read_select(props, "分攤類型"),
+        "shared_box": bool((props.get("算共同") or {}).get("checkbox")),
+        "personal_box": bool((props.get("算個人") or {}).get("checkbox")),
+        # 同日同額也出現在我的交易明細：多半是我刷卡、發票進她載具，
+        # 那筆由我這邊的交易明細負責進共同帳本，她這筆不能再記一次
+        "maybe_dup": bool((props.get("可能跟仁和重複") or {}).get("checkbox")),
+    }
+
+
+def partner_txns_pending(limit=50):
+    """小螢交易明細裡勾了「算共同」或「算個人」、但分攤類型還沒對上的。
+
+    跟 transactions_checked_pending 同一個道理：處理完分攤類型就對上了，
+    下一輪不會再撈到。Notion 掛掉丟例外，讓呼叫端印 log。
+    個人、共同分兩次查：合成一個篩選會變三層巢狀，Notion 只收兩層。
+    """
+    client = _get_client()
+    if not client or not PARTNER_TXN_DB_ID:
+        return []
+    out, seen = [], set()
+    for box, value in (("算個人", "個人"), ("算共同", "共同")):
+        res = client.databases.query(
+            database_id=PARTNER_TXN_DB_ID, page_size=min(limit, 100),
+            filter={"and": [
+                {"property": box, "checkbox": {"equals": True}},
+                {"or": [
+                    {"property": "分攤類型", "select": {"is_empty": True}},
+                    {"property": "分攤類型", "select": {"does_not_equal": value}},
+                ]},
+            ]})
+        for r in res.get("results", []):
+            if r.get("id") not in seen:      # 兩格都勾的會兩邊都撈到
+                seen.add(r.get("id"))
+                out.append(_partner_txn_row(r))
+    return out
+
+
+def partner_txn_set_split(page_id, split_type):
+    """改小螢那筆的分攤類型，兩個勾勾跟著對齊。金額不動 —— 她的表一律存整筆。"""
+    client = _get_client()
+    if not client or not page_id:
+        return False
+    try:
+        client.pages.update(page_id=page_id, properties={
+            "分攤類型": _prop_select(split_type),
+            "算共同": {"checkbox": split_type == "共同"},
+            "算個人": {"checkbox": split_type == "個人"}})
+        return True
+    except Exception as e:
+        print(f"[notion] partner_txn_set_split 失敗：{e}")
+        return False
+
+
 def transactions_load(limit=200, since=None, until=None):
     """撈交易明細（新到舊）。回 list of dict，欄位名對齊 finance_report。
 

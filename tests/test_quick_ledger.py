@@ -47,6 +47,7 @@ def env(monkeypatch):
     monkeypatch.setattr(notion_db, "couple_log_load", lambda **kw: list(reversed(LOGS)))
     monkeypatch.setattr(notion_db, "transactions_personal_pending", lambda **kw: [])
     monkeypatch.setattr(notion_db, "couple_personal_pending", lambda **kw: [])
+    monkeypatch.setattr(notion_db, "partner_txns_pending", lambda **kw: [])
 
 
 def _group(user=ADMIN, gid=GROUP):
@@ -856,3 +857,78 @@ def test_confirm_text_helped():
     assert "家豪付・其中幫小美付 NT$300，剩下平分，小美要還家豪 NT$650" in cl.confirm_text(named)
     full = dict(named, total=450, helped=450, kind="個人")
     assert "全部幫小美付，小美要還家豪 NT$450" in cl.confirm_text(full)
+
+
+# ── 小螢交易明細：她在 Notion 勾的 ───────────────────────
+
+def _gf_txn(**kw):
+    t = {"page_id": "g1", "date": "2026-10-20", "item": "全聯實業板橋板新分公司",
+         "amount": 413, "category": "超市∕量販", "direction": "支出", "split_raw": None,
+         "shared_box": True, "personal_box": False, "maybe_dup": False}
+    t.update(kw)
+    return t
+
+
+@pytest.fixture
+def gf_env(env, monkeypatch):
+    st = {"splits": [], "couple": {}, "deleted": []}
+    monkeypatch.setattr(notion_db, "transactions_checked_pending", lambda: [])
+    monkeypatch.setattr(notion_db, "partner_txn_set_split",
+                        lambda pid, s: st["splits"].append((pid, s)) or True)
+    monkeypatch.setattr(notion_db, "couple_has_source", lambda sid: sid in st["couple"])
+    monkeypatch.setattr(notion_db, "couple_add",
+                        lambda r: st["couple"].setdefault(r["source_id"], r) and "c1")
+    monkeypatch.setattr(notion_db, "couple_find_by_source",
+                        lambda sid: "c1" if sid in st["couple"] else None)
+    monkeypatch.setattr(cl, "delete_entry", lambda pid, actor, **kw: st["deleted"].append(pid))
+    return st
+
+
+def test_partner_shared_box_mirrors_with_her_as_payer(gf_env, monkeypatch):
+    monkeypatch.setattr(notion_db, "partner_txns_pending", lambda: [_gf_txn()])
+    assert cl.sync_checked() == 1
+    row = gf_env["couple"]["g1"]
+    assert row["payer_id"] == GF and row["payer"] == "小美"
+    assert row["total"] == 413 and row["kind"] == "共同"     # 她的表存整筆，不砍半
+    assert gf_env["splits"] == [("g1", "共同")]
+    cl.sync_checked()                                          # 重跑不會多記
+    assert len(gf_env["couple"]) == 1
+
+
+def test_partner_maybe_dup_marks_but_skips_ledger(gf_env, monkeypatch):
+    # 同日同額在我的交易明細也有 → 那筆由我這邊進帳本，她這筆只標共同
+    monkeypatch.setattr(notion_db, "partner_txns_pending", lambda: [_gf_txn(maybe_dup=True)])
+    assert cl.sync_checked() == 1
+    assert gf_env["couple"] == {} and gf_env["splits"] == [("g1", "共同")]
+
+
+def test_partner_personal_box_removes_mirror(gf_env, monkeypatch):
+    gf_env["couple"]["g1"] = {"source_id": "g1"}
+    monkeypatch.setattr(notion_db, "partner_txns_pending",
+                        lambda: [_gf_txn(split_raw="共同", personal_box=True)])
+    assert cl.sync_checked() == 1
+    assert gf_env["splits"] == [("g1", "個人")] and gf_env["deleted"] == ["c1"]
+
+
+def test_partner_unknown_payer_leaves_row_for_retry(gf_env, monkeypatch):
+    # 名單只有主人一位：猜不出付款人，寧可不動也不要記錯人
+    monkeypatch.setattr(notion_db, "members_load", lambda: [
+        {"page_id": "m1", "user_id": ADMIN, "name": "家豪", "role": "管理員"}])
+    monkeypatch.setattr(notion_db, "partner_txns_pending", lambda: [_gf_txn()])
+    assert cl.sync_checked() == 0
+    assert gf_env["couple"] == {} and gf_env["splits"] == []
+
+
+def test_partner_ledger_write_failure_keeps_row_pending(gf_env, monkeypatch):
+    monkeypatch.setattr(notion_db, "couple_add", lambda r: None)
+    monkeypatch.setattr(notion_db, "partner_txns_pending", lambda: [_gf_txn()])
+    assert cl.sync_checked() == 0
+    assert gf_env["splits"] == []                              # 沒標共同 → 下一輪再試
+
+
+def test_partner_sync_error_does_not_break_my_sync(env, monkeypatch):
+    def boom():
+        raise RuntimeError("no access")
+    monkeypatch.setattr(notion_db, "partner_txns_pending", boom)
+    monkeypatch.setattr(notion_db, "transactions_checked_pending", lambda: [])
+    assert cl.sync_checked() == 0

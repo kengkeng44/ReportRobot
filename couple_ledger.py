@@ -481,6 +481,98 @@ def sync_checked():
             continue
         if mark_shared(t):
             n += 1
+    # 小螢那張表另外包一層：她的表權限或欄位出問題，不能拖垮我這邊的同步
+    try:
+        n += sync_partner_checked()
+    except Exception as e:
+        print(f"[couple] 小螢交易明細同步失敗（非致命）：{e}")
+    return n
+
+
+# ── 小螢交易明細：她在 Notion 勾的 ─────────────────────────
+
+def _partner():
+    """記帳成員裡不是主人的那一位 —— 小螢交易明細的錢是她付的。
+
+    剛好一位才回；零位（名單還沒長出來）或多位（不知道是誰）都回 None，
+    讓那幾筆留著下一輪再試，不要猜錯付款人 —— 猜錯結算就整個反過來。
+    """
+    import couple_members
+
+    owner = couple_members.owner_id()
+    others = [m for m in couple_members.load() if m.get("user_id") and m["user_id"] != owner]
+    return others[0] if len(others) == 1 else None
+
+
+def mirror_partner_txn(t, partner):
+    """小螢交易明細的一筆記進共同帳本，付款人是她。回 True 表示這次有寫入。
+
+    她的表存整筆，直接當原始總額。去重用她那筆的頁面 ID（她的表沒有 Fingerprint）。
+    """
+    import finance_report
+    import line_sender
+    import notion_db
+
+    pid = t.get("page_id")
+    if not pid or not t.get("amount") or notion_db.couple_has_source(pid):
+        return False
+    total = t["amount"]
+    item = (t.get("item") or t.get("category") or "消費").strip()
+    row = {
+        "date": t.get("date") or "",
+        "item": item,
+        "total": int(total) if float(total) == int(total) else total,
+        "kind": "共同",
+        "payer": partner.get("name") or line_sender.group_member_name(
+            couple_group_id(), partner["user_id"]) or "",
+        "payer_id": partner["user_id"],
+        "category": finance_report.guess_category(item),
+        "source": "自動同步",
+        "source_id": pid,
+    }
+    page_id = notion_db.couple_add(row)
+    if not page_id:
+        return False
+    row["page_id"] = page_id
+    if _CACHE["rows"] is not None:
+        _CACHE["rows"] = [row] + list(_CACHE["rows"])
+    return True
+
+
+def sync_partner_checked():
+    """小螢在她的交易明細勾「算共同／算個人」→ 對齊分攤類型，共同的記進共同帳本。
+
+    跟我這邊同一套規則：兩格都勾以個人為準；改成個人時把共同帳本那筆拿掉。
+    「可能跟仁和重複」的只標共同、不記帳本 —— 那筆錢我的交易明細已經有了。
+    先記帳本、再改分攤類型：中途失敗下一輪還撈得到，couple_has_source 擋重複。
+    """
+    import notion_db
+
+    n, partner = 0, None
+    for t in notion_db.partner_txns_pending():
+        pid = t.get("page_id")
+        if not pid:
+            continue
+        if t.get("personal_box"):
+            if not notion_db.partner_txn_set_split(pid, "個人"):
+                continue
+            mirror = notion_db.couple_find_by_source(pid)
+            if mirror:
+                delete_entry(mirror, os.environ.get("ADMIN_LINE_USER_ID", ""))
+            n += 1
+            continue
+        if t.get("direction") == "收入":
+            continue
+        if not t.get("maybe_dup"):
+            partner = partner or _partner()
+            if not partner:
+                print("[couple] 找不到小螢的 LINE ID（記帳成員要剛好一位非主人），下一輪再試")
+                return n
+            # 寫入失敗就先不標共同，留著下一輪重試；標了就再也撈不到、會漏記
+            if not (notion_db.couple_has_source(pid) or mirror_partner_txn(t, partner)):
+                continue
+        if notion_db.partner_txn_set_split(pid, "共同"):
+            n += 1
     return n
 
 
