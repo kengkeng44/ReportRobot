@@ -340,6 +340,31 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # 每週一去重：同一張發票掛在刷卡列和載具列 → 併進刷卡、刪載具列；
+    # 拿不準的只列出來推給管理員，不動資料
+    def _run_ledger_dedup():
+        try:
+            import einvoice_ledger
+            report = einvoice_ledger.dedup()
+            print(f"[dedup] {report or '沒有重複'}")
+            from admin_notify import _admin_user_id
+            admin_id = _admin_user_id()
+            if report and admin_id:
+                from line_sender import push_to_user_sync
+                push_to_user_sync(admin_id, report)
+        except Exception as e:
+            print(f"[dedup] 每週去重失敗（非致命）：{e}")
+
+    scheduler.add_job(
+        _run_ledger_dedup,
+        CronTrigger(day_of_week="mon", hour=9, minute=30, timezone="Asia/Taipei"),
+        id="ledger_dedup_weekly",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
+        replace_existing=True,
+    )
+
     scheduler.add_job(
         _run_couple_rescan,
         CronTrigger(hour=15, minute=50, timezone="Asia/Taipei"),

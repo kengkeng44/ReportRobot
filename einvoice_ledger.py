@@ -33,6 +33,7 @@ NEW_ROWS_FROM = date(2026, 9, 1)
 SOURCE = "載具發票"
 UNSURE = "❓"
 _DAY_SLACK = 1
+_SMALL_DIFF = 5
 
 # 公司登記名跟刷卡店名對不起來的連鎖店：發票上的關鍵字 → 刷卡可能出現的寫法
 _ALIASES = {
@@ -74,6 +75,16 @@ def _norm(text):
     return re.sub(r"[\s\-－_()（）·・.,，]", "", s)
 
 
+def _brand_part(seller):
+    """公司登記名去掉「股份有限公司」之後的分公司／門市段。"""
+    s = _wide(seller)
+    for cut in ("股份有限公司", "有限公司"):
+        if cut in s:
+            head = s.split(cut)[0]
+            return head or s
+    return s
+
+
 def same_brand(seller, shop):
     """發票賣方跟刷卡店名是不是同一家。寧可說「不確定」也不要亂配。"""
     if not seller or not shop:
@@ -82,7 +93,9 @@ def same_brand(seller, shop):
     for key, names in _ALIASES.items():
         if key in seller and any(n in up_shop for n in names):
             return True
-    a, b = _norm(seller), _norm(shop)
+    # 只比品牌，不比分店：「遠東百貨…板橋新站分公司」跟「全家便利商店－板橋廣榮店」
+    # 都有「板橋」，2026-10-27 就這樣被配成同一家
+    a, b = _norm(_brand_part(seller)), _norm(_wide(shop).split("－")[0])
     if not a or not b:
         return False
     # 共用任何兩個連續字就算同一家（全聯福利中心 / 全聯實業 → 「全聯」）
@@ -193,15 +206,21 @@ def tier(inv, t):
 
     0 金額 + 日期 + 店家全對          → 直接算是
     1 金額一樣、同一天（店名對不上）  → 也算是（2026-10-12 使用者決定）
+      店家一樣、金額只差 ≤ 5 元且 ≤ 3% → 也算是（刷卡常比發票多購物袋這類零頭，
+                                        2026-10-27 四筆 ❓ 全是差 2～5 元）
     2 金額一樣、差一天                → ❓
     3 店家一樣、金額不同              → ❓
     """
     if _gap(inv, t) > _DAY_SLACK:
         return None
-    same_amount = _total(t) == _amount(inv)
+    total = _total(t)
+    same_amount = total == _amount(inv)
     brand = same_brand(inv.get("seller"), t.get("shop"))
     if same_amount and brand:
         return 0
+    diff = abs(total - _amount(inv)) if total is not None else None
+    if brand and diff is not None and diff <= _SMALL_DIFF and diff <= _amount(inv) * 0.03:
+        return 1
     if same_amount:
         return 1 if _gap(inv, t) == 0 else 2
     if brand:
@@ -386,3 +405,59 @@ def sync(invoices, notion=None):
     if not invoices:
         return summary([])
     return apply(plan(invoices, load_txns(invoices, notion)), notion)
+
+
+# ── 每週去重 ────────────────────────────────────────────
+
+def find_duplicates(txns):
+    """同一張發票掛在兩列以上 → (可自動合併, 要人看)。
+
+    可自動合併：一列是刷卡／手打、其他都是「🧾 載具發票」自己新增的列 ——
+    發票先新增了現金列，之後刷卡那筆又掛上同一張發票，同一筆錢記了兩次。
+    要人看：兩列都不是載具新增的（可能一張發票被掛錯地方），或全是載具列。
+    """
+    groups = {}
+    for t in txns:
+        num = (t.get("invoice_no") or "").strip()
+        if num and t.get("page_id"):
+            groups.setdefault(num, []).append(t)
+    auto, manual = [], []
+    for num, rows in groups.items():
+        if len(rows) < 2:
+            continue
+        own = [r for r in rows if r.get("source") == SOURCE]
+        others = [r for r in rows if r.get("source") != SOURCE]
+        if len(others) == 1 and own:
+            auto.append((num, others[0], own))
+        else:
+            manual.append((num, rows))
+    return auto, manual
+
+
+def dedup(notion=None, dry_run=False):
+    """刪掉跟刷卡重複的載具列（明細、發票資料先併進刷卡那列）。回報告文字，沒事回 ""。"""
+    if notion is None:
+        import notion_db as notion
+    txns = notion.transactions_load(limit=5000)
+    auto, manual = find_duplicates(txns)
+    lines = []
+    for num, keep, extra in auto:
+        items = (keep.get("items") or "").strip()
+        data = keep.get("invoice_data") or ""
+        for r in extra:
+            if not items:
+                items = (r.get("items") or "").replace("（載具發票）", "").strip()
+            data = data or r.get("invoice_data") or ""
+        if not dry_run:
+            notion.transaction_attach_invoice(keep["page_id"], num, items or None, data or None)
+            for r in extra:
+                notion.transaction_delete(r["page_id"])
+        lines.append(f"・{keep.get('date')} {keep.get('shop') or ''} {keep.get('amount')} 元"
+                     f"（{num}）刪掉 {len(extra)} 列重複的載具列")
+    for num, rows in manual:
+        desc = "／".join(f"{r.get('date')} {r.get('shop') or ''} {r.get('amount')}" for r in rows)
+        lines.append(f"・❓ {num} 掛在 {len(rows)} 列：{desc}")
+    if not lines:
+        return ""
+    head = "🧹 交易明細每週去重" + ("（試跑，沒動資料）" if dry_run else "")
+    return "\n".join([head] + lines)

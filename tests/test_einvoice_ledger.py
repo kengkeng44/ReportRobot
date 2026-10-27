@@ -67,7 +67,7 @@ def test_amount_only_one_day_apart_is_unsure():
 
 def test_brand_only_is_unsure():
     acts = L.plan([_inv("AB1", date(2026, 10, 12), 500, "全聯實業")],
-                  [_txn("p1", "2026-10-12", 496, "全聯福利中心")])
+                  [_txn("p1", "2026-10-12", 470, "全聯福利中心")])
     assert acts[0][0] == "unsure"
 
 
@@ -225,3 +225,54 @@ def test_review_ok_checkbox_works_like_menu():
     n = _Notion([row])
     assert L.review(n) == 1
     assert n.attached == [("p1", "A", "鮮奶 x2、高麗菜")]
+
+
+def test_branch_place_name_is_not_a_brand():
+    # 2026-10-27：兩邊都有「板橋」被配成同一家
+    assert not L.same_brand("遠東百貨股份有限公司板橋新站分公司", "全家便利商店－板橋廣榮店")
+    assert L.same_brand("全家便利商店股份有限公司新北市第一○五九分公司", "全家便利商店－板橋廣榮店")
+
+
+@pytest.mark.parametrize("card,inv,kind", [
+    (290, 288, "attach"),     # 差 2 元：購物袋這類零頭
+    (527, 522, "attach"),     # 差 5 元
+    (39, 35, "unsure"),       # 小額差 4 元超過 3%，不敢算是
+    (300, 290, "unsure"),     # 差 10 元
+])
+def test_small_difference_same_brand(card, inv, kind):
+    acts = L.plan([_inv("AB1", date(2026, 5, 31), inv, "全家便利商店股份有限公司")],
+                  [_txn("p1", "2026-05-31", card, "全家便利商店－板橋廣榮店")])
+    assert acts[0][0] == kind
+
+
+def test_find_duplicates_card_plus_einvoice_row():
+    rows = [_txn("card", "2026-09-30", 138, "全家", invoice_no="EM1", source="cathay"),
+            _txn("own", "2026-09-30", 138, "全家", invoice_no="EM1", source=L.SOURCE),
+            _txn("a", "2026-07-04", 65, "義美", invoice_no="DB1", source="cathay"),
+            _txn("b", "2026-07-04", 65, "嘉楓", invoice_no="DQ1", source="cathay"),
+            _txn("x", "2026-08-01", 50, "A", invoice_no="ZZ1", source="cathay"),
+            _txn("y", "2026-08-01", 50, "B", invoice_no="ZZ1", source="manual")]
+    auto, manual = L.find_duplicates(rows)
+    assert [(n, k["page_id"], [r["page_id"] for r in e]) for n, k, e in auto] == [("EM1", "card", ["own"])]
+    assert [n for n, _ in manual] == ["ZZ1"]
+
+
+def test_dedup_merges_items_then_deletes():
+    calls = []
+
+    class FakeNotion:
+        def transactions_load(self, limit):
+            return [_txn("card", "2026-09-30", 138, "全家", invoice_no="EM1", source="cathay", items=""),
+                    _txn("own", "2026-09-30", 138, "全家", invoice_no="EM1", source=L.SOURCE,
+                         items="飯糰（載具發票）", invoice_data='{"n":"EM1"}')]
+
+        def transaction_attach_invoice(self, pid, num, items, data):
+            calls.append(("attach", pid, items, data))
+
+        def transaction_delete(self, pid):
+            calls.append(("delete", pid))
+
+    report = L.dedup(FakeNotion())
+    assert calls == [("attach", "card", "飯糰", '{"n":"EM1"}'), ("delete", "own")]
+    assert "EM1" in report
+    assert L.dedup(FakeNotion(), dry_run=True) and len(calls) == 2
