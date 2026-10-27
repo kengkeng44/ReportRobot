@@ -12,7 +12,10 @@
 
 用法：
   python tools\\line_scan.py --dry-run   只截圖存檔，不送出（校正用）
-  python tools\\line_scan.py             截圖並送出記帳
+  python tools\\line_scan.py             截圖並送出記帳（伺服器用 Anthropic key 讀圖）
+  python tools\\line_scan.py --rows rows.json
+                                        送出已經讀好的轉帳清單 —— Claude Code 在本機看
+                                        --dry-run 的截圖讀出來的，不經過伺服器的 key
 
 限制：電腦鎖定時 Windows 會擋掉按鍵與截圖，只能在解鎖的桌面上跑。
 """
@@ -155,6 +158,17 @@ def send(png, token):
     return r.json().get("text", "")
 
 
+def send_rows(path, token):
+    """rows.json：[{"date","time","direction","amount","counterparty","channel","memo","skip"}, ...]
+    跟伺服器讀圖的輸出同格式，去重也同一套，所以重送安全。"""
+    import requests
+    rows = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    r = requests.post(f"{SERVER}/admin/transfer-rows", json={"rows": rows}, timeout=120,
+                      headers={"X-Admin-Token": token})
+    r.raise_for_status()
+    return r.json().get("text", "")
+
+
 def run(dry_run):
     cfg = json.loads((HOME / "config.json").read_text(encoding="utf-8"))
     chats = cfg.get("chats") or []
@@ -169,7 +183,11 @@ def run(dry_run):
     failed = 0
     for name in chats:
         try:
-            chat = open_chat(win, name)
+            try:
+                chat = open_chat(win, name)
+            except RuntimeError:                   # 偶發開不起來（2026-10-27 實測），隔幾秒再試一次
+                time.sleep(5)
+                chat = open_chat(win, name)
             png = capture(chat)
             chat.close()
             if dry_run:
@@ -190,4 +208,11 @@ if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")   # 排程主控台是 CP950，印 emoji 會炸
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="只截圖存檔，不送出")
-    sys.exit(run(ap.parse_args().dry_run))
+    ap.add_argument("--rows", help="送出已經讀好的轉帳清單 JSON 檔，不截圖")
+    args = ap.parse_args()
+    if args.rows:
+        token = (HOME / "admin_token").read_text(encoding="utf-8-sig").strip()
+        text = send_rows(args.rows, token)
+        log(f"✅ 本機讀圖：{text.replace(chr(10), ' / ')}")
+        sys.exit(0)
+    sys.exit(run(args.dry_run))

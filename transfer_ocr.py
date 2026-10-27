@@ -177,6 +177,15 @@ def handle_image(img, media):
         # 附錯誤類型與狀態碼：Railway log 不好看，回覆裡就要看得出是額度、格式還是連線問題
         why = type(e).__name__ + (f" {e.status_code}" if getattr(e, "status_code", None) else "")
         return f"📸 辨識失敗（{why}），等一下再傳一次。"
+    return handle_rows(rows)
+
+
+def handle_rows(rows):
+    """已經讀好的轉帳清單（跟 extract 輸出同格式）→ 寫入 → 回一段文字。
+
+    給 /admin/transfer-rows：本機 Claude Code 自己看截圖、讀出 JSON 送進來，
+    不經過伺服器的 Anthropic key。驗證、去重跟截圖辨識完全同一套（to_txns、record）。
+    """
     txns, skipped = to_txns(rows)
     if not txns:
         why = f"（略過：{'、'.join(sorted(set(skipped)))}）" if skipped else ""

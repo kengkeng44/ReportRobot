@@ -58,3 +58,35 @@ def test_handle_image_survives_ai_failure(monkeypatch):
 
 def test_prompt_ignores_chat_claims():
     assert "只是聊天" in transfer_ocr._PROMPT
+
+
+# ── /admin/transfer-rows：本機已經讀好的 JSON，不經過伺服器的 key ──
+
+def _rows_handler():
+    src = SERVER.read_text(encoding="utf-8")
+    start = src.index("async def transfer_rows_upload(")
+    return src[start: src.index("\n@app.", start)]
+
+
+def test_rows_endpoint_requires_admin_token_and_skips_ai():
+    body = _rows_handler()
+    assert '@app.post("/admin/transfer-rows")' in SERVER.read_text(encoding="utf-8")
+    assert 'request.headers.get("X-Admin-Token") != admin_token' in body
+    assert "transfer_ocr.handle_rows" in body
+    assert "extract(" not in body and "handle_image" not in body   # 不能繞回去叫 Anthropic
+
+
+def test_handle_rows_writes_without_calling_ai(monkeypatch):
+    def no_ai(*a, **k):
+        raise AssertionError("handle_rows 不該讀圖")
+    monkeypatch.setattr(transfer_ocr, "extract", no_ai)
+    monkeypatch.setattr(transfer_ocr, "record", lambda txns: (txns, []))
+    text = transfer_ocr.handle_rows([
+        {"date": "2026-10-01", "time": "12:30", "direction": "out", "amount": 300,
+         "counterparty": "小螢", "channel": "LINE Pay", "memo": "", "skip": ""}])
+    assert "記了 1 筆轉帳" in text and "↗️ 轉給 小螢 300" in text
+
+
+def test_line_scan_has_rows_mode():
+    src = (SERVER.parent / "tools" / "line_scan.py").read_text(encoding="utf-8")
+    assert "/admin/transfer-rows" in src and '"--rows"' in src

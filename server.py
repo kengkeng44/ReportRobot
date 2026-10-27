@@ -756,6 +756,30 @@ async def transfer_ocr_upload(request: Request):
     return {"ok": True, "text": await asyncio.to_thread(transfer_ocr.handle_image, img, media)}
 
 
+@app.post("/admin/transfer-rows")
+async def transfer_rows_upload(request: Request):
+    """本機已經讀好的轉帳清單直接記帳：Claude Code 在電腦上看截圖、讀出 JSON 送進來，
+    不經過伺服器的 Anthropic key（key 失效時 LINE 掃描照樣能記）。
+
+    body：{"rows": [...]}，每筆跟 transfer_ocr.extract 的輸出同格式。去重同截圖辨識。
+    """
+    admin_token = os.environ.get("ADMIN_TOKEN", "")
+    if not admin_token:
+        raise HTTPException(status_code=503, detail="Admin disabled")
+    if request.headers.get("X-Admin-Token") != admin_token:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="JSON body required")
+    rows = body.get("rows") if isinstance(body, dict) else None
+    if not isinstance(rows, list) or len(rows) > 200:
+        raise HTTPException(status_code=400, detail='{"rows": [...]} with at most 200 rows')
+    import transfer_ocr
+    rows = [r for r in rows if isinstance(r, dict)]
+    return {"ok": True, "text": await asyncio.to_thread(transfer_ocr.handle_rows, rows)}
+
+
 @app.get("/chart/{token}.png")
 def chart_png(token: str):
     """群組圓餅圖的圖檔（LINE 圖片訊息只收網址）。token 隨機，只留最近 20 張。"""
