@@ -216,5 +216,8 @@ def handle_rows(rows):
         lines.append(f"已經記過 {len(dup)} 筆，跳過")
     if skipped:
         lines.append(f"不是轉帳或看不清楚 {len(skipped)} 筆，跳過")
-    lines.append("方向都標「轉帳」不算花費；是房租這種的話在 Notion 改成支出")
+    if n_tr:
+        lines.append("轉帳方向標「轉帳」不算花費；是房租這種的話在 Notion 改成支出")
+    if n_pay:
+        lines.append("錢包付款記成支出，記得在 Notion 標共同或個人")
     return "\n".join(lines)
