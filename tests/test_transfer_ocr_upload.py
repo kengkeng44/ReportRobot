@@ -90,3 +90,44 @@ def test_handle_rows_writes_without_calling_ai(monkeypatch):
 def test_line_scan_has_rows_mode():
     src = (SERVER.parent / "tools" / "line_scan.py").read_text(encoding="utf-8")
     assert "/admin/transfer-rows" in src and '"--rows"' in src
+
+
+# ── 錢包付款（LINE Pay money／iPASS MONEY 付給商店）：記成支出 ──
+
+_PAY = {"date": "2026-10-26", "time": "13:37", "direction": "pay", "amount": 325,
+        "counterparty": "南仁湖育樂_古坑服務區", "channel": "LINE Pay money", "memo": "", "skip": ""}
+
+
+def test_wallet_payment_becomes_expense():
+    txns, skipped = transfer_ocr.to_txns([_PAY])
+    assert skipped == []
+    t = txns[0]
+    assert t["direction"] == "支出" and t["shop"] == "南仁湖育樂_古坑服務區"
+    assert t["amount"] == 325 and t["fp_dir"] == "pay"
+
+
+def test_wallet_payment_dedup_uses_pay_direction():
+    # 同一張付款卡片送兩次：第二次要被指紋擋下（方向用 pay，不是從店名箭頭猜）
+    class FakeNotion:
+        def __init__(self):
+            self.rows = []
+        def transactions_existing_fingerprints(self, **kw):
+            return {r["fingerprint"] for r in self.rows}
+        def transaction_add(self, t):
+            self.rows.append(t)
+            return True
+    n = FakeNotion()
+    txns, _ = transfer_ocr.to_txns([_PAY])
+    assert len(transfer_ocr.record(txns, notion=n)[0]) == 1
+    txns, _ = transfer_ocr.to_txns([_PAY])
+    written, dup = transfer_ocr.record(txns, notion=n)
+    assert written == [] and len(dup) == 1
+
+
+def test_reply_counts_payments_separately(monkeypatch):
+    monkeypatch.setattr(transfer_ocr, "record", lambda txns: (txns, []))
+    assert "記了 1 筆錢包付款" in transfer_ocr.handle_rows([_PAY])
+
+
+def test_prompt_separates_wallet_payment_from_card():
+    assert "pay" in transfer_ocr._PROMPT and "綁信用卡" in transfer_ocr._PROMPT

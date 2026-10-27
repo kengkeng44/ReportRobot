@@ -28,12 +28,14 @@ _PROMPT = """這是一張手機截圖，可能是 LINE 轉帳（iPASS MONEY / LI
 今天是 {today}。帳戶主人是「{owner}」。
 
 把截圖裡**每一筆轉帳**列出來，只輸出 JSON 陣列，不要其他文字：
-[{{"date":"YYYY-MM-DD","time":"HH:MM 或空字串","direction":"in 或 out","amount":整數,"counterparty":"對方名稱（看不到就空字串）","channel":"iPASS MONEY / LINE Bank / 國泰 / 富邦 / 郵局 / 其他","memo":"備註或空字串","skip":"空字串，或略過原因"}}]
+[{{"date":"YYYY-MM-DD","time":"HH:MM 或空字串","direction":"in、out 或 pay","amount":整數,"counterparty":"對方名稱（看不到就空字串）","channel":"iPASS MONEY / LINE Bank / 國泰 / 富邦 / 郵局 / 其他","memo":"備註或空字串","skip":"空字串，或略過原因"}}]
 
 規則：
 - direction：別人轉給主人＝in；主人轉出去＝out
 - 截圖沒寫年份就用今年；算出來比今天還晚就用去年
-- 刷卡消費、繳信用卡費、繳費、儲值、提款、利息不是轉帳 → skip 填原因
+- 用錢包餘額付給商店（LINE Pay money、iPASS MONEY 的「付款」卡片）→ direction 填 pay，counterparty 填商店名稱
+  （這種付款不會出現在信用卡帳單，沒記就漏掉了）
+- 刷信用卡消費（含 LINE Pay 綁信用卡付款）、繳信用卡費、繳費、儲值、提款、利息 → skip 填原因
 - 主人轉給自己的其他帳戶 → skip 填「自己的帳戶」
 - 看不清楚的數字不要猜，那筆 skip 填「看不清楚」
 - 如果是電腦版 LINE 聊天室畫面：日期看訊息上方的日期分隔列（「今天」「昨天」「10/26(日)」），時間看泡泡旁邊的小字
@@ -96,21 +98,27 @@ def to_txns(rows):
             amount = int(round(float(r.get("amount"))))
         except (TypeError, ValueError):
             amount = 0
-        if not _DATE.match(date) or direction not in ("in", "out") or amount <= 0:
+        if not _DATE.match(date) or direction not in ("in", "out", "pay") or amount <= 0:
             skipped.append("欄位不完整")
             continue
         if date > today_tpe().isoformat():
             skipped.append("日期在未來")
             continue
         who = str(r.get("counterparty") or "").strip()[:30]
-        if is_self(who):
+        if direction != "pay" and is_self(who):
             skipped.append("自己的帳戶")
             continue
         m = _HHMM.match(str(r.get("time") or ""))
         hhmm = f"{int(m.group(1)):02d}:{m.group(2)}" if m else ""
         channel = str(r.get("channel") or "").strip()[:20]
         memo = str(r.get("memo") or "").strip()[:60]
-        arrow = f"↗️ 轉給 {who or '（未知）'}" if direction == "out" else f"↙️ 收到 {who or '（未知）'}"
+        if direction == "pay":
+            # 錢包餘額付給商店：真正的花費，商店名稱照抄，大類交給每天的自動分類補
+            arrow = who or f"{channel or '錢包'} 付款"
+        elif direction == "out":
+            arrow = f"↗️ 轉給 {who or '（未知）'}"
+        else:
+            arrow = f"↙️ 收到 {who or '（未知）'}"
         notes = [x for x in (channel, f"留言：{memo}" if memo else "") if x]
         txns.append({
             "date": date,
@@ -118,10 +126,11 @@ def to_txns(rows):
             "amount": amount,
             "currency": "TWD",
             "shop": arrow,
-            "direction": "轉帳",
+            "direction": "支出" if direction == "pay" else "轉帳",
             "source": SOURCE,
             "items": "｜".join(notes) if notes else None,
             "fingerprint": transfer_fingerprint(date, hhmm, direction, amount),
+            "fp_dir": direction,
         })
     return txns, skipped
 
@@ -138,7 +147,7 @@ def record(txns, notion=None):
         raise RuntimeError("讀不到既有指紋，這次先不寫以免重複")
     written, dup = [], []
     for t in txns:
-        direction = "out" if t["shop"].startswith("↗️") else "in"
+        direction = t.get("fp_dir") or ("out" if t["shop"].startswith("↗️") else "in")
         candidates = {t["fingerprint"]}
         if not t["time"]:
             # 沒時間：同一天任何時分的同金額同方向都算重複
@@ -195,7 +204,11 @@ def handle_rows(rows):
     except Exception as e:
         print(f"[transfer_ocr] 寫入失敗：{e}")
         return "📸 記帳表暫時連不上，等一下再傳一次（重傳不會重複記）。"
-    lines = [f"📸 記了 {len(written)} 筆轉帳"]
+    n_pay = sum(1 for t in written if t["direction"] == "支出")
+    n_tr = len(written) - n_pay
+    head = "、".join(x for x in (f"{n_tr} 筆轉帳" if n_tr or not n_pay else "",
+                                 f"{n_pay} 筆錢包付款" if n_pay else "") if x)
+    lines = [f"📸 記了 {head}"]
     lines += [f"・{_line(t)}" for t in written[:15]]
     if len(written) > 15:
         lines.append(f"・…還有 {len(written) - 15} 筆")
