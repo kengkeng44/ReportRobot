@@ -150,6 +150,24 @@ def capture(win):
     return buf.getvalue()
 
 
+def capture_pages(win, pages):
+    """從最新往上捲，最多截 pages 張；捲到頂（跟上一張一樣）就停。回傳舊到新。
+
+    聊天室要摘要一整天的事，一個畫面不夠。相鄰兩張會有重疊，讀圖時自己去重。
+    """
+    from pywinauto import mouse
+    shots = [capture(win)]
+    r = win.rectangle()
+    for _ in range(pages - 1):
+        mouse.scroll(coords=((r.left + r.right) // 2, (r.top + r.bottom) // 2), wheel_dist=8)
+        time.sleep(1.2)                            # 往上捲會載入舊訊息
+        png = capture(win)
+        if png == shots[-1]:
+            break
+        shots.append(png)
+    return list(reversed(shots))
+
+
 def send(png, token):
     import requests
     r = requests.post(f"{SERVER}/admin/transfer-ocr", data=png, timeout=120,
@@ -169,6 +187,64 @@ def send_rows(path, token):
     return r.json().get("text", "")
 
 
+def send_notes(path, token):
+    """notes.json：[{"date","summary"}] → 每日紀錄「今天做了什麼」（伺服器只填空白的那幾天）。"""
+    import requests
+    notes = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    r = requests.post(f"{SERVER}/admin/daily-notes", json={"notes": notes}, timeout=120,
+                      headers={"X-Admin-Token": token})
+    r.raise_for_status()
+    return r.json().get("result", {})
+
+
+def read_prompt():
+    """給 claude -p 的讀圖指示：讀 shots 資料夾裡每張截圖，把轉帳／錢包付款寫成 rows.json。
+
+    規則直接拿伺服器讀圖用的 transfer_ocr._PROMPT，兩邊永遠同一套。
+    帳戶主人的名字放 config.json 的 "owner"（repo 是公開的，名字不進程式碼）。
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    import transfer_ocr
+    from tz_utils import today_tpe
+
+    cfg = json.loads((HOME / "config.json").read_text(encoding="utf-8"))
+    shots = sorted((HOME / "shots").glob("*.png"))
+    rules = transfer_ocr._PROMPT.format(today=today_tpe().isoformat(),
+                                        owner=cfg.get("owner") or "（未知）")
+    nl = chr(10)          # 跟 couple_ledger 一樣用 chr(10)：字面量 \n 在編輯流程裡被轉壞過
+    files = nl.join(f"- shots/{p.name}" for p in shots)
+    prompt = (f"讀下面每一張電腦版 LINE 聊天室截圖（用 Read 工具開圖）：{nl}{files}{nl}{nl}"
+              f"【一】轉帳：每張都照這個規則讀：{nl}{rules}{nl}{nl}"
+              "全部合併成一個 JSON 陣列，用 Write 工具寫到 rows.json（覆蓋）。一筆都沒有就寫 []。")
+    diary = [e["name"] for e in cfg.get("chats") or [] if isinstance(e, dict) and e.get("diary")]
+    if diary:
+        today = today_tpe()
+        prompt += (
+            f"{nl}{nl}【二】每日摘要：只看「{'、'.join(diary)}」的截圖（檔名有聊天室名稱，"
+            "同一個聊天室多張是往上捲截的，-1 最舊，相鄰兩張會重疊）。"
+            f"今天是 {today.isoformat()}，只寫今天以前、而且從當天第一則到最後一則都在截圖裡的日子"
+            "（最早那天如果上面被切掉、看不到當天開頭，就不要寫那天）。"
+            f"{nl}每天一句話，從{cfg.get('owner') or '帳戶主人'}的角度寫，用分號分開幾件事，"
+            "對方自己的事寫成「小螢……」；有轉帳就寫「收到小螢轉帳 NT$250」「轉給小螢 NT$185」。"
+            "不要引用原句、不要寫電話地址帳號。像這樣：" + nl +
+            "  「小螢生理期不舒服；晚上搭機捷回板橋找她」" + nl +
+            "  「在淡水家，下午去剪頭髮、洗碗、收衣服；收到小螢轉帳 NT$250。小螢跟朋友吃川渝、逛街」" + nl +
+            "只是貼圖、互道晚安、沒有具體內容的日子就不要寫。"
+            f"{nl}寫成 JSON 陣列 [{{\"date\":\"YYYY-MM-DD\",\"summary\":\"...\"}}]，"
+            "用 Write 工具寫到 notes.json（覆蓋）；沒有就寫 []。")
+    return prompt + f"{nl}{nl}只寫這兩個檔，不要做其他事。"
+
+
+def clean_shots(before):
+    """送出成功後刪掉截圖：圖上有金額和對象，不要一直留在硬碟。只刪 rows.json 之前截的。"""
+    n = 0
+    for p in (HOME / "shots").glob("*.png"):
+        if p.stat().st_mtime <= before:
+            p.unlink()
+            n += 1
+    return n
+
+
 def run(dry_run):
     cfg = json.loads((HOME / "config.json").read_text(encoding="utf-8"))
     chats = cfg.get("chats") or []
@@ -181,22 +257,28 @@ def run(dry_run):
         log("❌ LINE 停在登入畫面（或沒開起來），要手動登入並勾「自動登入」")
         return 2
     failed = 0
-    for name in chats:
+    for entry in chats:
+        # 字串＝只截最新一個畫面；{"name", "pages"}＝往上捲多截幾張（要寫每日摘要的聊天室）
+        name = entry if isinstance(entry, str) else entry["name"]
+        pages = 1 if isinstance(entry, str) else int(entry.get("pages") or 1)
         try:
             try:
                 chat = open_chat(win, name)
-            except RuntimeError:                   # 偶發開不起來（2026-10-27 實測），隔幾秒再試一次
+            except Exception:                      # 偶發開不起來（RuntimeError／COMError 都遇過），隔幾秒再試一次
                 time.sleep(5)
+                bring_front(win)
                 chat = open_chat(win, name)
-            png = capture(chat)
+            pngs = capture_pages(chat, pages)
             chat.close()
-            if dry_run:
-                (HOME / "shots").mkdir(exist_ok=True)
-                path = HOME / "shots" / f"{datetime.now():%m%d-%H%M}-{name}.png"
-                path.write_bytes(png)
-                log(f"📷 {name} → {path}")
-            else:
-                log(f"✅ {name}：{send(png, token).replace(chr(10), ' / ')}")
+            for i, png in enumerate(pngs, 1):
+                tag = f"{name}-{i}" if len(pngs) > 1 else name
+                if dry_run:
+                    (HOME / "shots").mkdir(exist_ok=True)
+                    path = HOME / "shots" / f"{datetime.now():%m%d-%H%M}-{tag}.png"
+                    path.write_bytes(png)
+                    log(f"📷 {tag} → {path}")
+                else:
+                    log(f"✅ {tag}：{send(png, token).replace(chr(10), ' / ')}")
         except Exception as e:
             failed += 1
             log(f"❌ {name}：{type(e).__name__} {e}")
@@ -209,10 +291,26 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="只截圖存檔，不送出")
     ap.add_argument("--rows", help="送出已經讀好的轉帳清單 JSON 檔，不截圖")
+    ap.add_argument("--clean", action="store_true", help="配 --rows：送出成功就刪掉讀過的截圖")
+    ap.add_argument("--notes", help="送出每日摘要 notes.json，填進每日紀錄（只填空白的）")
+    ap.add_argument("--prompt", action="store_true", help="把給 claude -p 的讀圖指示寫到 prompt.md")
     args = ap.parse_args()
+    if args.prompt:
+        # 寫檔而不是印出來：Windows PowerShell 5.1 把多行、含雙引號的字串當命令列參數
+        # 傳給 claude 時會把引號弄壞（2026-10-27 實測：讀出來的格式整個不對）
+        (HOME / "prompt.md").write_text(read_prompt(), encoding="utf-8")
+        sys.exit(0)
+    if args.notes:
+        token = (HOME / "admin_token").read_text(encoding="utf-8-sig").strip()
+        res = send_notes(args.notes, token)
+        label = {"written": "已填", "kept": "原本就有、不蓋", "error": "失敗", "today_or_future": "今天還沒過完"}
+        log("📔 每日摘要：" + ("、".join(f"{d} {label.get(v, v)}" for d, v in sorted(res.items())) or "沒有"))
+        sys.exit(0)
     if args.rows:
         token = (HOME / "admin_token").read_text(encoding="utf-8-sig").strip()
         text = send_rows(args.rows, token)
         log(f"✅ 本機讀圖：{text.replace(chr(10), ' / ')}")
+        if args.clean:
+            log(f"🗑️ 刪掉 {clean_shots(Path(args.rows).stat().st_mtime)} 張截圖")
         sys.exit(0)
     sys.exit(run(args.dry_run))

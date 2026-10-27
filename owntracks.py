@@ -741,3 +741,40 @@ def nightly():
         purge_old()
     except Exception as e:
         print(f"[owntracks] 清舊點失敗（非致命）：{e}")
+
+
+# ── 每日紀錄「今天做了什麼」：本機讀 LINE 聊天截圖寫的一句話摘要 ──
+
+NOTE_FIELD = "今天做了什麼"
+
+
+def set_daily_note(day, text):
+    """把摘要填進那天的「今天做了什麼」。回 "written"／"kept"／"error"。
+
+    只填空白的：之前從聊天記錄整理的、你自己寫的都不蓋 —— 那些比一張截圖讀出來的完整。
+    那天還沒有列就建一列（跟定位整理同一把鎖，免得兩邊同時建出兩列同一天）。
+    """
+    client = notion_db._get_client()
+    text = (text or "").strip()[:1900]          # Notion 單一 rich_text 上限 2000 字
+    if not client or not text:
+        return "error"
+    if not _RUN_LOCK.acquire(timeout=120):
+        return "error"
+    try:
+        row = _find_daily(client, day)
+        if row is None:
+            row = client.pages.create(parent={"database_id": DAILY_DB_ID}, properties={
+                "日期標題": {"title": [{"text": {"content": f"{day.isoformat()}（{_WEEKDAYS[day.weekday()]}）"}}]},
+                "日期": {"date": {"start": day.isoformat()}},
+                "星期": {"select": {"name": _WEEKDAYS[day.weekday()]}},
+            })
+        elif _text(row["properties"], NOTE_FIELD).strip():
+            return "kept"
+        client.pages.update(page_id=row["id"], properties={
+            NOTE_FIELD: {"rich_text": [{"text": {"content": text}}]}})
+        return "written"
+    except Exception as e:
+        print(f"[owntracks] 每日摘要寫入失敗 {day}：{e}")
+        return "error"
+    finally:
+        _RUN_LOCK.release()

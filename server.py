@@ -805,6 +805,42 @@ async def transfer_rows_upload(request: Request):
     return {"ok": True, "text": await asyncio.to_thread(transfer_ocr.handle_rows, rows)}
 
 
+@app.post("/admin/daily-notes")
+async def daily_notes_upload(request: Request):
+    """本機讀 LINE 聊天截圖寫好的每日一句話摘要 → 每日紀錄「今天做了什麼」（只填空白的）。
+
+    body：{"notes": [{"date": "YYYY-MM-DD", "summary": "..."}]}。今天以後的日期不收 ——
+    一天還沒過完，摘要只會是半天的，填進去之後就會因為「不空白」而再也補不完整。
+    """
+    admin_token = os.environ.get("ADMIN_TOKEN", "")
+    if not admin_token:
+        raise HTTPException(status_code=503, detail="Admin disabled")
+    if request.headers.get("X-Admin-Token") != admin_token:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="JSON body required")
+    notes = body.get("notes") if isinstance(body, dict) else None
+    if not isinstance(notes, list) or len(notes) > 31:
+        raise HTTPException(status_code=400, detail='{"notes": [...]} with at most 31 days')
+    import owntracks
+    from datetime import date as _date
+    from tz_utils import today_tpe
+    out = {}
+    for n in notes:
+        try:
+            day = _date.fromisoformat(str((n or {}).get("date") or ""))
+        except ValueError:
+            continue
+        if day >= today_tpe():
+            out[day.isoformat()] = "today_or_future"
+            continue
+        out[day.isoformat()] = await asyncio.to_thread(
+            owntracks.set_daily_note, day, (n or {}).get("summary"))
+    return {"ok": True, "result": out}
+
+
 @app.get("/chart/{token}.png")
 def chart_png(token: str):
     """群組圓餅圖的圖檔（LINE 圖片訊息只收網址）。token 隨機，只留最近 20 張。"""

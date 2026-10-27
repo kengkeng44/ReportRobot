@@ -28,7 +28,7 @@ _PROMPT = """這是一張手機截圖，可能是 LINE 轉帳（iPASS MONEY / LI
 今天是 {today}。帳戶主人是「{owner}」。
 
 把截圖裡**每一筆轉帳**列出來，只輸出 JSON 陣列，不要其他文字：
-[{{"date":"YYYY-MM-DD","time":"HH:MM 或空字串","direction":"in、out 或 pay","amount":整數,"counterparty":"對方名稱（看不到就空字串）","channel":"iPASS MONEY / LINE Bank / 國泰 / 富邦 / 郵局 / 其他","memo":"備註或空字串","skip":"空字串，或略過原因"}}]
+[{{"date":"YYYY-MM-DD","time":"HH:MM 或空字串","direction":"in、out 或 pay","amount":整數,"counterparty":"對方名稱（看不到就空字串）","channel":"iPASS MONEY / LINE Pay / LINE Bank / 國泰 / 富邦 / 郵局 / 其他","memo":"備註或空字串","skip":"空字串，或略過原因"}}]
 
 規則：
 - direction：別人轉給主人＝in；主人轉出去＝out
