@@ -734,6 +734,28 @@ async def trigger_finance_sync(request: Request, days: int = 7):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/admin/transfer-ocr")
+async def transfer_ocr_upload(request: Request):
+    """本機 LINE 掃描（tools/line_scan.py）把聊天室截圖直接 POST 進來，
+    走跟私訊傳截圖同一條路：Claude 讀圖 → 交易明細（方向＝轉帳），指紋去重所以重送安全。
+
+    body 是圖片原始 bytes，Content-Type 帶 image/png 或 image/jpeg。
+    """
+    admin_token = os.environ.get("ADMIN_TOKEN", "")
+    if not admin_token:
+        raise HTTPException(status_code=503, detail="Admin disabled")
+    if request.headers.get("X-Admin-Token") != admin_token:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    media = (request.headers.get("Content-Type") or "").split(";")[0]
+    if media not in ("image/png", "image/jpeg"):
+        raise HTTPException(status_code=415, detail="image/png or image/jpeg only")
+    img = await request.body()
+    if not img or len(img) > 5_000_000:      # Anthropic 單張圖上限 5MB
+        raise HTTPException(status_code=413, detail="image empty or over 5MB")
+    import transfer_ocr
+    return {"ok": True, "text": await asyncio.to_thread(transfer_ocr.handle_image, img, media)}
+
+
 @app.get("/chart/{token}.png")
 def chart_png(token: str):
     """群組圓餅圖的圖檔（LINE 圖片訊息只收網址）。token 隨機，只留最近 20 張。"""

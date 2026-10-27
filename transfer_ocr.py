@@ -36,6 +36,8 @@ _PROMPT = """這是一張手機截圖，可能是 LINE 轉帳（iPASS MONEY / LI
 - 刷卡消費、繳信用卡費、繳費、儲值、提款、利息不是轉帳 → skip 填原因
 - 主人轉給自己的其他帳戶 → skip 填「自己的帳戶」
 - 看不清楚的數字不要猜，那筆 skip 填「看不清楚」
+- 如果是電腦版 LINE 聊天室畫面：日期看訊息上方的日期分隔列（「今天」「昨天」「10/26(日)」），時間看泡泡旁邊的小字
+- 聊天室裡只算轉帳卡片或銀行／LINE Pay 官方通知；有人打字說「我轉你了」但沒有轉帳卡片的，skip 填「只是聊天」
 - 一筆都沒有就輸出 []"""
 
 
@@ -163,6 +165,11 @@ def handle_line_image(message_id):
     except Exception as e:
         print(f"[transfer_ocr] 下載圖片失敗：{e}")
         return "📸 圖片下載失敗，再傳一次試試。"
+    return handle_image(img, media)
+
+
+def handle_image(img, media):
+    """辨識 → 寫入 → 回一段文字。私訊截圖和本機 LINE 掃描（/admin/transfer-ocr）共用。"""
     try:
         rows = extract(img, media)
     except Exception as e:
