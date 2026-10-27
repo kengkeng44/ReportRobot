@@ -340,8 +340,8 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
-    # 每週一去重：同一張發票掛在刷卡列和載具列 → 併進刷卡、刪載具列；
-    # 拿不準的只列出來推給管理員，不動資料
+    # 每天找重複：同一張發票掛在兩列以上 → 勾「重複待確認」，你在 Notion 刪掉一列；
+    # 不自動刪。新出現的才推 LINE，已經勾過的不重複推
     def _run_ledger_dedup():
         try:
             import einvoice_ledger
@@ -353,12 +353,12 @@ async def lifespan(app: FastAPI):
                 from line_sender import push_to_user_sync
                 push_to_user_sync(admin_id, report)
         except Exception as e:
-            print(f"[dedup] 每週去重失敗（非致命）：{e}")
+            print(f"[dedup] 找重複失敗（非致命）：{e}")
 
     scheduler.add_job(
         _run_ledger_dedup,
-        CronTrigger(day_of_week="mon", hour=9, minute=30, timezone="Asia/Taipei"),
-        id="ledger_dedup_weekly",
+        CronTrigger(hour=9, minute=30, timezone="Asia/Taipei"),
+        id="ledger_dedup_daily",
         max_instances=1,
         coalesce=True,
         misfire_grace_time=3600,

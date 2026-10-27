@@ -300,6 +300,8 @@ _SCHEMAS = {
         "發票正確": {"checkbox": {}},
         # 原始發票（JSON），換下一筆 / 新增一筆時要靠它，不用給人看
         "發票資料": {"rich_text": {}},
+        # 同一張發票掛在兩列以上 → 排程勾起來，你刪掉其中一列（einvoice_ledger.dedup）
+        "重複待確認": {"checkbox": {}},
         # 誰記的：人記的寫 LINE 暱稱，信件自動抓的寫「🤖 自動」
         "記錄人": {"rich_text": {}},
         # Notion 內建：什麼時候建立、誰建立的（bot 或你在 Notion 手打）
@@ -2292,6 +2294,7 @@ def _txn_row(r):
         "invoice_data": _read_rich_text(props, "發票資料"),
         "invoice_action": _read_select(props, "發票處理"),
         "invoice_ok": bool((props.get("發票正確") or {}).get("checkbox")),
+        "dup_flag": bool((props.get("重複待確認") or {}).get("checkbox")),
         # 下面三個給「標成共同」用（couple_ledger.rescan / 整理共同）：
         # split_type 對空值有預設「個人」，分不出「沒標過」跟「標了個人」
         "page_id": r.get("id"),
@@ -2352,6 +2355,19 @@ def transaction_attach_invoice(page_id, invoice_no, items, data=None, clear_acti
         return True
     except Exception as e:
         print(f"[notion] transaction_attach_invoice 失敗：{e}")
+        return False
+
+
+def transaction_set_duplicate(page_id, flag):
+    """勾／取消「重複待確認」（einvoice_ledger.dedup）。"""
+    client = _get_client()
+    if not client or not page_id:
+        return False
+    try:
+        client.pages.update(page_id=page_id, properties={"重複待確認": {"checkbox": bool(flag)}})
+        return True
+    except Exception as e:
+        print(f"[notion] transaction_set_duplicate 失敗：{e}")
         return False
 
 

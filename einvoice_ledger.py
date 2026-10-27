@@ -407,57 +407,45 @@ def sync(invoices, notion=None):
     return apply(plan(invoices, load_txns(invoices, notion)), notion)
 
 
-# ── 每週去重 ────────────────────────────────────────────
+# ── 重複待確認 ──────────────────────────────────────────
 
 def find_duplicates(txns):
-    """同一張發票掛在兩列以上 → (可自動合併, 要人看)。
-
-    可自動合併：一列是刷卡／手打、其他都是「🧾 載具發票」自己新增的列 ——
-    發票先新增了現金列，之後刷卡那筆又掛上同一張發票，同一筆錢記了兩次。
-    要人看：兩列都不是載具新增的（可能一張發票被掛錯地方），或全是載具列。
-    """
+    """同一張發票掛在兩列以上 → {發票號碼: [那幾列]}。"""
     groups = {}
     for t in txns:
         num = (t.get("invoice_no") or "").strip()
         if num and t.get("page_id"):
             groups.setdefault(num, []).append(t)
-    auto, manual = [], []
-    for num, rows in groups.items():
-        if len(rows) < 2:
-            continue
-        own = [r for r in rows if r.get("source") == SOURCE]
-        others = [r for r in rows if r.get("source") != SOURCE]
-        if len(others) == 1 and own:
-            auto.append((num, others[0], own))
-        else:
-            manual.append((num, rows))
-    return auto, manual
+    return {num: rows for num, rows in groups.items() if len(rows) >= 2}
 
 
 def dedup(notion=None, dry_run=False):
-    """刪掉跟刷卡重複的載具列（明細、發票資料先併進刷卡那列）。回報告文字，沒事回 ""。"""
+    """重複的列勾「重複待確認」，交給你在 Notion「🔁 重複待確認」刪掉其中一列。
+
+    不自動刪、不併資料：哪列該留只有你知道。刪掉一列後，剩下那列的勾下次跑會拿掉。
+    回報告文字（只列這次新勾的，勾過的不重複推），沒事回 ""。
+    """
     if notion is None:
         import notion_db as notion
     txns = notion.transactions_load(limit=5000)
-    auto, manual = find_duplicates(txns)
+    dups = find_duplicates(txns)
+    dup_ids = {r["page_id"] for rows in dups.values() for r in rows}
     lines = []
-    for num, keep, extra in auto:
-        items = (keep.get("items") or "").strip()
-        data = keep.get("invoice_data") or ""
-        for r in extra:
-            if not items:
-                items = (r.get("items") or "").replace("（載具發票）", "").strip()
-            data = data or r.get("invoice_data") or ""
+    for num, rows in dups.items():
+        fresh = [r for r in rows if not r.get("dup_flag")]
+        if not fresh:
+            continue
         if not dry_run:
-            notion.transaction_attach_invoice(keep["page_id"], num, items or None, data or None)
-            for r in extra:
-                notion.transaction_delete(r["page_id"])
-        lines.append(f"・{keep.get('date')} {keep.get('shop') or ''} {keep.get('amount')} 元"
-                     f"（{num}）刪掉 {len(extra)} 列重複的載具列")
-    for num, rows in manual:
+            for r in fresh:
+                notion.transaction_set_duplicate(r["page_id"], True)
         desc = "／".join(f"{r.get('date')} {r.get('shop') or ''} {r.get('amount')}" for r in rows)
-        lines.append(f"・❓ {num} 掛在 {len(rows)} 列：{desc}")
+        lines.append(f"・{num}：{desc}")
+    if not dry_run:
+        for t in txns:
+            if t.get("dup_flag") and t.get("page_id") not in dup_ids:
+                notion.transaction_set_duplicate(t["page_id"], False)
     if not lines:
         return ""
-    head = "🧹 交易明細每週去重" + ("（試跑，沒動資料）" if dry_run else "")
+    head = ("🔁 交易明細有重複，到 Notion「🔁 重複待確認」刪掉其中一列就好"
+            + ("（試跑，沒動資料）" if dry_run else ""))
     return "\n".join([head] + lines)

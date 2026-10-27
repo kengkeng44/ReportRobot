@@ -245,34 +245,48 @@ def test_small_difference_same_brand(card, inv, kind):
     assert acts[0][0] == kind
 
 
-def test_find_duplicates_card_plus_einvoice_row():
+def test_find_duplicates_groups_same_invoice():
     rows = [_txn("card", "2026-09-30", 138, "全家", invoice_no="EM1", source="cathay"),
             _txn("own", "2026-09-30", 138, "全家", invoice_no="EM1", source=L.SOURCE),
             _txn("a", "2026-07-04", 65, "義美", invoice_no="DB1", source="cathay"),
-            _txn("b", "2026-07-04", 65, "嘉楓", invoice_no="DQ1", source="cathay"),
-            _txn("x", "2026-08-01", 50, "A", invoice_no="ZZ1", source="cathay"),
-            _txn("y", "2026-08-01", 50, "B", invoice_no="ZZ1", source="manual")]
-    auto, manual = L.find_duplicates(rows)
-    assert [(n, k["page_id"], [r["page_id"] for r in e]) for n, k, e in auto] == [("EM1", "card", ["own"])]
-    assert [n for n, _ in manual] == ["ZZ1"]
+            _txn("b", "2026-07-04", 65, "嘉楓", invoice_no="DQ1", source="cathay")]
+    dups = L.find_duplicates(rows)
+    assert {n: [r["page_id"] for r in rs] for n, rs in dups.items()} == {"EM1": ["card", "own"]}
 
 
-def test_dedup_merges_items_then_deletes():
+def test_dedup_only_flags_never_deletes():
     calls = []
+    rows = [_txn("card", "2026-09-30", 138, "全家", invoice_no="EM1", source="cathay"),
+            _txn("own", "2026-09-30", 138, "全家", invoice_no="EM1", source=L.SOURCE),
+            # 上次勾過、另一列已經被你刪掉 → 勾要拿掉
+            dict(_txn("left", "2026-09-01", 50, "A", invoice_no="ZZ1", source="cathay"), dup_flag=True)]
 
     class FakeNotion:
         def transactions_load(self, limit):
-            return [_txn("card", "2026-09-30", 138, "全家", invoice_no="EM1", source="cathay", items=""),
-                    _txn("own", "2026-09-30", 138, "全家", invoice_no="EM1", source=L.SOURCE,
-                         items="飯糰（載具發票）", invoice_data='{"n":"EM1"}')]
+            return rows
 
-        def transaction_attach_invoice(self, pid, num, items, data):
-            calls.append(("attach", pid, items, data))
+        def transaction_set_duplicate(self, pid, flag):
+            calls.append((pid, flag))
 
         def transaction_delete(self, pid):
-            calls.append(("delete", pid))
+            raise AssertionError("不該自動刪")
 
     report = L.dedup(FakeNotion())
-    assert calls == [("attach", "card", "飯糰", '{"n":"EM1"}'), ("delete", "own")]
-    assert "EM1" in report
-    assert L.dedup(FakeNotion(), dry_run=True) and len(calls) == 2
+    assert calls == [("card", True), ("own", True), ("left", False)]
+    assert "EM1" in report and "ZZ1" not in report
+    calls.clear()
+    assert L.dedup(FakeNotion(), dry_run=True) and calls == []
+
+
+def test_dedup_already_flagged_not_reported_again():
+    rows = [dict(_txn("card", "2026-09-30", 138, "全家", invoice_no="EM1"), dup_flag=True),
+            dict(_txn("own", "2026-09-30", 138, "全家", invoice_no="EM1"), dup_flag=True)]
+
+    class FakeNotion:
+        def transactions_load(self, limit):
+            return rows
+
+        def transaction_set_duplicate(self, pid, flag):
+            raise AssertionError("勾過的不用再寫")
+
+    assert L.dedup(FakeNotion()) == ""
