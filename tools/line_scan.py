@@ -69,30 +69,71 @@ def main_window(timeout=90):
     return None
 
 
-def paste(text):
-    """中文用剪貼簿貼上，比逐字送按鍵穩（輸入法開著也不會亂掉）。"""
-    from pywinauto import keyboard
-    subprocess.run(["clip"], input=text.encode("utf-16-le"), check=True)
-    keyboard.send_keys("^v")
+def bring_front(win):
+    """把 LINE 拉到最前面；拉不上來就丟例外，絕不把字打進別的視窗。
+
+    set_focus 會被 Windows 防搶焦點擋掉（2026-10-27 實測：點擊落在別的程式上），
+    先縮小再還原才拉得上來。
+    """
+    import ctypes
+    for _ in range(3):
+        if ctypes.windll.user32.GetForegroundWindow() == win.handle:
+            return
+        win.minimize()
+        time.sleep(0.5)
+        win.restore()
+        win.set_focus()
+        time.sleep(0.8)
+    raise RuntimeError("LINE 拉不到最前面，這次不打字")
 
 
 def open_chat(win, name):
-    """搜尋框打聊天室名稱 → Enter 打開第一個結果。
+    """搜尋框打聊天室名稱 → 點兩下第一筆聊天結果，回傳跳出來的 ChatWindow。
 
-    LINE 的元件沒有文字標籤，只認得 class（LcTextField），所以抓主視窗第一個輸入框當搜尋框。
-    TODO 登入後校正：確認第一個 LcTextField 是聊天列表的搜尋框、Enter 會打開第一筆。
+    2026-10-27 校正（精簡模式的 LINE）：
+    - 主視窗只有一個 LcTextField，就是「搜尋聊天和訊息」
+    - Enter、方向鍵都打不開結果，要用滑鼠；單擊只會選取，要點兩下
+    - 結果是一串 ListItem：區段標題（「聊天 1」）高約 51，聊天室列高約 108 → 挑第一個夠高的
+    - 聊天室開在另一個 ChatWindow，標題＝聊天室名稱
     """
-    from pywinauto import keyboard
-    win.set_focus()
-    keyboard.send_keys("^2")                       # 切到聊天分頁
-    time.sleep(0.8)
-    box = win.child_window(class_name="LcTextField", control_type="Edit", found_index=0)
-    box.click_input()
-    keyboard.send_keys("^a{BACKSPACE}")
-    paste(name)
+    from pywinauto import Desktop, mouse
+
+    def chat_windows():
+        return {w.handle: w for w in Desktop(backend="uia").windows()
+                if w.class_name() == "ChatWindow" and w.process_id() == win.process_id()}
+
+    for old in chat_windows().values():            # 先關掉開著的，免得抓錯視窗
+        old.close()
+    bring_front(win)
+    box = [e for e in win.descendants(control_type="Edit") if e.class_name() == "LcTextField"][0]
+    box.iface_value.SetValue(name)                 # 直接設值：模擬按鍵會被中文輸入法吃掉多組字
     time.sleep(1.5)
-    keyboard.send_keys("{ENTER}")
-    time.sleep(2.5)                                # 等訊息載入
+    chats = []
+    for _ in range(2):                             # 搜尋結果還在重畫時點會落空，重抓再點一次
+        rows = [d for d in win.descendants(control_type="ListItem") if d.rectangle().height() > 80]
+        if not rows:
+            raise RuntimeError("搜尋不到這個聊天室")
+        rows[0].double_click_input()
+        for _ in range(8):
+            time.sleep(1)
+            chats = list(chat_windows().values())
+            if chats:
+                break
+        if chats:
+            break
+    time.sleep(2)                                  # 等訊息載入
+    if len(chats) != 1:
+        raise RuntimeError(f"聊天視窗應該跳出 1 個，實際 {len(chats)} 個")
+    chat = chats[0]
+    bring_front(chat)                              # 主視窗會擋在前面
+    chat.maximize()                                # 預設視窗只放得下一張卡片
+    time.sleep(1)
+    r = chat.rectangle()
+    for _ in range(5):                             # 打開時停在「以下為尚未閱讀的訊息」，捲到最新
+        mouse.scroll(coords=((r.left + r.right) // 2, (r.top + r.bottom) // 2), wheel_dist=-20)
+        time.sleep(0.3)
+    time.sleep(1)
+    return chat
 
 
 def capture(win):
@@ -117,7 +158,7 @@ def send(png, token):
 def run(dry_run):
     cfg = json.loads((HOME / "config.json").read_text(encoding="utf-8"))
     chats = cfg.get("chats") or []
-    token = "" if dry_run else (HOME / "admin_token").read_text(encoding="utf-8").strip()
+    token = "" if dry_run else (HOME / "admin_token").read_text(encoding="utf-8-sig").strip()
     if not desktop_unlocked():
         log("❌ 電腦鎖定中，沒辦法操作 LINE，這次跳過")
         return 3
@@ -128,8 +169,9 @@ def run(dry_run):
     failed = 0
     for name in chats:
         try:
-            open_chat(win, name)
-            png = capture(win)
+            chat = open_chat(win, name)
+            png = capture(chat)
+            chat.close()
             if dry_run:
                 (HOME / "shots").mkdir(exist_ok=True)
                 path = HOME / "shots" / f"{datetime.now():%m%d-%H%M}-{name}.png"

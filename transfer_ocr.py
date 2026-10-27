@@ -174,7 +174,9 @@ def handle_image(img, media):
         rows = extract(img, media)
     except Exception as e:
         print(f"[transfer_ocr] 辨識失敗：{e}")
-        return "📸 辨識失敗（AI 暫時連不上），等一下再傳一次。"
+        # 附錯誤類型與狀態碼：Railway log 不好看，回覆裡就要看得出是額度、格式還是連線問題
+        why = type(e).__name__ + (f" {e.status_code}" if getattr(e, "status_code", None) else "")
+        return f"📸 辨識失敗（{why}），等一下再傳一次。"
     txns, skipped = to_txns(rows)
     if not txns:
         why = f"（略過：{'、'.join(sorted(set(skipped)))}）" if skipped else ""
