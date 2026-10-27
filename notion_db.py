@@ -2465,7 +2465,42 @@ def _partner_txn_row(r):
         # 同日同額也出現在我的交易明細：多半是我刷卡、發票進她載具，
         # 那筆由我這邊的交易明細負責進共同帳本，她這筆不能再記一次
         "maybe_dup": bool((props.get("可能跟仁和重複") or {}).get("checkbox")),
+        "shop": _read_rich_text(props, "商店"),
+        "invoice_no": _read_rich_text(props, "發票號碼"),
+        # 欄位是在 Notion 手動加的（這張表不在 _SCHEMAS），沒有就當沒勾
+        "dup_flag": bool((props.get("重複待確認") or {}).get("checkbox")),
     }
+
+
+def partner_txns_load(limit=5000):
+    """小螢交易明細整張撈回來（找重複用）。Notion 單頁 100 筆，靠 next_cursor 翻頁。"""
+    client = _get_client()
+    if not client or not PARTNER_TXN_DB_ID:
+        return []
+    out, cursor = [], None
+    while len(out) < limit:
+        kwargs = {"database_id": PARTNER_TXN_DB_ID, "page_size": 100}
+        if cursor:
+            kwargs["start_cursor"] = cursor
+        res = client.databases.query(**kwargs)
+        out.extend(_partner_txn_row(r) for r in res.get("results", []))
+        if not res.get("has_more"):
+            break
+        cursor = res.get("next_cursor")
+    return out
+
+
+def partner_txn_set_duplicate(page_id, flag):
+    """勾／取消小螢那筆的「重複待確認」（einvoice_ledger.dedup）。"""
+    client = _get_client()
+    if not client or not page_id:
+        return False
+    try:
+        client.pages.update(page_id=page_id, properties={"重複待確認": {"checkbox": bool(flag)}})
+        return True
+    except Exception as e:
+        print(f"[notion] partner_txn_set_duplicate 失敗：{e}")
+        return False
 
 
 def partner_txns_pending(limit=50):

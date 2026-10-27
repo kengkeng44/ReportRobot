@@ -444,8 +444,46 @@ def dedup(notion=None, dry_run=False):
         for t in txns:
             if t.get("dup_flag") and t.get("page_id") not in dup_ids:
                 notion.transaction_set_duplicate(t["page_id"], False)
-    if not lines:
+    partner = _flag_partner_duplicates(notion, txns, dry_run)
+    if not lines and not partner:
         return ""
-    head = ("🔁 交易明細有重複，到 Notion「🔁 重複待確認」刪掉其中一列就好"
-            + ("（試跑，沒動資料）" if dry_run else ""))
-    return "\n".join([head] + lines)
+    out = []
+    if lines:
+        out += ["🔁 交易明細有重複，到 Notion「🔁 重複待確認」刪掉其中一列就好"
+                + ("（試跑，沒動資料）" if dry_run else "")] + lines
+    if partner:
+        out += ["🔁 小螢交易明細有重複，到她那張表的「🔁 重複待確認」處理"
+                + ("（試跑，沒動資料）" if dry_run else "")] + partner
+    return "\n".join(out)
+
+
+def _flag_partner_duplicates(notion, my_txns, dry_run):
+    """小螢交易明細：她表裡同一張發票兩列以上，或發票號碼也在我的交易明細 → 勾「重複待確認」。
+
+    跟我這邊一樣只勾不刪；回這次新勾的報告行。
+    """
+    rows = notion.partner_txns_load(limit=5000)
+    mine = {(t.get("invoice_no") or "").strip() for t in my_txns} - {""}
+    flagged, lines = set(), []
+    for num, group in find_duplicates(rows).items():
+        flagged |= {r["page_id"] for r in group}
+        fresh = [r for r in group if not r.get("dup_flag")]
+        if fresh:
+            desc = "／".join(f"{r.get('date')} {r.get('shop') or ''} {r.get('amount')}" for r in group)
+            lines.append(f"・{num}：{desc}")
+        if not dry_run:
+            for r in fresh:
+                notion.partner_txn_set_duplicate(r["page_id"], True)
+    for r in rows:
+        num = (r.get("invoice_no") or "").strip()
+        if num in mine and r["page_id"] not in flagged:
+            flagged.add(r["page_id"])
+            if not r.get("dup_flag"):
+                lines.append(f"・{num}：{r.get('date')} {r.get('shop') or ''} {r.get('amount')}（仁和也有這張）")
+                if not dry_run:
+                    notion.partner_txn_set_duplicate(r["page_id"], True)
+    if not dry_run:
+        for r in rows:
+            if r.get("dup_flag") and r["page_id"] not in flagged:
+                notion.partner_txn_set_duplicate(r["page_id"], False)
+    return lines

@@ -265,6 +265,9 @@ def test_dedup_only_flags_never_deletes():
         def transactions_load(self, limit):
             return rows
 
+        def partner_txns_load(self, limit):
+            return []
+
         def transaction_set_duplicate(self, pid, flag):
             calls.append((pid, flag))
 
@@ -286,7 +289,37 @@ def test_dedup_already_flagged_not_reported_again():
         def transactions_load(self, limit):
             return rows
 
+        def partner_txns_load(self, limit):
+            return []
+
         def transaction_set_duplicate(self, pid, flag):
             raise AssertionError("勾過的不用再寫")
 
     assert L.dedup(FakeNotion()) == ""
+
+
+def test_dedup_flags_partner_rows():
+    calls = []
+    mine = [_txn("m1", "2026-10-01", 120, "全聯", invoice_no="AA1")]
+    hers = [_txn("h1", "2026-10-01", 120, "全聯", invoice_no="AA1"),       # 我也有這張
+            _txn("h2", "2026-10-02", 80, "7-11", invoice_no="BB1"),
+            _txn("h3", "2026-10-02", 80, "7-11", invoice_no="BB1"),        # 她自己重複
+            dict(_txn("h4", "2026-09-01", 50, "A", invoice_no="CC1"), dup_flag=True),  # 已處理
+            _txn("h5", "2026-10-03", 30, "B", invoice_no="DD1")]
+
+    class FakeNotion:
+        def transactions_load(self, limit):
+            return mine
+
+        def partner_txns_load(self, limit):
+            return hers
+
+        def transaction_set_duplicate(self, pid, flag):
+            raise AssertionError("我這邊沒有重複")
+
+        def partner_txn_set_duplicate(self, pid, flag):
+            calls.append((pid, flag))
+
+    report = L.dedup(FakeNotion())
+    assert sorted(calls) == [("h1", True), ("h2", True), ("h3", True), ("h4", False)]
+    assert "小螢" in report and "AA1" in report and "BB1" in report and "CC1" not in report
