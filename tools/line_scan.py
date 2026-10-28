@@ -159,7 +159,7 @@ def capture_pages(win, pages):
     shots = [capture(win)]
     r = win.rectangle()
     for _ in range(pages - 1):
-        mouse.scroll(coords=((r.left + r.right) // 2, (r.top + r.bottom) // 2), wheel_dist=8)
+        mouse.scroll(coords=((r.left + r.right) // 2, (r.top + r.bottom) // 2), wheel_dist=15)
         time.sleep(1.2)                            # 往上捲會載入舊訊息
         png = capture(win)
         if png == shots[-1]:

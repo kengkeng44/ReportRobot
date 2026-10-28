@@ -28,9 +28,10 @@ if ($shots.Count -gt 0) {
     Remove-Item $rows, (Join-Path $home_dir 'notes.json') -ErrorAction SilentlyContinue
     & $python $scan --prompt
     # 在 .line_scan 裡跑：截圖、prompt.md、rows.json 都在工作目錄內，只開讀圖、寫檔兩個工具。
+    # 指定 opus：預設模型一次讀多張大圖時把 NT$325 讀成 0（2026-10-28 實測）。
     # 指示放 prompt.md，命令列只傳一句短的 —— 長指示當參數傳會被 PowerShell 弄壞引號
     Push-Location $home_dir
-    try { & claude -p '讀 prompt.md，完全照裡面的指示做。' --allowedTools 'Read' 'Write' | Out-Null }
+    try { & claude -p '讀 prompt.md，完全照裡面的指示做。' --model opus --allowedTools 'Read' 'Write' | Out-Null }
     finally { Pop-Location }
     if (-not (Test-Path $rows)) { Log '❌ 本機讀圖沒有產出 rows.json，截圖留著下次再讀'; exit 4 }
     # 摘要先送：--rows --clean 會刪截圖，摘要失敗的話截圖要留著下次重讀
