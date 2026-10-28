@@ -14,14 +14,17 @@ $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
 $cls = Get-CimClass -Namespace ROOT\Microsoft\Windows\TaskScheduler -ClassName MSFT_TaskIdleTrigger
 $idle = New-CimInstance -CimClass $cls -ClientOnly -Property @{ Enabled = $true }
 $evening = New-ScheduledTaskTrigger -Daily -At 21:00
+# 凌晨 2 點主班：一定沒人在用電腦。會把睡眠中的電腦叫醒（WakeToRun），
+# 但螢幕若鎖著就只記一行 log 跳過 —— 要 2 點真的跑得成，Windows 要設成離開時不重新登入。
+$night = New-ScheduledTaskTrigger -Daily -At 2:00
 
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew `
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -WakeToRun -MultipleInstances IgnoreNew `
     -RunOnlyIfIdle -IdleDuration (New-TimeSpan -Minutes 10) -IdleWaitTimeout (New-TimeSpan -Hours 3) `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 20)
 $settings.IdleSettings.StopOnIdleEnd = $true
 $settings.IdleSettings.RestartOnIdle = $true
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
-Register-ScheduledTask -TaskName 'LINE 轉帳掃描' -Action $action -Trigger @($idle, $evening) `
+Register-ScheduledTask -TaskName 'LINE 轉帳掃描' -Action $action -Trigger @($night, $idle, $evening) `
     -Settings $settings -Principal $principal -Force | Out-Null
-Write-Host '已註冊「LINE 轉帳掃描」：閒置 10 分鐘才跑、你回來就停，一天成功一次。log 在' `
+Write-Host '已註冊「LINE 轉帳掃描」：凌晨 2 點／閒置 10 分鐘才跑、你回來就停，一天成功一次。log 在' `
     (Join-Path $HOME '.line_scan\log.txt')
