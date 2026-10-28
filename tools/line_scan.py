@@ -23,10 +23,11 @@
 import argparse
 import io
 import json
+import re
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 HOME = Path.home() / ".line_scan"
@@ -198,9 +199,9 @@ def send_notes(path, token):
 
 
 def read_prompt():
-    """給 claude -p 的讀圖指示：讀 shots 資料夾裡每張截圖，把轉帳／錢包付款寫成 rows.json。
+    """給 claude -p 的指示：截圖讀轉帳寫 rows.json；diary 資料夾的每日對話寫摘要 notes.json。
 
-    規則直接拿伺服器讀圖用的 transfer_ocr._PROMPT，兩邊永遠同一套。
+    轉帳規則直接拿伺服器讀圖用的 transfer_ocr._PROMPT，兩邊永遠同一套。
     帳戶主人的名字放 config.json 的 "owner"（repo 是公開的，名字不進程式碼）。
     """
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -208,31 +209,147 @@ def read_prompt():
     from tz_utils import today_tpe
 
     cfg = json.loads((HOME / "config.json").read_text(encoding="utf-8"))
-    shots = sorted((HOME / "shots").glob("*.png"))
-    rules = transfer_ocr._PROMPT.format(today=today_tpe().isoformat(),
-                                        owner=cfg.get("owner") or "（未知）")
+    owner = cfg.get("owner") or "帳戶主人"
     nl = chr(10)          # 跟 couple_ledger 一樣用 chr(10)：字面量 \n 在編輯流程裡被轉壞過
-    files = nl.join(f"- shots/{p.name}" for p in shots)
-    prompt = (f"讀下面每一張電腦版 LINE 聊天室截圖（用 Read 工具開圖）：{nl}{files}{nl}{nl}"
-              f"【一】轉帳：每張都照這個規則讀：{nl}{rules}{nl}{nl}"
-              "全部合併成一個 JSON 陣列，用 Write 工具寫到 rows.json（覆蓋）。一筆都沒有就寫 []。")
-    diary = [e["name"] for e in cfg.get("chats") or [] if isinstance(e, dict) and e.get("diary")]
+    shots = sorted((HOME / "shots").glob("*.png"))
+    diary = sorted((HOME / "diary").glob("*.txt"))
+    parts = []
+    if shots:
+        rules = transfer_ocr._PROMPT.format(today=today_tpe().isoformat(), owner=owner)
+        files = nl.join(f"- shots/{p.name}" for p in shots)
+        parts.append(f"【一】讀下面每一張電腦版 LINE 聊天室截圖（用 Read 工具開圖）：{nl}{files}{nl}{nl}"
+                     f"每張都照這個規則讀：{nl}{rules}{nl}{nl}"
+                     "全部合併成一個 JSON 陣列，用 Write 工具寫到 rows.json（覆蓋）。一筆都沒有就寫 []。")
+    else:
+        parts.append("【一】這次沒有截圖：用 Write 工具把 [] 寫到 rows.json。")
     if diary:
-        today = today_tpe()
-        prompt += (
-            f"{nl}{nl}【二】每日摘要：只看「{'、'.join(diary)}」的截圖（檔名有聊天室名稱，"
-            "同一個聊天室多張是往上捲截的，-1 最舊，相鄰兩張會重疊）。"
-            f"今天是 {today.isoformat()}，只寫今天以前、而且從當天第一則到最後一則都在截圖裡的日子"
-            "（最早那天如果上面被切掉、看不到當天開頭，就不要寫那天）。"
-            f"{nl}每天一句話，從{cfg.get('owner') or '帳戶主人'}的角度寫，用分號分開幾件事，"
-            "對方自己的事寫成「小螢……」；有轉帳就寫「收到小螢轉帳 NT$250」「轉給小螢 NT$185」。"
+        alias = next((e.get("alias") or e["name"] for e in cfg.get("chats") or []
+                      if isinstance(e, dict) and e.get("diary")), "對方")
+        files = nl.join(f"- diary/{p.name}" for p in diary)
+        parts.append(
+            f"【二】每日摘要：下面每個檔是{owner}和{alias}某一天完整的 LINE 對話（檔名就是日期，"
+            f"每行「時間 名字 內容」）：{nl}{files}{nl}{nl}"
+            f"每天寫一句話，從{owner}的角度寫，用分號分開幾件事，{alias}自己的事寫成「{alias}……」；"
+            f"有轉帳就寫「收到{alias}轉帳 NT$250」「轉給{alias} NT$185」。"
             "不要引用原句、不要寫電話地址帳號。像這樣：" + nl +
-            "  「小螢生理期不舒服；晚上搭機捷回板橋找她」" + nl +
-            "  「在淡水家，下午去剪頭髮、洗碗、收衣服；收到小螢轉帳 NT$250。小螢跟朋友吃川渝、逛街」" + nl +
-            "只是貼圖、互道晚安、沒有具體內容的日子就不要寫。"
+            f"  「{alias}生理期不舒服；晚上搭機捷回板橋找她」" + nl +
+            f"  「在淡水家，下午去剪頭髮、洗碗、收衣服；收到{alias}轉帳 NT$250。{alias}跟朋友吃川渝、逛街」" + nl +
+            "只有貼圖、互道晚安、沒有具體內容的日子就不要寫。"
             f"{nl}寫成 JSON 陣列 [{{\"date\":\"YYYY-MM-DD\",\"summary\":\"...\"}}]，"
             "用 Write 工具寫到 notes.json（覆蓋）；沒有就寫 []。")
-    return prompt + f"{nl}{nl}只寫這兩個檔，不要做其他事。"
+    return (nl + nl).join(parts) + f"{nl}{nl}只寫這兩個檔，不要做其他事。"
+
+
+def _dialogs(title):
+    """找標題是 title 的標準對話框（#32770）。LINE 的存檔視窗不在 UIA 的頂層清單裡，只能列舉。"""
+    import ctypes
+    import ctypes.wintypes as wt
+    u, hits = ctypes.windll.user32, []
+
+    def cb(h, _):
+        n = u.GetWindowTextLengthW(h)
+        b = ctypes.create_unicode_buffer(n + 1)
+        u.GetWindowTextW(h, b, n + 1)
+        c = ctypes.create_unicode_buffer(256)
+        u.GetClassNameW(h, c, 256)
+        if u.IsWindowVisible(h) and c.value == "#32770" and b.value == title:
+            hits.append(h)
+        return True
+    u.EnumWindows(ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, wt.LPARAM)(cb), 0)
+    return hits
+
+
+def export_chat(win, name, dest):
+    """聊天室右上角 ⋮ →「儲存聊天」→ 另存新檔填 dest → 存檔。回 dest。
+
+    2026-10-28 校正：選單是 LcContextMenu（項目沒有文字，只能用相對座標），
+    「儲存聊天」在選單左上角往下 403、往右 80。存檔視窗是一般的「另存新檔」。
+    路徑用英文：模擬打字會被中文輸入法吃掉，這裡直接設 Edit 的值。
+    """
+    from pywinauto import Desktop, mouse
+    from pywinauto.controls.hwndwrapper import HwndWrapper
+
+    dest = Path(dest)
+    dest.unlink(missing_ok=True)
+    try:
+        chat = open_chat(win, name)
+    except Exception:
+        time.sleep(5)
+        bring_front(win)
+        chat = open_chat(win, name)
+    try:
+        bring_front(chat)
+        r = chat.rectangle()
+        mouse.click(coords=(r.right - 32, r.top + 87))          # ⋮
+        time.sleep(1.5)
+        menus = [w for w in Desktop(backend="uia").windows() if w.class_name() == "LcContextMenu"]
+        if not menus:
+            raise RuntimeError("聊天室選單沒有跳出來")
+        m = menus[0].rectangle()
+        mouse.click(coords=(m.left + 80, m.top + 403))          # 儲存聊天
+        for _ in range(20):
+            time.sleep(0.5)
+            dlgs = _dialogs("另存新檔")
+            if dlgs:
+                break
+        else:
+            raise RuntimeError("另存新檔視窗沒有跳出來")
+        dlg = HwndWrapper(dlgs[0])
+        [e for e in dlg.descendants() if e.class_name() == "Edit"][0].set_edit_text(str(dest))
+        time.sleep(0.4)
+        [b for b in dlg.children() if b.class_name() == "Button" and "存檔" in b.window_text()][0].click()
+        # LINE 存完會再抓著檔案一下（2026-10-28 實測 WinError 32）：等大小不再變、而且打得開才算好
+        last = -1
+        for _ in range(60):
+            time.sleep(0.5)
+            size = dest.stat().st_size if dest.exists() else 0
+            if size and size == last:
+                try:
+                    with open(dest, "rb+"):
+                        return dest
+                except OSError:
+                    pass
+            last = size
+        raise RuntimeError("存檔後匯出檔一直沒寫完")
+    finally:
+        chat.close()
+
+
+_DAY_RE = re.compile(r"^(\d{4})\.(\d{2})\.(\d{2}) 星期")
+_MSG_RE = re.compile(r"^(\d{2}:\d{2}) (\S+) (.*)$")
+_TRANSFER_RE = re.compile(r"收到NT\$\s?([\d,]+)的轉帳")
+
+
+def split_days(text):
+    """匯出檔 → {"YYYY-MM-DD": [行, ...]}。日期行是「2026.02.14 星期六」，
+    訊息行是「HH:MM 名字 內容」，多行訊息的續行接在前一則後面。"""
+    days, cur = {}, None
+    for line in text.splitlines():
+        m = _DAY_RE.match(line)
+        if m:
+            cur = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+            days.setdefault(cur, [])
+        elif cur and line.strip():
+            days[cur].append(line)
+    return days
+
+
+def transfers_from_days(days, owner, partner):
+    """LINE 轉帳在匯出檔裡是「HH:MM 名字 收到NT$ 300的轉帳。」—— 名字是**收款人**
+    （2026-10-28 對照舊每日紀錄確認：「鄭仁和 收到 666」＝收到小螢轉帳）。
+    純程式解析、不經過 AI —— 格式固定，用規則比讀圖準。"""
+    rows = []
+    for day, lines in days.items():
+        for line in lines:
+            m = _MSG_RE.match(line)
+            t = _TRANSFER_RE.search(line) if m else None
+            if not t:
+                continue
+            received = m.group(2) == owner
+            rows.append({"date": day, "time": m.group(1), "direction": "in" if received else "out",
+                         "amount": int(t.group(1).replace(",", "")),
+                         "counterparty": partner, "channel": "LINE Pay", "memo": "", "skip": ""})
+    return rows
 
 
 def clean_shots(before):
@@ -243,6 +360,42 @@ def clean_shots(before):
             p.unlink()
             n += 1
     return n
+
+
+def export_entry(win, entry, cfg, token, dry_run):
+    """匯出聊天記錄 → 轉帳（程式解析）寫 rows_export.json、最近幾天的對話切成 diary\日期.txt
+    給 claude -p 寫摘要。完整匯出檔一讀完就刪：裡面是幾個月的完整對話。"""
+    name = entry["name"]
+    alias = entry.get("alias") or name
+    owner = cfg.get("owner") or ""
+    dest = HOME / "export" / "chat.txt"
+    dest.parent.mkdir(exist_ok=True)
+    export_chat(win, name, dest)
+    try:
+        days = split_days(dest.read_text(encoding="utf-8-sig"))
+    finally:
+        for _ in range(10):                       # 完整對話不能留在硬碟上：刪不掉就多試幾次
+            try:
+                dest.unlink(missing_ok=True)
+                break
+            except OSError:
+                time.sleep(1)
+    today = datetime.now().date()
+    recent = lambda n: {(today - timedelta(days=i)).isoformat() for i in range(1, n + 1)}
+    # 轉帳看最近 7 天（伺服器有指紋去重，重送安全）；摘要只寫最近 diary_days 天、不含今天
+    rows = transfers_from_days({d: v for d, v in days.items() if d in recent(7)}, owner, alias)
+    (HOME / "rows_export.json").write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
+    n_diary = 0
+    if entry.get("diary"):
+        ddir = HOME / "diary"
+        ddir.mkdir(exist_ok=True)
+        for d in sorted(recent(int(entry.get("diary_days") or 3))):
+            if days.get(d):
+                (ddir / f"{d}.txt").write_text(chr(10).join(days[d]), encoding="utf-8")
+                n_diary += 1
+    log(f"💬 {name}：匯出 {len(days)} 天，最近 7 天轉帳 {len(rows)} 筆，摘要待寫 {n_diary} 天")
+    if not dry_run and rows:
+        log(f"✅ {name} 轉帳：{send_rows(HOME / 'rows_export.json', token).replace(chr(10), ' / ')}")
 
 
 def run(dry_run):
@@ -258,9 +411,17 @@ def run(dry_run):
         return 2
     failed = 0
     for entry in chats:
-        # 字串＝只截最新一個畫面；{"name", "pages"}＝往上捲多截幾張（要寫每日摘要的聊天室）
+        # 字串＝只截最新一個畫面；{"name", "pages"}＝往上捲多截幾張；
+        # {"name", "export": true}＝改用「儲存聊天」匯出文字檔（轉帳＋每日摘要都從文字讀）
         name = entry if isinstance(entry, str) else entry["name"]
         pages = 1 if isinstance(entry, str) else int(entry.get("pages") or 1)
+        if isinstance(entry, dict) and entry.get("export"):
+            try:
+                export_entry(win, entry, cfg, token, dry_run)
+            except Exception as e:
+                failed += 1
+                log(f"❌ {name}（匯出）：{type(e).__name__} {e}")
+            continue
         try:
             try:
                 chat = open_chat(win, name)
@@ -307,6 +468,8 @@ if __name__ == "__main__":
         log("📔 每日摘要：" + ("、".join(f"{d} {label.get(v, v)}" for d, v in sorted(res.items())) or "沒有"))
         sys.exit(0)
     if args.rows:
+        if not json.loads(Path(args.rows).read_text(encoding="utf-8-sig")) and not args.clean:
+            sys.exit(0)                           # 匯出檔這幾天沒有轉帳：不用打一趟伺服器
         token = (HOME / "admin_token").read_text(encoding="utf-8-sig").strip()
         text = send_rows(args.rows, token)
         log(f"✅ 本機讀圖：{text.replace(chr(10), ' / ')}")
