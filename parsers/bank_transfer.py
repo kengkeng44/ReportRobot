@@ -31,6 +31,7 @@ from bs4 import BeautifulSoup
 
 FUBON = "富邦轉帳"
 CATHAY = "國泰轉帳"
+POST = "郵局轉帳"
 
 _CARD_VACCT_PREFIX = "4284300"     # 國泰信用卡繳款虛擬帳號開頭
 
@@ -136,6 +137,35 @@ def parse_cathay_cube(html):
                  _int(m_fee.group(1)) if m_fee else 0, (m_memo.group(1) if m_memo else "").strip())]
 
 
+# 郵局 mpost@mail.post.gov.tw「行動郵局交易通知」（2026-10-29 加）。信寄到另一個信箱，
+# 用 POST_TOKEN_PICKLE_B64 那顆授權讀，見 finance_sync._post_service
+#   您的存簿轉存簿(非約定)即時轉帳結果如下： 轉入行庫 ：中華郵政股份有限公司
+#   轉入帳號 ：0021*****58281 轉帳金額 ：3,635 手續費 ：0 交易序號 ：00621325
+#   附言(給自己) ：I聖 附言(給對方) ： 完成時間 ：115年10月22日19時20分23秒
+_POST_BANK = re.compile(r"轉入行庫\s*[:：]\s*(\S+)")
+_POST_ACCT = re.compile(r"轉入帳號\s*[:：]\s*([\d*]+)")
+_POST_AMT = re.compile(r"轉帳金額\s*[:：]\s*([\d,]+)")
+_POST_FEE = re.compile(r"手續費\s*[:：]\s*([\d,]+)")
+_POST_MEMO = re.compile(r"附言[（(]給自己[)）]\s*[:：]\s*(.*?)\s*附言")
+# 完成時間是民國年
+_POST_TIME = re.compile(r"完成時間\s*[:：]\s*(\d{3})年(\d{1,2})月(\d{1,2})日(\d{1,2})時(\d{1,2})分")
+
+
+def parse_post(html):
+    t = _text(html)
+    if "轉帳結果" not in t:
+        return []
+    m_time, m_acct, m_amt = _POST_TIME.search(t), _POST_ACCT.search(t), _POST_AMT.search(t)
+    if not (m_time and m_acct and m_amt):
+        return []
+    roc, mo, d, hh, mi = (int(x) for x in m_time.groups())
+    m_bank, m_fee, m_memo = _POST_BANK.search(t), _POST_FEE.search(t), _POST_MEMO.search(t)
+    bank = m_bank.group(1) if m_bank else "中華郵政"
+    return [_txn(POST, f"{roc + 1911}-{mo:02d}-{d:02d}", f"{hh:02d}:{mi:02d}", _int(m_amt.group(1)),
+                 bank, m_acct.group(1), "",
+                 _int(m_fee.group(1)) if m_fee else 0, (m_memo.group(1) if m_memo else "").strip())]
+
+
 class _Parser:
     """finance_sync.SOURCES 要的是有 parse(html) 的模組；兩種信各包一個。"""
 
@@ -145,3 +175,4 @@ class _Parser:
 
 fubon = _Parser(parse_fubon)
 cathay_cube = _Parser(parse_cathay_cube)
+post = _Parser(parse_post)
