@@ -2,9 +2,12 @@
 #   截圖（LINE錢包）＋匯出聊天記錄（小螢）→ claude -p 在本機讀 → 送出轉帳、每日摘要 → 刪暫存。
 # 不經過伺服器的 Anthropic key，用的是 Claude 訂閱額度。
 #
-# 一天只成功跑一次：成功後寫 last_ok（今天的日期），同一天再觸發就直接結束。
+# 只在凌晨 4–6 點跑；一天只成功跑一次：成功後寫 last_ok（今天的日期），同一天再觸發就直接結束。
 # 電腦鎖定、LINE 沒登入時 line_scan.py 會記 log 並回非 0，這次不算成功，下次觸發再試。
 $ErrorActionPreference = 'Stop'
+# 只准凌晨 4:00–5:59 跑，其他時間直接結束（2026-10-29 使用者要求：會搶滑鼠鍵盤）
+$hour = (Get-Date).Hour
+if ($hour -lt 4 -or $hour -ge 6) { exit 0 }
 $home_dir = Join-Path $HOME '.line_scan'
 $last_ok = Join-Path $home_dir 'last_ok'
 $today = Get-Date -Format 'yyyy-MM-dd'
