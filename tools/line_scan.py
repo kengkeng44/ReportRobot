@@ -398,6 +398,37 @@ def export_entry(win, entry, cfg, token, dry_run):
         log(f"✅ {name} 轉帳：{send_rows(HOME / 'rows_export.json', token).replace(chr(10), ' / ')}")
 
 
+def audit(out):
+    """對帳用：匯出 config 裡 export 的聊天室，把**全部日子**的轉帳寫到 out（只有日期、金額、方向，
+    不留對話內容），拿來比對舊紀錄的轉帳方向。不送伺服器。"""
+    cfg = json.loads((HOME / "config.json").read_text(encoding="utf-8"))
+    entry = next(e for e in cfg.get("chats") or [] if isinstance(e, dict) and e.get("export"))
+    if not desktop_unlocked():
+        log("❌ 電腦鎖定中，對帳匯出跳過")
+        return 3
+    win = main_window()
+    if win is None:
+        return 2
+    dest = HOME / "export" / "chat.txt"
+    dest.parent.mkdir(exist_ok=True)
+    export_chat(win, entry["name"], dest)
+    try:
+        days = split_days(dest.read_text(encoding="utf-8-sig"))
+    finally:
+        for _ in range(10):
+            try:
+                dest.unlink(missing_ok=True)
+                break
+            except OSError:
+                time.sleep(1)
+    win.minimize()
+    rows = transfers_from_days(days, cfg.get("owner") or "", entry.get("alias") or entry["name"])
+    Path(out).write_text(json.dumps(sorted(rows, key=lambda r: (r["date"], r["time"])), ensure_ascii=False, indent=1),
+                         encoding="utf-8")
+    log(f"🔎 對帳匯出：{len(days)} 天、轉帳 {len(rows)} 筆 → {out}")
+    return 0
+
+
 def run(dry_run):
     cfg = json.loads((HOME / "config.json").read_text(encoding="utf-8"))
     chats = cfg.get("chats") or []
@@ -455,7 +486,10 @@ if __name__ == "__main__":
     ap.add_argument("--clean", action="store_true", help="配 --rows：送出成功就刪掉讀過的截圖")
     ap.add_argument("--notes", help="送出每日摘要 notes.json，填進每日紀錄（只填空白的）")
     ap.add_argument("--prompt", action="store_true", help="把給 claude -p 的讀圖指示寫到 prompt.md")
+    ap.add_argument("--audit", help="對帳：匯出聊天室全部日子的轉帳寫到這個 JSON 檔，不送出")
     args = ap.parse_args()
+    if args.audit:
+        sys.exit(audit(args.audit))
     if args.prompt:
         # 寫檔而不是印出來：Windows PowerShell 5.1 把多行、含雙引號的字串當命令列參數
         # 傳給 claude 時會把引號弄壞（2026-10-27 實測：讀出來的格式整個不對）
