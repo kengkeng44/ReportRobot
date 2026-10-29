@@ -210,6 +210,13 @@ def test_post_card_payment_skipped():
     assert len(bt.post.parse(friend)) == 1
 
 
+def test_transfer_to_own_account_skipped():
+    to_cathay = (POST_MAIL.replace("中華郵政股份有限公司", "013/國泰世華")
+                 .replace("0021*****58281", "23*****80811"))
+    assert bt.post.parse(to_cathay) == []
+    assert bt.cathay_cube.parse(CUBE_FRIEND.replace("1234567****8899", "0001*****61829")) == []
+
+
 def test_post_other_mail_ignored():
     assert bt.post.parse("<p>行動郵局 登入通知</p>") == []
 

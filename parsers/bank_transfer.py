@@ -42,7 +42,14 @@ def transfer_fingerprint(date, hhmm, direction, amount):
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 
-def is_self(name):
+# 自己的帳戶後五碼（2026-10-29 使用者確認）：國泰 0000239****80811、郵局 0001*****61829。
+# 郵局信沒有對方名字，is_self 判斷不了，只能看帳號
+_OWN_ACCOUNT_SUFFIXES = ("80811", "61829")
+
+
+def is_self(name, account=""):
+    if (account or "").endswith(_OWN_ACCOUNT_SUFFIXES):
+        return True
     owner = os.environ.get("OWNER_REAL_NAME", "").strip()
     name = (name or "").strip()
     if not owner or len(name) != len(owner) or len(owner) < 2:
@@ -104,7 +111,7 @@ def parse_fubon(html):
     if not (m_time and m_amt and m_to):
         return []
     code, bank, acct, name = m_to.group(1), m_to.group(2), m_to.group(3), m_to.group(4).strip()
-    if is_card_payment(code, acct, name) or is_self(name):
+    if is_card_payment(code, acct, name) or is_self(name, acct):
         return []
     y, mo, d, hh, mi = m_time.groups()
     m_fee, m_memo = _FUBON_FEE.search(t), _FUBON_MEMO.search(t)
@@ -132,7 +139,7 @@ def parse_cathay_cube(html):
     if not (m_time and m_bank and m_acct and m_amt):
         return []
     code, bank, acct = m_bank.group(1), m_bank.group(2), m_acct.group(1)
-    if is_card_payment(code, acct, ""):
+    if is_card_payment(code, acct, "") or is_self("", acct):
         return []
     y, mo, d, hh, mi = m_time.groups()
     m_fee, m_memo = _CUBE_FEE.search(t), _CUBE_MEMO.search(t)
@@ -166,7 +173,7 @@ def parse_post(html):
     bank = m_bank.group(1) if m_bank else "中華郵政"
     # 跨行是「013/國泰世華」，郵局轉郵局只有行名
     code = bank.split("/")[0] if "/" in bank else "700"
-    if is_card_payment(code, m_acct.group(1), ""):
+    if is_card_payment(code, m_acct.group(1), "") or is_self("", m_acct.group(1)):
         return []
     return [_txn(POST, f"{roc + 1911}-{mo:02d}-{d:02d}", f"{hh:02d}:{mi:02d}", _int(m_amt.group(1)),
                  bank, m_acct.group(1), "",
