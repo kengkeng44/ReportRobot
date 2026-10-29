@@ -202,6 +202,14 @@ def test_post_transfer_parsed():
     assert t["fingerprint"] == bt.transfer_fingerprint("2026-10-22", "19:20", "out", 3635)
 
 
+def test_post_card_payment_skipped():
+    card = (POST_MAIL.replace("中華郵政股份有限公司", "013/國泰世華")
+            .replace("0021*****58281", "428430*****16120"))
+    assert bt.post.parse(card) == []
+    friend = card.replace("428430*****16120", "07*****40305")
+    assert len(bt.post.parse(friend)) == 1
+
+
 def test_post_other_mail_ignored():
     assert bt.post.parse("<p>行動郵局 登入通知</p>") == []
 

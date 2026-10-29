@@ -53,7 +53,10 @@ def is_self(name):
 def is_card_payment(bank_code, account, name):
     if "信用卡" in (name or ""):
         return True
-    return bank_code == "013" and (account or "").startswith(_CARD_VACCT_PREFIX)
+    # 郵局信把帳號遮成「428430*****16120」，只露 6 碼，比不到 7 碼前綴 —— 比露出來的那段
+    head = (account or "").split("*")[0]
+    return bank_code == "013" and len(head) >= 6 and (
+        head.startswith(_CARD_VACCT_PREFIX) or _CARD_VACCT_PREFIX.startswith(head))
 
 
 def _text(html):
@@ -161,6 +164,10 @@ def parse_post(html):
     roc, mo, d, hh, mi = (int(x) for x in m_time.groups())
     m_bank, m_fee, m_memo = _POST_BANK.search(t), _POST_FEE.search(t), _POST_MEMO.search(t)
     bank = m_bank.group(1) if m_bank else "中華郵政"
+    # 跨行是「013/國泰世華」，郵局轉郵局只有行名
+    code = bank.split("/")[0] if "/" in bank else "700"
+    if is_card_payment(code, m_acct.group(1), ""):
+        return []
     return [_txn(POST, f"{roc + 1911}-{mo:02d}-{d:02d}", f"{hh:02d}:{mi:02d}", _int(m_amt.group(1)),
                  bank, m_acct.group(1), "",
                  _int(m_fee.group(1)) if m_fee else 0, (m_memo.group(1) if m_memo else "").strip())]
