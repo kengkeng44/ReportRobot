@@ -172,8 +172,60 @@ def test_handle_image_nothing_found(monkeypatch):
 def test_transfer_sources_registered():
     import finance_sync
     parsers = [p for _, p in finance_sync.TRANSFER_SOURCES]
-    assert bt.fubon in parsers and bt.cathay_cube in parsers
-    assert len(finance_sync.TRANSFER_SOURCES) == 2
+    assert bt.fubon in parsers and bt.cathay_cube in parsers and bt.post in parsers
+    assert len(finance_sync.TRANSFER_SOURCES) == 3
+
+
+# 2026-10-22 真信（截圖抄下來的）
+POST_MAIL = """<table>
+<tr><td>行動郵局交易通知</td></tr>
+<tr><td>親愛的客戶您好：</td></tr>
+<tr><td>您的存簿轉存簿(非約定)即時轉帳結果如下：</td></tr>
+<tr><td>轉出帳號 ：0001*****61829</td></tr>
+<tr><td>轉入行庫 ：中華郵政股份有限公司</td></tr>
+<tr><td>轉入帳號 ：0021*****58281</td></tr>
+<tr><td>轉帳金額 ：3,635</td></tr>
+<tr><td>手續費 ：0</td></tr>
+<tr><td>交易序號 ：00621325</td></tr>
+<tr><td>附言(給自己) ：I聖</td></tr>
+<tr><td>附言(給對方) ：</td></tr>
+<tr><td>完成時間 ：115年10月22日19時20分23秒</td></tr>
+<tr><td>如有任何疑問，請撥打本公司24小時顧客服務專線</td></tr>
+</table>"""
+
+
+def test_post_transfer_parsed():
+    [t] = bt.post.parse(POST_MAIL)
+    assert (t["date"], t["time"], t["amount"]) == ("2026-10-22", "19:20", 3635)
+    assert t["source"] == "郵局轉帳" and t["direction"] == "轉帳"
+    assert "留言：I聖" in t["items"] and "0021*****58281" in t["items"]
+    assert t["fingerprint"] == bt.transfer_fingerprint("2026-10-22", "19:20", "out", 3635)
+
+
+def test_post_card_payment_skipped():
+    card = (POST_MAIL.replace("中華郵政股份有限公司", "013/國泰世華")
+            .replace("0021*****58281", "428430*****16120"))
+    assert bt.post.parse(card) == []
+    friend = card.replace("428430*****16120", "07*****40305")
+    assert len(bt.post.parse(friend)) == 1
+
+
+def test_post_other_mail_ignored():
+    assert bt.post.parse("<p>行動郵局 登入通知</p>") == []
+
+
+def test_post_source_skipped_without_second_inbox(monkeypatch):
+    import finance_sync
+    monkeypatch.setattr(finance_sync, "_post_service", lambda: None)
+    calls = []
+    monkeypatch.setattr(finance_sync, "fetch_messages", lambda svc, q, max_results=50: calls.append(q) or [])
+
+    class N:
+        is_configured = staticmethod(lambda: True)
+        transactions_existing_fingerprints = staticmethod(lambda **kw: set())
+
+    finance_sync.sync(service=object(), notion=N(), sources=finance_sync.TRANSFER_SOURCES)
+    assert calls and not any("mpost" in q for q in calls)
 
 
 def test_webhook_routes_images_to_ocr():

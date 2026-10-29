@@ -557,6 +557,8 @@ async def env_check(request: Request):
         "SEND_TOKEN_PICKLE_B64",
         "REPORT_EMAIL_TO",
         "TOKEN_PICKLE_B64",
+        # 第二個信箱（郵局通知寄到那個）的 readonly token，setup_post_token.py 產生
+        "POST_TOKEN_PICKLE_B64",
         "ANTHROPIC_API_KEY",
         "CWA_API_KEY",
         "OWM_API_KEY",
