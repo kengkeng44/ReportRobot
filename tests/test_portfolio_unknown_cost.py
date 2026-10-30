@@ -160,3 +160,12 @@ def test_text_net_value_survives_missing_fx_rate(monkeypatch):
 
     assert "110,000" in text
     assert "600" in text
+
+
+def test_gmail_reader_sort_tolerates_unknown_cost():
+    """2026-10：美股改用月對帳單庫存當起點，avg_cost 全是 None，
+    排序直接相乘丟 TypeError → 回 {} → LINE「目前無持倉資料」。"""
+    from gmail_reader import _cost_value
+    rows = {"SPCX": {"shares": 12, "avg_cost": None}, "2330": {"shares": 10, "avg_cost": 900.0}}
+    order = [t for t, _ in sorted(rows.items(), key=lambda x: _cost_value(x[1]), reverse=True)]
+    assert order == ["2330", "SPCX"]

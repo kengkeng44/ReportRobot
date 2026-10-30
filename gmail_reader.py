@@ -717,6 +717,15 @@ def _group_starting_holdings():
             if snap["cutoff"] and snap["holdings"]}
 
 
+def _cost_value(p):
+    """排序用的成本金額。月對帳單庫存沒有成本欄，avg_cost 是 None（見 holdings），當 0 排最後。
+
+    2026-10 起美股改用 9 月對帳單庫存當起點，整個部位都是 None，
+    這裡直接相乘丟 TypeError，被外層 except 吃掉後回 {}，LINE 就顯示「目前無持倉資料」。
+    """
+    return p['shares'] * p['avg_cost'] if p.get('avg_cost') is not None else 0
+
+
 def get_portfolio_from_gmail():
     """
     雙 pass 策略：
@@ -820,13 +829,11 @@ def get_portfolio_from_gmail():
         if not portfolio:
             print("  無持倉")
         else:
-            for ticker, p in sorted(
-                portfolio.items(),
-                key=lambda x: x[1]['shares'] * x[1]['avg_cost'],
-                reverse=True,
-            ):
-                cost_value = p['shares'] * p['avg_cost']
-                print(f"  {ticker}: {p['shares']} 股 @ 均價 {p['avg_cost']:.2f}（成本 {cost_value:,.0f}）")
+            for ticker, p in sorted(portfolio.items(), key=lambda x: _cost_value(x[1]), reverse=True):
+                if p['avg_cost'] is None:
+                    print(f"  {ticker}: {p['shares']} 股 @ 均價 未知")
+                else:
+                    print(f"  {ticker}: {p['shares']} 股 @ 均價 {p['avg_cost']:.2f}（成本 {_cost_value(p):,.0f}）")
         print("========================")
         return portfolio
     except Exception as e:
@@ -842,7 +849,7 @@ def get_stocks_from_gmail():
         return []
     sorted_tickers = sorted(
         portfolio.items(),
-        key=lambda x: x[1]['shares'] * x[1]['avg_cost'],
+        key=lambda x: _cost_value(x[1]),
         reverse=True,
     )
     top3 = [ticker for ticker, _ in sorted_tickers[:3]]
