@@ -658,10 +658,15 @@ def _build_snapshots(statements, env=None):
     # 起始庫存以 Notion「起始庫存」表為主（使用者可以用 App 直接改），
     # 環境變數留著當備援 —— Notion 掛掉時還有東西可用。
     # 月對帳單庫存優先於兩者：那是券商給的真實資料，不是人填的。
+    # 例外：Notion 基準日比對帳單月底還新就用 Notion —— 對帳單庫存表沒有成本，
+    # 使用者照 App 庫存頁填的那份同時有股數和均價，而且比較接近現況（2026-10-30）。
     have = {snap["market"] for snap in snapshots}
     for market, positions in _group_starting_holdings().items():
         if market in have:
-            continue
+            stmt = next(s for s in snapshots if s["market"] == market)
+            if positions["cutoff"] <= holdings.month_end(*stmt["period"]):
+                continue
+            snapshots.remove(stmt)
         snapshots.append(positions)
         have.add(market)
 
