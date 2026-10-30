@@ -665,6 +665,12 @@ def _build_snapshots(statements, env=None):
         if market in have:
             stmt = next(s for s in snapshots if s["market"] == market)
             if positions["cutoff"] <= holdings.month_end(*stmt["period"]):
+                # 對帳單比較新但沒有成本：股數沒變的那幾檔沿用 Notion 均價。
+                # 股數變了就不沿用 —— 中間有買賣，舊均價已經不對，寧可顯示未知
+                for ticker, h in stmt["holdings"].items():
+                    old = positions["holdings"].get(ticker)
+                    if h.get("avg_cost") is None and old and old["shares"] == h["shares"]:
+                        h["avg_cost"] = old.get("avg_cost")
                 continue
             snapshots.remove(stmt)
         snapshots.append(positions)

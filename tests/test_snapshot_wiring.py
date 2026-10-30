@@ -227,3 +227,22 @@ def test_newer_notion_beats_statement(monkeypatch):
     assert len(us) == 1
     assert us[0]["holdings"]["AAPL"] == {"shares": 8, "avg_cost": 281.74}
 
+
+
+def test_statement_newer_keeps_notion_cost_when_shares_unchanged(monkeypatch):
+    """下個月對帳單又比 Notion 新：股數一樣就沿用均價，不要又變回「未知」。"""
+    _notion(monkeypatch, [_pos("AAPL", market="US", shares=3, cost=281.74, asof="2026-05-31")])
+
+    snaps = gr._build_snapshots([(US_MONTHLY, US_INVENTORY)], {})
+    us = [s for s in snaps if s["market"] == "US"][0]
+
+    assert us["holdings"]["AAPL"] == {"shares": 3, "avg_cost": 281.74}
+
+
+def test_statement_newer_drops_cost_when_shares_changed(monkeypatch):
+    _notion(monkeypatch, [_pos("AAPL", market="US", shares=2, cost=281.74, asof="2026-05-31")])
+
+    snaps = gr._build_snapshots([(US_MONTHLY, US_INVENTORY)], {})
+    us = [s for s in snaps if s["market"] == "US"][0]
+
+    assert us["holdings"]["AAPL"]["avg_cost"] is None
