@@ -998,3 +998,28 @@ def test_partner_sync_error_does_not_break_my_sync(env, monkeypatch):
     monkeypatch.setattr(notion_db, "partner_txns_pending", boom)
     monkeypatch.setattr(notion_db, "transactions_checked_pending", lambda: [])
     assert cl.sync_checked() == 0
+
+
+def test_todo_db_split_by_owner(monkeypatch):
+    """你、記帳群組、其他人各一張待辦表。"""
+    monkeypatch.setenv("ADMIN_LINE_USER_ID", "Uadmin")
+    monkeypatch.setenv("COUPLE_GROUP_ID", "Cgroup")
+    assert notion_db._todos_db_name("Uadmin") == "Todos"
+    assert notion_db._todos_db_name("Cgroup") == "共同待辦"
+    other = notion_db._todos_db_name("Uother123456")
+    assert other == "待辦｜123456" and notion_db._DB_SECTION[other] == "待辦"
+    assert notion_db._DB_SECTION["共同待辦"] == "共同記帳"
+
+
+def test_todo_type_guess_and_grouping():
+    import todo_parse
+    from flex_builder import todo_list_flex
+    assert todo_parse.guess_type("買洗衣精") == "🛒 採購"
+    assert todo_parse.guess_type("繳電費") == "💳 繳費"
+    assert todo_parse.guess_type("洗衣服") == "🧹 家務"
+    card = str(todo_list_flex([
+        {"id": 1, "text": "洗衣服", "type": "🧹 家務"},
+        {"id": 2, "text": "買衛生紙", "type": "🛒 採購"},
+    ], db_url="https://www.notion.so/x"))
+    assert card.index("🛒 採購") < card.index("買衛生紙") < card.index("🧹 家務") < card.index("洗衣服")
+    assert "https://www.notion.so/x" in card

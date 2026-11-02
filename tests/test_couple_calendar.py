@@ -1,4 +1,4 @@
-"""情侶群組明天預告：明天有 ⭐ 特別活動才推，到期待辦順便帶；只有待辦不推。"""
+"""情侶群組明天預告與待辦提醒：明天有活動或明天到期的待辦才推；早上推今天與逾期。"""
 
 from datetime import date
 
@@ -63,11 +63,35 @@ def test_special_event_pushes_to_couple_group(monkeypatch):
     assert "待辦" not in text
 
 
-def test_todos_alone_do_not_push(monkeypatch):
+def test_todo_due_tomorrow_pushes_without_event(monkeypatch):
     _events(monkeypatch, [])
     personal.add_todo(GROUP, "繳電費", start=TOMORROW)
+    text, sent = _run()
+    assert sent == [(GROUP, text)] and "繳電費（明天）" in text
+
+
+def test_only_overdue_todos_wait_for_morning(monkeypatch):
+    """只有逾期的晚上不推，留給早上 9 點那次。"""
+    _events(monkeypatch, [])
     personal.add_todo(GROUP, "退貨", start=date(2026, 10, 21))
     assert _run() == (None, [])
+
+
+def test_morning_pushes_today_and_overdue(monkeypatch):
+    monkeypatch.setenv("ADMIN_LINE_USER_ID", "Uadmin")
+    personal.add_todo(GROUP, "繳電費", start=TODAY, for_="小螢")
+    personal.add_todo(GROUP, "退貨", start=date(2026, 10, 21))
+    personal.add_todo(GROUP, "明天的", start=TOMORROW)
+    personal.add_todo("Uadmin", "交報告", start=TODAY)
+    sent = []
+    couple_calendar.run_morning_todos(push_func=lambda to, m: sent.append((to, m)), today=TODAY)
+    group_text = dict(sent)[GROUP]
+    assert "繳電費（今天）　👤 小螢" in group_text
+    assert "退貨（⚠️ 逾期 3 天）" in group_text and "明天的" not in group_text
+    assert "交報告" in dict(sent)["Uadmin"] and "交報告" not in group_text
+    again = []
+    couple_calendar.run_morning_todos(push_func=lambda to, m: again.append(m), today=TODAY)
+    assert again == []
 
 
 def test_due_todos_ride_along_with_event(monkeypatch):
@@ -103,12 +127,15 @@ def test_same_night_pushes_only_once(monkeypatch):
     assert second is None and sent2 == []
 
 
-def test_calendar_failure_means_no_push(monkeypatch):
+def test_calendar_failure_still_reminds_todos(monkeypatch):
+    """日曆讀不到只是少了活動，明天到期的待辦照樣提醒。"""
     def boom(day):
         raise RuntimeError("token 過期")
     monkeypatch.setattr(couple_calendar, "fetch_events", boom)
-    personal.add_todo(GROUP, "繳電費", start=TOMORROW)
     assert _run() == (None, [])
+    personal.add_todo(GROUP, "繳電費", start=TOMORROW)
+    text, sent = _run()
+    assert sent and "繳電費" in text
 
 
 def test_no_group_configured_skips(monkeypatch):

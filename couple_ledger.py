@@ -1102,6 +1102,19 @@ def _strip_payer(t, ctx):
     return t, None
 
 
+def _todo_card(key):
+    """群組清單卡，底下附這個群組自己的 Notion 待辦表（跟你私人的分開）。"""
+    import notion_db
+    import personal
+    from flex_builder import todo_list_flex
+    try:
+        url = notion_db.todos_db_url(key)
+    except Exception as e:
+        print(f"待辦表網址取得失敗：{e}")
+        url = ""
+    return todo_list_flex(personal.list_todos(key), db_url=url)
+
+
 def _todo(body, ctx):
     """群組待辦：兩人共用一份，用群組 ID 當清單主人。
 
@@ -1118,7 +1131,7 @@ def _todo(body, ctx):
         return None
     try:
         if not body:
-            return todo_list_flex(personal.list_todos(key))
+            return _todo_card(key)
         by = _name((ctx or {}).get("user_id"), key)
         lines = [ln.strip() for ln in body.splitlines()]
         # 貼上來的清單常常第一行又是「待辦」或空行，這些不是事情
@@ -1128,7 +1141,7 @@ def _todo(body, ctx):
             for ln in lines:
                 personal.add_todo(key, ln, by=by)
             return [f"✅ 已記下 {len(lines)} 件待辦" + (f"（{by}）" if by else ""),
-                    todo_list_flex(personal.list_todos(key))]
+                    _todo_card(key)]
         return command_router._handle_todo_subcmd(key, lines[0] if lines else body, by=by)
     except Exception as e:
         print(f"群組待辦失敗：{e}")
@@ -1163,7 +1176,7 @@ def _todo_for(who, body, ctx):
         when = f"📅 {start.month}/{start.day}　" if start else ""
         stamp = now_tpe().strftime("%m/%d %H:%M")
         return [f"✅ 幫 {who} 記下：{content}\n{when}✍️ {by or '有人'} {stamp} 記",
-                todo_list_flex(personal.list_todos(key))]
+                _todo_card(key)]
     except Exception as e:
         print(f"幫人記待辦失敗：{e}")
         return "待辦暫時連不上，等一下再試。"

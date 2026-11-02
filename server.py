@@ -381,6 +381,29 @@ async def lifespan(app: FastAPI):
             couple_calendar.run_evening_preview()
         except Exception as e:
             print(f"[couple_calendar] 明天預告失敗（非致命）：{e}")
+        try:
+            import couple_calendar
+            couple_calendar.run_evening_personal()
+        except Exception as e:
+            print(f"[todo_remind] 個人明天預告失敗（非致命）：{e}")
+
+    # 待辦 09:00 提醒：今天到期與逾期的（群組推群組、你的私訊你）
+    def _run_morning_todos():
+        try:
+            import couple_calendar
+            couple_calendar.run_morning_todos()
+        except Exception as e:
+            print(f"[todo_remind] 早上提醒失敗（非致命）：{e}")
+
+    scheduler.add_job(
+        _run_morning_todos,
+        CronTrigger(hour=9, minute=0, timezone="Asia/Taipei"),
+        id="todo_morning",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=1800,      # flag 擋重複，重啟補跑不會推兩次
+        replace_existing=True,
+    )
 
     scheduler.add_job(
         _run_couple_preview,
