@@ -34,6 +34,9 @@ class FakePage:
     def wait_for_load_state(self, state=None):
         pass
 
+    def wait_for_selector(self, selector, timeout=None):
+        self.actions.append(("wait", selector))
+
     def eval_on_selector(self, selector, script):
         return {"#con_ddlYear": "2026", "#con_ddlMonth": "12"}[selector]
 
@@ -98,6 +101,10 @@ def test_gap_between_every_page_hit():
             events.append("hit")
             super().click(selector)
 
+        def select_option(self, selector, value=None, label=None):
+            events.append("hit")   # 選單會自動 postback，也算一次請求
+            super().select_option(selector, value, label)
+
     page = P()
     hb.collect_onestop(page, sleep=lambda s: events.append(("sleep", s)))
     hits = [i for i, e in enumerate(events) if e == "hit"]
@@ -105,3 +112,31 @@ def test_gap_between_every_page_hit():
         between = [e for e in events[a:b] if e != "hit"]
         assert between and all(s >= 4 for _, s in between)
     assert events[-1] == "hit"   # 最後一站後不再多睡
+
+
+
+def test_search_clicked_only_when_calendar_missing():
+    """選宿營地後月曆沒自動出來，才停 4 秒按查詢。"""
+    gaps = []
+
+    class Timeout(Exception):
+        pass
+    Timeout.__name__ = "TimeoutError"
+
+    class P(FakePage):
+        def wait_for_selector(self, selector, timeout=None):
+            super().wait_for_selector(selector, timeout)
+            if timeout == 10000:
+                raise Timeout()
+
+    page = P()
+    hb._open_target(page, "bed_6.aspx", "排雲山莊", sleep=gaps.append)
+    assert ("click", "#con_btnsearch") in page.actions
+    assert gaps == [hb.PAGE_GAP, hb.PAGE_GAP]
+
+
+def test_next_month_waits_for_that_month():
+    page = FakePage()
+    hb._next_month(page, sleep=lambda s: None)
+    assert ("wait", "table.table_bed a[href*='sdate=2027-01']") in page.actions
+    assert ("select", "#con_ddlYear", "2027") in page.actions

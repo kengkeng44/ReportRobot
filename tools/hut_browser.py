@@ -35,9 +35,23 @@ PAGE_GAP = 4   # 地點之間停 4 秒
 MONTHS = 2     # 當月＋下月
 
 
-def _search(page):
-    page.click("#con_btnsearch")
-    page.wait_for_load_state("networkidle")
+def _wait_calendar(page, prefix="", timeout=30000):
+    """等月曆的日期連結出現。網站用 ASP.NET postback／UpdatePanel，換不換整頁不一定，
+    只等 networkidle 會讀到舊頁，所以直接等目標月份的 sdate 連結。"""
+    page.wait_for_selector(f"table.table_bed a[href*='sdate={prefix}']", timeout=timeout)
+
+
+def _show(page, prefix, sleep):
+    """選單改完後：有的頁面選了就自動 postback 出月曆；沒出來才停一下按「查詢」。"""
+    try:
+        _wait_calendar(page, prefix, timeout=10000)
+    except Exception as e:
+        if type(e).__name__ != "TimeoutError":
+            raise
+        sleep(PAGE_GAP)
+        page.click("#con_btnsearch")
+        _wait_calendar(page, prefix)
+    hut_onestop.ensure_not_blocked(page.content())
 
 
 def _next_month(page, sleep=time.sleep):
@@ -45,9 +59,11 @@ def _next_month(page, sleep=time.sleep):
     y = int(page.eval_on_selector("#con_ddlYear", "e => e.value"))
     m = int(page.eval_on_selector("#con_ddlMonth", "e => e.value"))
     y, m = (y + 1, 1) if m == 12 else (y, m + 1)
-    page.select_option("#con_ddlYear", value=str(y))
+    if m == 1:
+        page.select_option("#con_ddlYear", value=str(y))
+        sleep(PAGE_GAP)
     page.select_option("#con_ddlMonth", value=str(m))
-    _search(page)
+    _show(page, f"{y}-{m:02d}", sleep)
 
 
 def _goto(page, path):
@@ -62,7 +78,7 @@ def _open_target(page, path, label, sleep=time.sleep):
     _goto(page, path)
     sleep(PAGE_GAP)
     page.select_option("#con_rooms", label=label)
-    _search(page)
+    _show(page, "", sleep)
 
 
 def _is_stop(e):

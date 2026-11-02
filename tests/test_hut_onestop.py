@@ -44,3 +44,25 @@ def test_rejected_page_raises_blocked():
 def test_every_target_has_page_and_label():
     for site, (path, label) in ho.ONESTOP.items():
         assert site.startswith("onestop_") and path.startswith("bed_") and label
+
+
+from pathlib import Path
+
+FIX = Path(__file__).parent / "fixtures" / "hut"
+
+
+@pytest.mark.parametrize("site", sorted(ho.ONESTOP))
+def test_real_sample_parses(site):
+    # 本月月曆從「今天 +5 天」才開始有格子（2026-11-02 抓的樣本從 11/7 起），所以不到 28 天
+    html = (FIX / f"{site}.html").read_text(encoding="utf-8")
+    slots = ho.parse_onestop_html(html, site)
+    assert len(slots) >= 20
+    assert any(s.remaining is not None for s in slots)
+
+
+def test_sheiba_style_cell():
+    """雪霸／太魯閣的格子：「餘額 4 待處理 3」，沒有括號。"""
+    html = ('<table class="table_bed"><tr><td><a href="x?sdate=2026-12-05">'
+            "餘額 4 待處理 3 已通過 36</a></td></tr></table>")
+    s = ho.parse_onestop_html(html, "onestop_cilai")[0]
+    assert (s.remaining, s.applicants) == (4, 3)

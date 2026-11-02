@@ -19,7 +19,7 @@ BASE = "https://hike.taiwan.gov.tw/"
 # site key -> (查詢頁, 「宿營地」下拉選單裡的名稱)；名稱以 tools/hut_browser.py --recon 印出的為準
 ONESTOP = {
     "onestop_paiyun": ("bed_6.aspx", "排雲山莊"),
-    "onestop_99": ("bed_0.aspx", "九九山莊"),
+    "onestop_99": ("bed_1.aspx", "九九山莊"),
     "onestop_7ka": ("bed_1.aspx", "七卡山莊"),
     "onestop_cilai": ("bed_4.aspx", "奇萊山屋"),
     "onestop_nanhu": ("bed_4.aspx", "南湖山屋"),
@@ -27,8 +27,9 @@ ONESTOP = {
 REJECTED_MARK = "Request Rejected"
 
 _SDATE = re.compile(r"sdate=(\d{4}-\d{2}-\d{2})")
-_REMAIN = re.compile(r"餘額\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)")
-_QUEUE = re.compile(r"排隊預約\s*(\d+)")
+# 排雲：「餘額 (1,0)」／「額滿」、「排隊預約 N」；雪霸、太魯閣：「餘額 4」、「待處理 N」
+_REMAIN = re.compile(r"餘額\s*(?:\(\s*(\d+)\s*,\s*\d+\s*\)|(\d+))")
+_QUEUE = re.compile(r"(?:排隊預約|待處理)\s*(\d+)")
 
 
 class Blocked(Exception):
@@ -50,7 +51,7 @@ def parse_onestop_html(html, site):
         text = re.sub(r"\s+", " ", a.get_text(" "))
         rm = _REMAIN.search(text)
         if rm:
-            remaining = int(rm.group(1))
+            remaining = int(rm.group(1) or rm.group(2))
         elif "額滿" in text:
             remaining = 0
         else:
