@@ -309,7 +309,7 @@ def _find_tw_ticker_by_name(query):
         return None
 
 
-_PRIVATE_SHORTCUTS = {"整理定位", "定位整理", "整理今天定位", "明天行程", "明日行程", "共同明細", "共同最近", "共同帳本"}
+_PRIVATE_SHORTCUTS = {"整理定位", "定位整理", "整理今天定位", "明天行程", "明日行程", "共同明細", "共同最近", "共同帳本", "山屋", "山屋空位"}
 
 
 def parse(text):
@@ -1145,6 +1145,10 @@ def handle(text, ctx=None):
     import couple_calendar
     if (text or "").strip().lstrip("/") in couple_calendar.TOMORROW_KEYWORDS and _is_admin(ctx):
         return couple_calendar.tomorrow_reply()
+    # 私訊「山屋」：最新一次山屋空位摘要（只限本人）
+    import hut_monitor
+    if (text or "").strip().lstrip("/") in hut_monitor.KEYWORDS and _is_admin(ctx):
+        return hut_monitor.line_reply()
     reply = couple_ledger.setup_reply(text, ctx)
     if reply is None and couple_ledger.is_couple_chat(ctx):
         reply = couple_ledger.handle(text, ctx)
