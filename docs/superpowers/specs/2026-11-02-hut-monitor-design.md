@@ -26,13 +26,29 @@
 
 抓法（參考 exhaJim/taiwan-cabin-crawler 的做法，自己重寫，不抄碼）：GET `room/index.php` 取 `<input name="csrf">`，再 GET 同頁帶 `date_set[year]`、`date_set[month]`、`csrf` 換月份；每天一格 `<a id="tds_DD">`，格內文字用 regex 取地點／剩餘／報名。抓當月＋後 2 個月。
 
-### 只做日期提醒（一站式 hike.taiwan.gov.tw）
+### 一站式（hike.taiwan.gov.tw）：Windows 上用真瀏覽器抓
 
-排雲、九九、雪霸（七卡等）、太魯閣（奇萊、南湖等）、眠月線：只在信裡列未來 7 天抽籤日／開放日，附官方查詢頁連結（玉山 `bed_6.aspx`、雪霸 `bed_1.aspx`、太魯閣 `bed_4.aspx`、林業署 `bed_0.aspx`），不抓床位。
+| 地點 | 查詢頁 | 制度 |
+|---|---|---|
+| 排雲山莊 | `bed_6.aspx`（option 3） | 抽籤：只看住宿前 30 天內的遞補 |
+| 九九山莊 | `bed_0.aspx` | 先到先得 |
+| 七卡山莊等雪霸山屋 | `bed_1.aspx` | 先到先得 |
+| 奇萊山屋、南湖山屋 | `bed_4.aspx` | 先到先得 |
+| 眠月線 | 查無公開名額 | 只做開放日提醒（進入日前 60 天） |
 
-原因（2026-11-02 實測）：一站式床位數字要「選宿營地→按查詢」的 ASP.NET postback 才載入；用程式送 postback 回 `Request Rejected … support ID`（網站前有 WAF 擋非瀏覽器請求）。偽裝請求繞過 WAF＝繞過防機器人機制，不做。公開資料中唯一做到的是 hiiamyes/taiwan-hiking-form-filler（MIT），用 Playwright 開真瀏覽器每小時抓排雲，資料欄位：「餘額 (床,帳) 排隊預約 N 審核中 N 核准入園 N」。日後要加，走這條路、在 Windows 上跑，不放 Railway。
+為什麼要真瀏覽器（2026-11-02 實測）：床位數字要「選宿營地→按查詢」的 ASP.NET postback 才載入；用程式直接送 postback 回 `Request Rejected … support ID`（網站前有 WAF 擋非瀏覽器請求）。
 
-抽籤制（嘉明湖／向陽、檜谷）在抽籤前的「剩餘」只是還沒分配，不算釋出；這類只監控抽籤後（住宿前 30 天內）的遞補／空床名額，抽籤前的日期只出現在「未來 7 天抽籤日」區塊。天池 5～29 天的空床抽籤同理。
+做法：照 hiiamyes/taiwan-hiking-form-filler（MIT）`check-paiyun-capacity.js` 的抓法改寫成 Python Playwright：開頁 → 從「宿營地」下拉選單選地點 → 查詢 → 讀當月＋下月月曆，每格解析「餘額 (床,帳) 排隊預約 N 審核中 N 核准入園 N」。檔頭保留 MIT 聲明與出處。
+
+- 位置：`tools/hut_browser.py`＋`tools/hut_browser_local.ps1`（照 `tools/line_scan_local.ps1` 的本機排程寫法），Windows 工作排程器 07:00／16:30／23:30。
+- headless、不搶滑鼠；地點依序查，間隔 3–5 秒；一次約 6 個地點。
+- 結果 POST 到 Railway `/hut/ingest`（header 帶共用密鑰 `HUT_INGEST_TOKEN`，存 Infisical，本機用 `infisical run --env=dev`）。Railway 把它併進同一份快照、同一封信。
+- 紅線：不裝 stealth 外掛、不偽造瀏覽器指紋、不換 IP。真瀏覽器也被擋（出現 Request Rejected）→ 該次停止、信裡標示，連續 3 次就通知，不硬闖。
+- 電腦沒開：Railway 該次沒收到一站式資料 → 信裡標「一站式本次沒查到（電腦沒開）」，快照保留舊值。
+
+一站式各地點同時也列在「未來 7 天抽籤日／開放日」區塊。
+
+抽籤制（排雲、嘉明湖／向陽、檜谷）在抽籤前的「剩餘」只是還沒分配，不算釋出；這類只監控抽籤後（住宿前 30 天內）的遞補／空床名額，抽籤前的日期只出現在「未來 7 天抽籤日」區塊。天池 5～29 天的空床抽籤同理。
 
 ## 架構（放進 ReportRobot，Railway 上跑）
 
@@ -111,5 +127,7 @@
 
 1. Railway 連線實測三個林業署站（決定 A 或 B）。
 2. 林業署共用解析器＋比對＋寄信，先上線。
-3. `hut_calendar`（含一站式各地點提醒）、LINE「山屋」指令。
-4. 交通卡逐一官方確認。
+3. 本機實測 Playwright 開一站式查排雲，確認不被 WAF 擋、存 HTML 樣本。
+4. `tools/hut_browser.py`＋`/hut/ingest`＋Windows 排程。
+5. `hut_calendar`、LINE「山屋」指令。
+6. 交通卡逐一官方確認。
