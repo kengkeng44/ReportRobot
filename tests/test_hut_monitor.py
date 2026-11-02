@@ -125,3 +125,51 @@ def test_line_reply():
     _run([_s("tconline", "天池山莊", SAT, 4)])
     text = hm.line_reply(today=TODAY)
     assert "天池山莊：12/5(六) 4床" in text
+
+
+def test_send_failure_rolls_back_and_alerts():
+    _run([_s("tconline", "天池山莊", SAT, 0)])
+    alerts = []
+
+    def boom(subject, text):
+        raise RuntimeError("smtp down")
+
+    slots = [_s("tconline", "天池山莊", SAT, 3)]
+    out = hm.run_check(now=NOW, fetch=lambda today: (list(slots), {}), send=boom,
+                       notify=lambda err, ctx: alerts.append(ctx["section"]))
+    assert out["changes"] == 1 and out["sent"] is False
+    assert "send" in alerts
+    out, sent, _ = _run(slots)
+    assert out["changes"] == 1 and len(sent) == 1
+
+
+def test_send_failure_rolls_back_new_key():
+    _run([_s("tconline", "天池山莊", SAT, 0)])
+    new_day = date(2026, 12, 6)
+    slots = [_s("tconline", "天池山莊", SAT, 0), _s("tconline", "天池山莊", new_day, 2)]
+
+    def boom(subject, text):
+        raise RuntimeError("x")
+
+    hm.run_check(now=NOW, fetch=lambda today: (list(slots), {}), send=boom,
+                 notify=lambda e, c: None)
+    out, sent, _ = _run(slots)
+    assert out["changes"] == 1 and len(sent) == 1
+
+
+def test_send_returns_false_no_rollback():
+    _run([_s("tconline", "天池山莊", SAT, 0)])
+    slots = [_s("tconline", "天池山莊", SAT, 3)]
+    out = hm.run_check(now=NOW, fetch=lambda today: (list(slots), {}),
+                       send=lambda s, t: False, notify=lambda e, c: None)
+    assert out["changes"] == 1 and out["sent"] is False
+    out, sent, _ = _run(slots)
+    assert out["changes"] == 0 and sent == []
+
+
+def test_past_days_pruned_from_snapshot():
+    _run([_s("tconline", "天池山莊", SAT, 0)])
+    assert any(k[2] == SAT.isoformat() for k in hm._snapshot)
+    later = datetime(2026, 12, 20, 16, 30, tzinfo=TPE)
+    _run([], now=later)
+    assert not hm._snapshot

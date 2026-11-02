@@ -136,6 +136,9 @@ def run_check(send_events_today=False, now=None, fetch=None, send=None, notify=N
         changes = _diff(slots, today)
         for s in slots:
             _snapshot[s.key()] = s.remaining
+        cutoff = today.isoformat()
+        for k in [k for k in _snapshot if k[2] < cutoff]:
+            del _snapshot[k]
         _baselined.update(ok_sites)
         for site in ok_sites:
             _fails[site] = 0
@@ -152,12 +155,25 @@ def run_check(send_events_today=False, now=None, fetch=None, send=None, notify=N
         notify(RuntimeError(f"{site} 連續 {FAIL_ALERT} 次沒查到：{errors[site]}"),
                {"module": "hut_monitor", "section": site})
 
-    events = hut_calendar.upcoming_events(today)
-    has_events_today = any(e[0] == today for e in events)
     sent = False
-    if changes or (send_events_today and has_events_today):
-        subject, text = hut_report.build_email(changes, events, errors, today)
-        sent = bool(send(subject, text))
+    try:
+        events = hut_calendar.upcoming_events(today)
+        has_events_today = any(e[0] == today for e in events)
+        if changes or (send_events_today and has_events_today):
+            subject, text = hut_report.build_email(changes, events, errors, today)
+            sent = bool(send(subject, text))
+            if not sent:
+                print(f"[hut_monitor] 信沒寄出（可能沒設信箱）：{subject}")
+    except Exception as e:
+        # 寄信失敗：把沒寄出的變化退回快照，下次還會再報
+        with _LOCK:
+            for c in changes:
+                if c.before is None:
+                    _snapshot.pop(c.slot.key(), None)
+                else:
+                    _snapshot[c.slot.key()] = c.before
+        notify(e, {"module": "hut_monitor", "section": "send"})
+        sent = False
     return {"changes": len(changes), "errors": errors, "sent": sent}
 
 
