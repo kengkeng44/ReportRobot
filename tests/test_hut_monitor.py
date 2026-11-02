@@ -1,0 +1,127 @@
+from datetime import date, datetime, timedelta, timezone
+
+import pytest
+
+import hut_monitor as hm
+from hut_sources import Slot
+
+TPE = timezone(timedelta(hours=8))
+NOW = datetime(2026, 11, 2, 16, 30, tzinfo=TPE)
+TODAY = NOW.date()
+SAT = date(2026, 12, 5)   # 33 天後；先到先得在範圍內，抽籤制（≤30 天）不在
+FRI = date(2026, 11, 27)  # 25 天後
+
+
+@pytest.fixture(autouse=True)
+def _clean(monkeypatch):
+    hm.reset()
+    monkeypatch.delenv("HUT_FOREST_ON_SERVER", raising=False)
+    yield
+    hm.reset()
+
+
+def _run(slots, errors=None, now=NOW, **kw):
+    sent, alerts = [], []
+    out = hm.run_check(now=now, fetch=lambda today: (list(slots), dict(errors or {})),
+                       send=lambda subject, text: sent.append((subject, text)) or True,
+                       notify=lambda err, ctx: alerts.append(ctx["section"]), **kw)
+    return out, sent, alerts
+
+
+def _s(site, unit, day, remaining, kind="bed"):
+    return Slot(site, unit, kind, day, remaining, 5)
+
+
+def test_watchable_window():
+    assert hm.watchable(_s("tconline", "天池山莊", SAT, 1), TODAY)       # 先到先得 33 天
+    assert not hm.watchable(_s("jmlnt", "嘉明湖山屋", SAT, 1), TODAY)    # 抽籤制要 ≤30 天
+    assert hm.watchable(_s("jmlnt", "嘉明湖山屋", FRI, 1), TODAY)
+    assert not hm.watchable(_s("tconline", "天池山莊", date(2026, 11, 5), 1), TODAY)  # <5 天
+    assert not hm.watchable(_s("tconline", "天池山莊", date(2027, 1, 10), 1), TODAY)  # >61 天
+
+
+def test_first_run_is_baseline_then_increase_is_change():
+    out, sent, _ = _run([_s("tconline", "天池山莊", SAT, 0)])
+    assert out["changes"] == 0 and sent == []
+    out, sent, _ = _run([_s("tconline", "天池山莊", SAT, 3)])
+    assert out["changes"] == 1
+    assert sent[0][0] == "山屋：天池山莊 12/5(六) 釋出 3床"
+
+
+def test_decrease_and_zero_are_not_changes():
+    _run([_s("tconline", "天池山莊", SAT, 5)])
+    out, sent, _ = _run([_s("tconline", "天池山莊", SAT, 2)])
+    assert out["changes"] == 0 and sent == []
+
+
+def test_date_entering_window_with_known_value_is_not_new():
+    """抽籤制的日期進入 30 天範圍時，上次已有值就照常比，不算「新」。"""
+    day = date(2026, 12, 3)  # 31 天後，不在嘉明湖範圍
+    _run([_s("jmlnt", "嘉明湖山屋", day, 4)])
+    tomorrow = NOW + timedelta(days=1)  # 變 30 天，進範圍
+    out, _, _ = _run([_s("jmlnt", "嘉明湖山屋", day, 4)], now=tomorrow)
+    assert out["changes"] == 0
+
+
+def test_failed_site_keeps_old_snapshot_and_alerts_on_third():
+    _run([_s("tconline", "天池山莊", SAT, 0)])
+    for i in range(3):
+        _, _, alerts = _run([], {"tconline": "HTTP 500"})
+    assert alerts == ["tconline"]
+    out, _, _ = _run([_s("tconline", "天池山莊", SAT, 2)])
+    assert out["changes"] == 1  # 舊快照 0 還在，2 算變多
+
+
+def test_onestop_missing_is_error_and_fresh_ingest_is_used():
+    out, _, _ = _run([])
+    assert out["errors"]["onestop_paiyun"] == "本次沒查到（電腦沒開）"
+    payload = {"slots": [_s("onestop_99", "九九山莊", SAT, 0).to_dict()],
+               "errors": {"onestop_paiyun": "被網站擋下（Request Rejected），這次停止"}}
+    hm.ingest(payload, now=NOW)
+    out, _, _ = _run([])
+    assert "onestop_99" not in out["errors"]
+    assert out["errors"]["onestop_paiyun"].startswith("被網站擋下")
+    hm.ingest({"slots": [_s("onestop_99", "九九山莊", SAT, 4).to_dict()]}, now=NOW)
+    out, _, _ = _run([])
+    assert out["changes"] == 1
+
+
+def test_pc_off_never_alerts():
+    for i in range(4):
+        _, _, alerts = _run([])
+        assert alerts == []
+
+
+def test_stale_ingest_ignored():
+    hm.ingest({"slots": [_s("onestop_99", "九九山莊", SAT, 4).to_dict()]},
+              now=NOW - timedelta(hours=2))
+    out, _, _ = _run([])
+    assert out["errors"]["onestop_99"] == "本次沒查到（電腦沒開）"
+
+
+def test_ingest_rejects_unknown_site():
+    with pytest.raises(ValueError):
+        hm.ingest({"slots": [_s("evil", "x", SAT, 1).to_dict()]}, now=NOW)
+
+
+def test_forest_off_server_expects_ingest(monkeypatch):
+    monkeypatch.setenv("HUT_FOREST_ON_SERVER", "0")
+    called = []
+    hm.run_check(now=NOW, fetch=lambda today: called.append(1) or ([], {}),
+                 send=lambda s, t: True, notify=lambda e, c: None)
+    assert called == []
+    assert "jmlnt" in hm.status()["errors"]
+
+
+def test_events_mail_only_when_asked():
+    _, sent, _ = _run([])
+    assert sent == []
+    _, sent, _ = _run([], send_events_today=True)
+    assert sent and sent[0][0].startswith("山屋：今天")
+
+
+def test_line_reply():
+    assert "還沒查過" in hm.line_reply(today=TODAY)
+    _run([_s("tconline", "天池山莊", SAT, 4)])
+    text = hm.line_reply(today=TODAY)
+    assert "天池山莊：12/5(六) 4床" in text
