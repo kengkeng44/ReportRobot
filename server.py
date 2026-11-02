@@ -742,7 +742,7 @@ async def hut_ingest(request: Request):
     import hut_monitor
     try:
         return hut_monitor.ingest(await request.json())
-    except (ValueError, KeyError, TypeError) as e:
+    except (ValueError, KeyError, TypeError, AttributeError) as e:
         raise HTTPException(status_code=400, detail=str(e)[:200])
 
 

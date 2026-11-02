@@ -35,6 +35,11 @@ def test_ingest_bad_site_400(client):
     assert r.status_code == 400
 
 
+def test_ingest_non_object_body_400(client):
+    r = client.post("/admin/hut-ingest", json=[1, 2], headers={"X-Admin-Token": "t0k"})
+    assert r.status_code == 400
+
+
 def test_probe_and_run_require_token(client):
     assert client.post("/admin/hut-probe").status_code == 403
     assert client.post("/admin/hut-run").status_code == 403
