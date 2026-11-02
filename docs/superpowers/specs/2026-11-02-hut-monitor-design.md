@@ -16,24 +16,29 @@
 
 ## 監控範圍
 
-| 地點 | 來源 | 抓法 | 狀態 |
-|---|---|---|---|
-| 嘉明湖山屋、向陽山屋、嘉明湖營地 | `https://jmlnt.forest.gov.tw/room/` | 月曆頁 GET，解析「剩餘床位 (N) 目前報名 : M」 | 已實測，不用登入 |
-| 天池山莊＋營地 | `https://tconline.forest.gov.tw/room/` | 同上，「天池山莊 床位 (N) 目前報名 : M」 | 已實測，不用登入 |
-| 排雲山莊（玉山） | `https://hike.taiwan.gov.tw/bed_6.aspx` | ASP.NET postback：帶 `__VIEWSTATE`／`__EVENTVALIDATION`，選 `ctl00$con$rooms` 後查詢 | 表單欄位已確認，數字格式實作時確認 |
-| 九九山莊（林業署新竹） | `bed_0.aspx` | 同上 | 同上 |
-| 雪霸：七卡、新達、翠池、桃山、雪北等 | `bed_1.aspx` | 同上 | 同上 |
-| 太魯閣：奇萊、南湖、雲稜等 | `bed_4.aspx` | 同上 | 同上 |
-| 檜谷山莊（北大武） | `bed_0.aspx` | 同上 | 同上 |
-| 眠月線（一葉蘭自然保留區，單日進出） | 一站式，單日往返名額 `bed_7.aspx` 內查無眠月線 | 實作第一步確認公開名額來源；找不到就只做開放日提醒（進入日前 60 天） | 待查 |
+### 完整監控（林業署 PHP 子站，同一套系統，共用一支解析器）
 
-抽籤制（排雲、嘉明湖／向陽、檜谷）在抽籤前的「剩餘」只是還沒分配，不算釋出；這類只監控抽籤後（住宿前 30 天內）的遞補／空床名額，抽籤前的日期只出現在「未來 7 天抽籤日」區塊。天池 5～29 天的空床抽籤同理。
+| 地點 | 來源 | 狀態 |
+|---|---|---|
+| 嘉明湖山屋、向陽山屋、嘉明湖營地 | `https://jmlnt.forest.gov.tw/room/` | 已實測，不用登入：「剩餘床位 (N) 目前報名 : M」 |
+| 天池山莊＋營地 | `https://tconline.forest.gov.tw/room/` | 已實測，不用登入：「天池山莊 床位 (N) 目前報名 : M」 |
+| 檜谷山莊＋營地（北大武） | `https://kgonline.forest.gov.tw/room/` | 站存在；床位格式實作時確認 |
+
+抓法（參考 exhaJim/taiwan-cabin-crawler 的做法，自己重寫，不抄碼）：GET `room/index.php` 取 `<input name="csrf">`，再 GET 同頁帶 `date_set[year]`、`date_set[month]`、`csrf` 換月份；每天一格 `<a id="tds_DD">`，格內文字用 regex 取地點／剩餘／報名。抓當月＋後 2 個月。
+
+### 只做日期提醒（一站式 hike.taiwan.gov.tw）
+
+排雲、九九、雪霸（七卡等）、太魯閣（奇萊、南湖等）、眠月線：只在信裡列未來 7 天抽籤日／開放日，附官方查詢頁連結（玉山 `bed_6.aspx`、雪霸 `bed_1.aspx`、太魯閣 `bed_4.aspx`、林業署 `bed_0.aspx`），不抓床位。
+
+原因（2026-11-02 實測）：一站式床位數字要「選宿營地→按查詢」的 ASP.NET postback 才載入；用程式送 postback 回 `Request Rejected … support ID`（網站前有 WAF 擋非瀏覽器請求）。偽裝請求繞過 WAF＝繞過防機器人機制，不做。公開資料中唯一做到的是 hiiamyes/taiwan-hiking-form-filler（MIT），用 Playwright 開真瀏覽器每小時抓排雲，資料欄位：「餘額 (床,帳) 排隊預約 N 審核中 N 核准入園 N」。日後要加，走這條路、在 Windows 上跑，不放 Railway。
+
+抽籤制（嘉明湖／向陽、檜谷）在抽籤前的「剩餘」只是還沒分配，不算釋出；這類只監控抽籤後（住宿前 30 天內）的遞補／空床名額，抽籤前的日期只出現在「未來 7 天抽籤日」區塊。天池 5～29 天的空床抽籤同理。
 
 ## 架構（放進 ReportRobot，Railway 上跑）
 
 照 ReportRobot 一個功能一檔的平鋪結構：
 
-- `hut_sources.py`：每個網站一個 `fetch_xxx() -> list[Slot]`。`Slot = (site, hut, date, remaining, applicants)`。HTTP 用 `http_utils` 既有工具（實作時確認介面，沒有合用的就在本檔內建 session），固定瀏覽器 UA、請求間隔 2–3 秒。
+- `hut_sources.py`：林業署三站共用 `fetch_forest(site) -> list[Slot]`。`Slot = (site, hut, date, remaining, applicants)`；數字缺漏存 `None` 不存 0（照 hiiamyes 的資料約定）。HTTP 用 `http_utils` 既有工具（實作時確認介面，沒有合用的就在本檔內建 session），固定瀏覽器 UA、請求間隔 2–3 秒。
 - `hut_monitor.py`：`run_check()`：抓全部 → 跟上次快照比對 → 產生變化清單 → 有變化就寄信。快照存在 module 層 dict（記憶體）；server 啟動時先跑一次當基準、不寄信。部署後最多漏掉一次變化，可接受。
 - `hut_calendar.py`：依 hut-apply 規則算未來 7 天的抽籤日、開放日、繳費截止。玉山抽籤日查 `bed_8.aspx`，不自己推。內含 2026–2027 國定假日表（行政院人事行政總處公告，實作時抄入）判斷「週末或連假」。
 - `hut_info.py`：每個地點的交通卡（固定資料，見下）。
@@ -94,10 +99,17 @@
 - `hut_report`：重點排序、空位門檻 2。
 - 跑全套 pytest 不退步。
 
+## 參考專案（2026-11-02 查）
+
+| 專案 | 內容 | 授權 | 用法 |
+|---|---|---|---|
+| hiiamyes/taiwan-hiking-form-filler | 一站式代填（不送出、不碰驗證碼）＋Playwright 抓排雲容量 | MIT | 資料約定、日後一站式擴充路線；搬程式碼要保留 MIT 聲明 |
+| exhaJim/taiwan-cabin-crawler | 嘉明湖、檜谷月曆爬蟲（Python） | 無 | 只學做法（網址參數、HTML 結構），不抄碼 |
+| HuiChu/Hut-booking | 07:00 整點自動送出搶床 | 無 | 不參考：正是紅線 |
+
 ## 實作順序
 
-1. Railway 連線實測（決定 A 或 B）。
-2. jmlnt、tconline 解析器＋比對＋寄信，先上線。
-3. 一站式 postback 解析器（排雲、九九、雪霸、太魯閣、檜谷）。
-4. `hut_calendar`、LINE「山屋」指令。
-5. 眠月線來源確認、交通卡逐一官方確認。
+1. Railway 連線實測三個林業署站（決定 A 或 B）。
+2. 林業署共用解析器＋比對＋寄信，先上線。
+3. `hut_calendar`（含一站式各地點提醒）、LINE「山屋」指令。
+4. 交通卡逐一官方確認。
