@@ -405,6 +405,32 @@ async def lifespan(app: FastAPI):
         misfire_grace_time=3 * 3600,  # 重跑同一天安全（地點統計只在第一次連上時累加）
         replace_existing=True,
     )
+    # 山屋名額監控：07:00／16:30／23:30（docs/superpowers/specs/2026-11-02-hut-monitor-design.md）
+    # 07:00 那班就算沒有空位變化，今天有抽籤／開放日也寄。開機 3 分鐘後先跑一次當基準（不寄信）。
+    def _run_hut_check(send_events_today=False):
+        try:
+            import hut_monitor
+            print(f"[hut] {hut_monitor.run_check(send_events_today=send_events_today)}")
+        except Exception as e:
+            print(f"[hut] 檢查失敗（非致命）：{e}")
+
+    scheduler.add_job(
+        _run_hut_check,
+        DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(minutes=3)),
+        id="hut_check_boot",
+        replace_existing=True,
+    )
+    for _hour, _minute, _events in ((7, 0, True), (16, 30, False), (23, 30, False)):
+        scheduler.add_job(
+            _run_hut_check,
+            CronTrigger(hour=_hour, minute=_minute, timezone="Asia/Taipei"),
+            kwargs={"send_events_today": _events},
+            id=f"hut_check_{_hour:02d}{_minute:02d}",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=1800,
+            replace_existing=True,
+        )
     scheduler.start()
     # 注入 scheduler 給 personal.py 用（提醒功能要排 one-shot job）
     import app_state
@@ -699,6 +725,52 @@ async def trigger_daily(request: Request, force: int = 0):
     # admin 手動觸發：直接呼叫 run_daily_report，跳過 flag 冪等（測試用）
     await run_daily_report(force_premarket=bool(force))
     return {"ok": True, "force_premarket": bool(force)}
+
+
+def _check_admin(request: Request):
+    admin_token = os.environ.get("ADMIN_TOKEN", "")
+    if not admin_token:
+        raise HTTPException(status_code=503, detail="Admin disabled")
+    if request.headers.get("X-Admin-Token") != admin_token:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+@app.post("/admin/hut-ingest")
+async def hut_ingest(request: Request):
+    """本機 tools/hut_browser.py 用真瀏覽器抓一站式後送回來（一站式有 WAF，Railway 抓不到）。"""
+    _check_admin(request)
+    import hut_monitor
+    try:
+        return hut_monitor.ingest(await request.json())
+    except (ValueError, KeyError, TypeError) as e:
+        raise HTTPException(status_code=400, detail=str(e)[:200])
+
+
+@app.post("/admin/hut-probe")
+async def hut_probe(request: Request):
+    """從 Railway 對林業署三站首頁各 GET 一次，看國外 IP 會不會被擋。"""
+    _check_admin(request)
+    import requests
+    import hut_sources
+    out = {}
+    for site, cfg in hut_sources.SITES.items():
+        try:
+            r = await asyncio.to_thread(requests.get, cfg["url"], timeout=20,
+                                        headers={"User-Agent": hut_sources.USER_AGENT})
+            out[site] = {"status": r.status_code, "bytes": len(r.content),
+                         "csrf": bool(hut_sources.find_csrf(r.text))}
+        except Exception as e:
+            out[site] = {"error": f"{type(e).__name__}: {e}"[:200]}
+        await asyncio.sleep(hut_sources.REQUEST_GAP)
+    return out
+
+
+@app.post("/admin/hut-run")
+async def hut_run(request: Request):
+    """手動跑一次山屋檢查（會照常寄信）。"""
+    _check_admin(request)
+    import hut_monitor
+    return await asyncio.to_thread(hut_monitor.run_check, True)
 
 
 @app.post("/admin/run-personal")
