@@ -31,6 +31,15 @@ def test_every_card_has_full_lines():
         assert t["source"].startswith("https://")
 
 
+def test_every_card_has_from_home_itinerary():
+    for name, t in hi.TRANSPORT.items():
+        assert "大眾運輸" in t["from_home"], name
+        assert "開車" in t["from_home"], name
+        card = hi.transport_card(name)
+        assert "從中和出發" in card, name
+        assert t["from_home"] in card, name
+
+
 def test_mianyue_card_exists():
     card = hi.transport_card("眠月線")
     assert "台灣好行阿里山線" in card
