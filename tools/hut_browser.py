@@ -48,6 +48,7 @@ def _show(page, prefix, sleep):
     except Exception as e:
         if type(e).__name__ != "TimeoutError":
             raise
+        hut_onestop.ensure_not_blocked(page.content())   # 選單 postback 被擋就停，不再按查詢
         sleep(PAGE_GAP)
         page.click("#con_btnsearch")
         _wait_calendar(page, prefix)

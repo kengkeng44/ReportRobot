@@ -140,3 +140,22 @@ def test_next_month_waits_for_that_month():
     hb._next_month(page, sleep=lambda s: None)
     assert ("wait", "table.table_bed a[href*='sdate=2027-01']") in page.actions
     assert ("select", "#con_ddlYear", "2027") in page.actions
+
+
+def test_blocked_after_select_does_not_click_search():
+    """選宿營地的 postback 回 Request Rejected：直接停，不再按查詢。"""
+    class Timeout(Exception):
+        pass
+    Timeout.__name__ = "TimeoutError"
+
+    class P(FakePage):
+        def wait_for_selector(self, selector, timeout=None):
+            raise Timeout()
+
+        def content(self):
+            return "<title>Request Rejected</title>" if any(a[0] == "select" for a in self.actions) else "<html></html>"
+
+    page = P()
+    slots, errors = hb.collect_onestop(page, sleep=lambda s: None)
+    assert slots == [] and set(errors) == set(hut_onestop.ONESTOP)
+    assert not any(a[0] == "click" for a in page.actions)
