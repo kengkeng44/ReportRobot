@@ -842,6 +842,20 @@ def test_settle_helped_part():
     assert "個人（不列入結算）：小美 NT$400" in text
 
 
+def test_settle_row_without_payer_id_is_same_person():
+    # Notion 手打的列只有付款人名字、沒有 ID，不能被當成第三個人
+    rows = [
+        {"kind": "共同", "total": 1000, "payer": "家豪", "payer_id": ADMIN},
+        {"kind": "共同", "total": 400, "payer": "家豪", "payer_id": ""},
+        {"kind": "個人", "total": 300, "helped": 300, "payer": "家豪", "payer_id": ""},
+        {"kind": "個人", "total": 200, "helped": 200, "payer": "小美", "payer_id": GF},
+    ]
+    text = cl.settle_text(rows, "10 月")
+    assert "家豪 付了 NT$1,400" in text
+    assert "家豪 幫 小美 付了 NT$300" in text
+    assert "小美 要給 家豪 NT$800" in text            # 700 + 300 − 200
+
+
 def test_settle_only_helped_single_payer():
     rows = [{"kind": "個人", "total": 300, "helped": 300, "payer": "家豪", "payer_id": ADMIN}]
     text = cl.settle_text(rows, "10 月")
