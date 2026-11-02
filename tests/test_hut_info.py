@@ -17,9 +17,24 @@ def test_every_place_has_transport_card():
         assert hi.transport_card(hi.place(site))
 
 
-def test_unverified_card_warns():
-    card = hi.transport_card("天池")
+def test_unverified_card_warns(monkeypatch):
+    monkeypatch.setitem(hi.TRANSPORT, "測試", {"text": "登山口：X", "source": "https://example.gov.tw/", "checked": None})
+    card = hi.transport_card("測試")
     assert "尚未核對官方資料" in card
+    assert "https://example.gov.tw/" in card
+
+
+def test_every_card_has_full_lines():
+    for name, t in hi.TRANSPORT.items():
+        for head in ("登山口：", "開車：", "火車：", "公車："):
+            assert head in t["text"], (name, head)
+        assert t["source"].startswith("https://")
+
+
+def test_mianyue_card_exists():
+    card = hi.transport_card("眠月線")
+    assert "台灣好行阿里山線" in card
+    assert "沼平" in card
 
 
 def test_verified_card_shows_date():
