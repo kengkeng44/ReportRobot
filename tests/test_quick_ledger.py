@@ -345,6 +345,23 @@ def test_todo_for_someone_with_date(env, monkeypatch):
     assert "陳小螢" in reply[0] and "仁和" in reply[0]
 
 
+def test_chart_month_first_and_links(env, monkeypatch):
+    """「10月圖表」等於「圖表 10月」，回覆附圖片連結和共同帳本連結。"""
+    import couple_chart
+    seen = []
+    monkeypatch.setattr(notion_db, "couple_load",
+                        lambda **kw: seen.append(kw["since"]) or [{"kind": "共同", "total": 100}])
+    monkeypatch.setattr(couple_chart, "chart_messages",
+                        lambda rows, label: {"type": "image", "originalContentUrl": "https://x/c.png",
+                                             "previewImageUrl": "https://x/c.png"})
+    monkeypatch.setattr(notion_db, "couple_db_url", lambda: "https://www.notion.so/abc")
+    a = cr.handle("10月圖表", ctx=_group())
+    cr.handle("圖表 10月", ctx=_group())
+    assert seen[0] == seen[1] and seen[0].endswith("-10-01")
+    text = str(a[1])
+    assert "https://x/c.png" in text and "https://www.notion.so/abc" in text
+
+
 def test_todo_card_shows_author():
     from flex_builder import todo_list_flex
     card = todo_list_flex([{"id": 1, "text": "買衛生紙", "by": "小螢", "for": "仁和"}])
