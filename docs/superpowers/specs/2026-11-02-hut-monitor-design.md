@@ -42,7 +42,7 @@
 
 - 位置：`tools/hut_browser.py`＋`tools/hut_browser_local.ps1`（照 `tools/line_scan_local.ps1` 的本機排程寫法），Windows 工作排程器 07:00／16:30／23:30。
 - headless、不搶滑鼠；地點依序查，間隔 3–5 秒；一次約 6 個地點。
-- 結果 POST 到 Railway `/hut/ingest`（header 帶共用密鑰 `HUT_INGEST_TOKEN`，存 Infisical，本機用 `infisical run --env=dev`）。Railway 把它併進同一份快照、同一封信。
+- 結果 POST 到 Railway `/admin/hut-ingest`（沿用 `X-Admin-Token`＝ADMIN_TOKEN；本機讀 `~/.hut_monitor/admin_token`，照 tools/line_scan.py 的做法）。本機比伺服器早 10 分鐘跑（06:50／16:20／23:20），60 分鐘內的資料才算數。Railway 把它併進同一份快照、同一封信。
 - 紅線：不裝 stealth 外掛、不偽造瀏覽器指紋、不換 IP。真瀏覽器也被擋（出現 Request Rejected）→ 該次停止、信裡標示，連續 3 次就通知，不硬闖。
 - 電腦沒開：Railway 該次沒收到一站式資料 → 信裡標「一站式本次沒查到（電腦沒開）」，快照保留舊值。
 
@@ -56,7 +56,7 @@
 
 - `hut_sources.py`：林業署三站共用 `fetch_forest(site) -> list[Slot]`。`Slot = (site, hut, date, remaining, applicants)`；數字缺漏存 `None` 不存 0（照 hiiamyes 的資料約定）。HTTP 用 `http_utils` 既有工具（實作時確認介面，沒有合用的就在本檔內建 session），固定瀏覽器 UA、請求間隔 2–3 秒。
 - `hut_monitor.py`：`run_check()`：抓全部 → 跟上次快照比對 → 產生變化清單 → 有變化就寄信。快照存在 module 層 dict（記憶體）；server 啟動時先跑一次當基準、不寄信。部署後最多漏掉一次變化，可接受。
-- `hut_calendar.py`：依 hut-apply 規則算未來 7 天的抽籤日、開放日、繳費截止。玉山抽籤日查 `bed_8.aspx`，不自己推。內含 2026–2027 國定假日表（行政院人事行政總處公告，實作時抄入）判斷「週末或連假」。
+- `hut_calendar.py`：依 hut-apply 規則算未來 7 天的抽籤日、開放日、繳費截止。玉山抽籤日查 `bed_8.aspx`，不自己推。用既有依賴 `holidays.Taiwan` 判斷「隔天放假」的晚上（週五、週六、連假前一晚）。
 - `hut_info.py`：每個地點的交通卡（固定資料，見下）。
 - `hut_report.py`：組 email（HTML）和 LINE 回覆文字。
 - `server.py`：加三個 CronTrigger 排程：07:00、16:30、23:30（Asia/Taipei）。
