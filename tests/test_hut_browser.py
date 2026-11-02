@@ -15,10 +15,12 @@ CAL = """<table class="table_bed"><tr><td><a href="bed_6main.aspx?node_id=3&sdat
 class FakePage:
     def __init__(self, html_for=lambda url: CAL):
         self.html_for, self.url, self.actions = html_for, "", []
+        self.response = None
 
     def goto(self, url, wait_until=None):
         self.url = url
         self.actions.append(("goto", url))
+        return self.response
 
     def content(self):
         return self.html_for(self.url)
@@ -57,3 +59,49 @@ def test_zero_rows_is_error():
     page = FakePage(html_for=lambda url: "<html>改版</html>")
     _, errors = hb.collect_onestop(page, sleep=lambda s: None)
     assert all("0 筆" in m for m in errors.values())
+
+
+def test_http_error_stops_batch():
+    page = FakePage()
+    page.response = type("R", (), {"status": 403})()
+    slots, errors = hb.collect_onestop(page, sleep=lambda s: None)
+    assert slots == []
+    assert set(errors) == set(hut_onestop.ONESTOP)
+    assert all("HTTP 403" in m for m in errors.values())
+    assert sum(1 for a in page.actions if a[0] == "goto") == 1
+
+
+def test_timeout_stops_batch():
+    class TimeoutError(Exception):
+        pass
+
+    class P(FakePage):
+        def goto(self, url, wait_until=None):
+            super().goto(url, wait_until)
+            raise TimeoutError("slow")
+
+    page = P()
+    slots, errors = hb.collect_onestop(page, sleep=lambda s: None)
+    assert slots == [] and set(errors) == set(hut_onestop.ONESTOP)
+    assert sum(1 for a in page.actions if a[0] == "goto") == 1
+
+
+def test_gap_between_every_page_hit():
+    events = []
+
+    class P(FakePage):
+        def goto(self, url, wait_until=None):
+            events.append("hit")
+            return super().goto(url, wait_until)
+
+        def click(self, selector):
+            events.append("hit")
+            super().click(selector)
+
+    page = P()
+    hb.collect_onestop(page, sleep=lambda s: events.append(("sleep", s)))
+    hits = [i for i, e in enumerate(events) if e == "hit"]
+    for a, b in zip(hits, hits[1:]):
+        between = [e for e in events[a:b] if e != "hit"]
+        assert between and all(s >= 4 for _, s in between)
+    assert events[-1] == "hit"   # 最後一站後不再多睡

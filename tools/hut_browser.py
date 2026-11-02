@@ -40,7 +40,8 @@ def _search(page):
     page.wait_for_load_state("networkidle")
 
 
-def _next_month(page):
+def _next_month(page, sleep=time.sleep):
+    sleep(PAGE_GAP)
     y = int(page.eval_on_selector("#con_ddlYear", "e => e.value"))
     m = int(page.eval_on_selector("#con_ddlMonth", "e => e.value"))
     y, m = (y + 1, 1) if m == 12 else (y, m + 1)
@@ -49,51 +50,68 @@ def _next_month(page):
     _search(page)
 
 
-def _open_target(page, path, label):
-    page.goto(hut_onestop.BASE + path, wait_until="networkidle")
+def _goto(page, path):
+    resp = page.goto(hut_onestop.BASE + path, wait_until="networkidle")
+    status = getattr(resp, "status", None)
+    if isinstance(status, int) and status >= 400:
+        raise hut_onestop.Blocked(f"HTTP {status}，這次停止")
     hut_onestop.ensure_not_blocked(page.content())
+
+
+def _open_target(page, path, label, sleep=time.sleep):
+    _goto(page, path)
+    sleep(PAGE_GAP)
     page.select_option("#con_rooms", label=label)
     _search(page)
 
 
+def _is_stop(e):
+    """被擋或逾時都視為「停」，不重試。"""
+    return isinstance(e, hut_onestop.Blocked) or type(e).__name__ == "TimeoutError"
+
+
 def collect_onestop(page, sleep=time.sleep):
-    """(slots, errors)。被 WAF 擋就停，沒抓到的地點全部記成同一個錯誤。"""
+    """(slots, errors)。被擋（WAF／HTTP 錯誤／逾時）就停，沒抓到的地點全部記成同一個錯誤。"""
     slots, errors = [], {}
-    for site, (path, label) in hut_onestop.ONESTOP.items():
+    sites = list(hut_onestop.ONESTOP.items())
+    for n, (site, (path, label)) in enumerate(sites):
         try:
-            _open_target(page, path, label)
+            _open_target(page, path, label, sleep)
             got = []
             for i in range(MONTHS):
                 if i:
-                    _next_month(page)
+                    _next_month(page, sleep)
                 got += hut_onestop.parse_onestop_html(page.content(), site)
             if not got:
                 raise ValueError("解析出 0 筆（網站可能改版）")
             slots += got
-        except hut_onestop.Blocked:
-            msg = "被網站擋下（Request Rejected），這次停止"
-            done = {s.site for s in slots}
-            for rest in hut_onestop.ONESTOP:
-                if rest not in done:
-                    errors[rest] = msg
-            break
         except Exception as e:
+            if _is_stop(e):
+                if isinstance(e, hut_onestop.Blocked):
+                    msg = str(e) or "被網站擋下（Request Rejected），這次停止"
+                else:
+                    msg = f"逾時（{type(e).__name__}），這次停止"
+                done = {s.site for s in slots}
+                for rest in hut_onestop.ONESTOP:
+                    if rest not in done:
+                        errors[rest] = msg
+                break
             errors[site] = f"{type(e).__name__}: {e}"[:200]
-        sleep(PAGE_GAP)
+        if n < len(sites) - 1:
+            sleep(PAGE_GAP)
     return slots, errors
 
 
 def recon(page):
     FIXTURES.mkdir(parents=True, exist_ok=True)
     for path in dict.fromkeys(p for p, _ in hut_onestop.ONESTOP.values()):
-        page.goto(hut_onestop.BASE + path, wait_until="networkidle")
-        hut_onestop.ensure_not_blocked(page.content())
+        _goto(page, path)
         options = page.eval_on_selector(
             "#con_rooms", "e => [...e.options].map(o => o.value + '=' + o.text)")
         print(f"{path} 宿營地選項：{options}")
         time.sleep(PAGE_GAP)
     for site, (path, label) in hut_onestop.ONESTOP.items():
-        _open_target(page, path, label)
+        _open_target(page, path, label, time.sleep)
         html = page.content()
         (FIXTURES / f"{site}.html").write_text(html, encoding="utf-8")
         print(f"{site} {label}：解析 {len(hut_onestop.parse_onestop_html(html, site))} 天，樣本已存")
@@ -107,6 +125,18 @@ def main(argv=None):
     ap.add_argument("--forest", action="store_true")
     ap.add_argument("--headed", action="store_true")
     args = ap.parse_args(argv)
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+
+    token = None
+    if not (args.dry_run or args.recon):
+        try:
+            token = (HOME / "admin_token").read_text(encoding="utf-8-sig").strip()
+        except OSError:
+            token = ""
+        if not token:
+            print("找不到 ~/.hut_monitor/admin_token 或內容為空，已停止（沒有開瀏覽器）")
+            return 2
 
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
@@ -129,12 +159,16 @@ def main(argv=None):
         return 0
 
     import requests
-    token = (HOME / "admin_token").read_text(encoding="utf-8-sig").strip()
-    r = requests.post(f"{SERVER}/admin/hut-ingest", timeout=60,
-                      json={"slots": [s.to_dict() for s in slots], "errors": errors},
-                      headers={"X-Admin-Token": token})
-    r.raise_for_status()
-    print(r.json())
+    try:
+        r = requests.post(f"{SERVER}/admin/hut-ingest", timeout=60,
+                          json={"slots": [s.to_dict() for s in slots], "errors": errors},
+                          headers={"X-Admin-Token": token})
+        r.raise_for_status()
+        print(r.json())
+    except requests.RequestException as e:
+        status = getattr(getattr(e, "response", None), "status_code", "")
+        print(f"送回 Railway 失敗：{type(e).__name__} {status}".strip())
+        return 2
     return 0 if slots else 1
 
 
