@@ -61,3 +61,76 @@ def test_slot_dict_round_trip():
     s = hs.Slot("jmlnt", "嘉明湖山屋", "bed", date(2026, 12, 5), 3, None)
     assert hs.Slot.from_dict(s.to_dict()) == s
     assert s.key() == ("jmlnt", "嘉明湖山屋", "2026-12-05")
+
+
+def test_find_csrf_present_and_absent():
+    assert hs.find_csrf(_html("jmlnt.html")) == "YXdkMjI2MDIwMjYtMTEtMDI="
+    assert hs.find_csrf(_html("kgonline_cal.html")) == ""
+    assert hs.find_csrf(None) == ""
+
+
+class _Resp:
+    def __init__(self, text, status=200):
+        self.text, self.status_code = text, status
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+class _Session:
+    """index 頁給 csrf，月曆請求一律回同一份月曆樣本。"""
+
+    def __init__(self, index, month, status=200):
+        self.index, self.month, self.status = index, month, status
+        self.headers, self.calls = {}, []
+
+    def get(self, url, params=None, timeout=None):
+        self.calls.append(("get", params))
+        return _Resp(self.month if params else self.index, self.status)
+
+    def post(self, url, data=None, timeout=None):
+        self.calls.append(("post", data))
+        return _Resp(self.month, self.status)
+
+
+def test_fetch_site_get_navigation_and_csrf():
+    jml = _html("jmlnt.html")
+    sess = _Session(jml, jml)
+    slots = hs.fetch_site("jmlnt", date(2026, 11, 2), session=sess, sleep=lambda s: None)
+    months = [(p["date_set[year]"], p["date_set[month]"]) for kind, p in sess.calls if p]
+    assert months == [(2026, 11), (2026, 12), (2027, 1)]
+    assert all(p["csrf"] == "YXdkMjI2MDIwMjYtMTEtMDI=" for kind, p in sess.calls if p)
+    assert sess.headers["User-Agent"] == hs.USER_AGENT
+    assert len(slots) > 60
+
+
+def test_fetch_site_kgonline_posts_ajax():
+    sess = _Session(_html("kgonline.html"), _html("kgonline_cal.html"))
+    hs.fetch_site("kgonline", date(2026, 12, 1), months=1, session=sess, sleep=lambda s: None)
+    kind, data = sess.calls[-1]
+    assert kind == "post"
+    assert data["mode"] == "show_calendar" and (data["year"], data["month"]) == (2026, 12)
+
+
+def test_fetch_all_zero_rows_and_http_error_become_errors():
+    kg_index = _html("kgonline.html")
+    bad = {"jmlnt": _Session("<html></html>", ""),                 # 沒 csrf
+           "tconline": _Session(kg_index, "<html>改版</html>"),     # 0 筆
+           "kgonline": _Session(kg_index, "", status=500)}
+    calls = iter(["jmlnt", "jmlnt", "tconline", "tconline", "kgonline", "kgonline"])
+    slots, errors = hs.fetch_all(date(2026, 11, 2),
+                                 session_factory=lambda: bad[next(calls)],
+                                 sleep=lambda s: None)
+    assert slots == []
+    assert set(errors) == {"jmlnt", "tconline", "kgonline"}
+    assert "0 筆" in errors["tconline"]
+
+
+def test_fetch_all_retry_once_then_ok():
+    jml = _html("jmlnt.html")
+    sessions = iter([_Session(jml, jml, status=503), _Session(jml, jml)])
+    slots, errors = hs.fetch_all(date(2026, 11, 2), sites=["jmlnt"],
+                                 session_factory=lambda: next(sessions),
+                                 sleep=lambda s: None)
+    assert errors == {} and slots

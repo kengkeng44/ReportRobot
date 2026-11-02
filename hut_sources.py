@@ -1,7 +1,8 @@
 """林業署山屋站（嘉明湖／天池／檜谷）月曆：抓頁面、解析成 Slot。
 
 三站是同一套 PHP 系統，月曆格子寫法略有不同：
-- 嘉明湖、檜谷：每天一個 <a id="tds_日">，格子內容包在裡面
+- 嘉明湖：每天一個 <a id="tds_日">，格子內容包在裡面
+- 檜谷：每天一個 <a id="tds_流水號">（不是日期），日期取自 onclick 的 date=YYYY-MM-DD
 - 天池：<a id="tds_日"> 只是「線上申請」按鈕，內容在外層最內圈的 <td>；
   過了申請期的日子沒有按鈕，日期改從格子裡的 YYYY-MM-DD 或前面的日數字拿
 換月份：嘉明湖／天池 GET 帶 date_set[year]、date_set[month]、csrf；
@@ -121,3 +122,56 @@ def parse_calendar(html, site, year, month):
             kind = "bed" if "床位" in label else "tent"
             slots.append(Slot(site, unit, kind, day, int(m.group("n")), int(m.group("m"))))
     return slots
+
+
+def _months(today, count):
+    y, m = today.year, today.month
+    for _ in range(count):
+        yield y, m
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+
+
+def _fetch_month(session, site, year, month, csrf):
+    cfg = SITES[site]
+    if cfg["nav"] == "post":
+        r = session.post(cfg["url"], data={"year": year, "month": month, "csrf": csrf,
+                                           "mode": "show_calendar"}, timeout=TIMEOUT)
+    else:
+        r = session.get(cfg["url"], params={"date_set[year]": year, "date_set[month]": month,
+                                            "csrf": csrf}, timeout=TIMEOUT)
+    r.raise_for_status()
+    return r.text
+
+
+def fetch_site(site, today, months=3, session=None, sleep=time.sleep):
+    """當月起 months 個月的 Slot。抓不到或解析出 0 筆就丟例外（0 筆 ≠ 全滿）。"""
+    s = session or requests.Session()
+    s.headers["User-Agent"] = USER_AGENT
+    r = s.get(SITES[site]["url"], timeout=TIMEOUT)
+    r.raise_for_status()
+    csrf = find_csrf(r.text)
+    if not csrf:
+        raise ValueError("找不到 csrf（網站可能改版）")
+    slots = []
+    for y, m in _months(today, months):
+        sleep(REQUEST_GAP)
+        slots += parse_calendar(_fetch_month(s, site, y, m, csrf), site, y, m)
+    if not slots:
+        raise ValueError("解析出 0 筆（網站可能改版）")
+    return slots
+
+
+def fetch_all(today, sites=None, session_factory=requests.Session, sleep=time.sleep):
+    """(slots, errors)。每站失敗重試一次；還是失敗就記在 errors[site]，不丟例外。"""
+    slots, errors = [], {}
+    for site in sites or SITES:
+        for attempt in (1, 2):
+            try:
+                slots += fetch_site(site, today, session=session_factory(), sleep=sleep)
+                errors.pop(site, None)
+                break
+            except Exception as e:
+                errors[site] = f"{type(e).__name__}: {e}"[:200]
+                if attempt == 1:
+                    sleep(REQUEST_GAP)
+    return slots, errors
