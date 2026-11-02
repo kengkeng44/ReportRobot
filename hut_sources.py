@@ -161,8 +161,13 @@ def fetch_site(site, today, months=3, session=None, sleep=time.sleep):
     return slots
 
 
+def _is_blocked(exc):
+    resp = getattr(exc, "response", None)
+    return isinstance(exc, requests.HTTPError) and getattr(resp, "status_code", None) in (403, 429)
+
+
 def fetch_all(today, sites=None, session_factory=requests.Session, sleep=time.sleep):
-    """(slots, errors)。每站失敗重試一次；還是失敗就記在 errors[site]，不丟例外。"""
+    """(slots, errors)。每站失敗重試一次（403/429 被擋不重試）；還是失敗就記在 errors[site]，不丟例外。"""
     slots, errors = [], {}
     for site in sites or SITES:
         for attempt in (1, 2):
@@ -172,6 +177,8 @@ def fetch_all(today, sites=None, session_factory=requests.Session, sleep=time.sl
                 break
             except Exception as e:
                 errors[site] = f"{type(e).__name__}: {e}"[:200]
+                if _is_blocked(e):
+                    break  # 被擋就停，不重試、不繞
                 if attempt == 1:
                     sleep(REQUEST_GAP)
     return slots, errors

@@ -3,6 +3,8 @@
 from datetime import date
 from pathlib import Path
 
+import requests
+
 import hut_sources as hs
 
 FIX = Path(__file__).parent / "fixtures" / "hut"
@@ -74,6 +76,8 @@ class _Resp:
         self.text, self.status_code = text, status
 
     def raise_for_status(self):
+        if self.status_code in (403, 429):
+            raise requests.HTTPError(f"HTTP {self.status_code}", response=self)
         if self.status_code >= 400:
             raise RuntimeError(f"HTTP {self.status_code}")
 
@@ -134,3 +138,17 @@ def test_fetch_all_retry_once_then_ok():
                                  session_factory=lambda: next(sessions),
                                  sleep=lambda s: None)
     assert errors == {} and slots
+
+
+def test_fetch_all_blocked_403_not_retried():
+    jml = _html("jmlnt.html")
+    made = []
+
+    def factory():
+        made.append(1)
+        return _Session(jml, jml, status=403)
+
+    slots, errors = hs.fetch_all(date(2026, 11, 2), sites=["jmlnt"],
+                                 session_factory=factory, sleep=lambda s: None)
+    assert len(made) == 1
+    assert slots == [] and "HTTPError" in errors["jmlnt"] and "403" in errors["jmlnt"]
