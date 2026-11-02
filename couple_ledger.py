@@ -825,16 +825,6 @@ def _settle_reply(rows, label, offset, today):
     return quick_reply_text(settle_text(rows, label) + _db_line(), options)
 
 
-def _todo_db_line():
-    try:
-        import notion_db
-        db_id = notion_db.get_or_create_db("Todos")
-    except Exception as e:
-        print(f"待辦表網址取得失敗：{e}")
-        db_id = ""
-    return f"\n📒 待辦表：https://www.notion.so/{db_id.replace('-', '')}" if db_id else ""
-
-
 def _db_line():
     """回覆最後一行附共同帳本的 Notion 連結，想看細項直接點。拿不到就不附。"""
     try:
@@ -1137,7 +1127,7 @@ def _todo(body, ctx):
             # 一次很多件就不逐件問截止日，不然一張清單換來六張按鈕卡
             for ln in lines:
                 personal.add_todo(key, ln, by=by)
-            return [f"✅ 已記下 {len(lines)} 件待辦" + (f"（{by}）" if by else "") + _todo_db_line(),
+            return [f"✅ 已記下 {len(lines)} 件待辦" + (f"（{by}）" if by else ""),
                     todo_list_flex(personal.list_todos(key))]
         return command_router._handle_todo_subcmd(key, lines[0] if lines else body, by=by)
     except Exception as e:
@@ -1172,7 +1162,7 @@ def _todo_for(who, body, ctx):
         personal.add_todo(key, content, start=start, end=end, by=by, for_=who)
         when = f"📅 {start.month}/{start.day}　" if start else ""
         stamp = now_tpe().strftime("%m/%d %H:%M")
-        return [f"✅ 幫 {who} 記下：{content}\n{when}✍️ {by or '有人'} {stamp} 記{_todo_db_line()}",
+        return [f"✅ 幫 {who} 記下：{content}\n{when}✍️ {by or '有人'} {stamp} 記",
                 todo_list_flex(personal.list_todos(key))]
     except Exception as e:
         print(f"幫人記待辦失敗：{e}")
