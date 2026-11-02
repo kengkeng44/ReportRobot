@@ -18,8 +18,14 @@ def test_every_place_has_transport_card():
 
 
 def test_unverified_card_warns():
-    card = hi.transport_card("嘉明湖／向陽")
+    card = hi.transport_card("天池")
     assert "尚未核對官方資料" in card
+
+
+def test_verified_card_shows_date():
+    card = hi.transport_card("嘉明湖／向陽")
+    assert "核對）" in card
+    assert "尚未核對" not in card
 
 
 def test_display_and_apply_phrase():
