@@ -676,6 +676,11 @@ async def line_webhook(
         # 多行訊息：每行各自當獨立指令，依序塞進同一 reply（最多 5 則 LINE 上限）
         # 限制最多 3 行，避免一次塞十個指令把 server 卡爆
         lines = [l.strip() for l in text.splitlines() if l.strip()]
+        # 例外：「待辦」開頭換行貼一張清單，是一則指令不是好幾則 ——
+        # 拆開的話第一行只叫出清單、其餘幾行被當成私訊指令擋掉
+        if (ctx["source_type"] in ("group", "room") and lines
+                and lines[0].lower() in ("待辦", "todo")):
+            lines = lines[:1]
         if len(lines) > 1:
             parts = []
             for line in lines[:3]:
