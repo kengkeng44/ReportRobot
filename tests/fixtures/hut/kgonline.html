@@ -1,0 +1,812 @@
+<script nonce="VqZbRs/Z3TQoBGakmRsw6Q==">
+	initPage();
+</script>
+<html lang="zh-TW">
+	<head>
+		<meta http-equiv="content-type" content="text/html; charset=utf-8" />
+		<meta name="author" content="SemiColonWeb" />
+		<!-- jquery -->
+		<script type="text/javascript" src="/js/jquery.js"></script>
+		<!-- Stylesheets
+		============================================= -->
+		<link href="http://fonts.googleapis.com/css?family=Lato:300,400,400italic,600,700|Raleway:300,400,500,600,700|Crete+Round:400italic" rel="stylesheet" type="text/css" />
+		<link rel="stylesheet" href="../css/bootstrap.css" type="text/css" />
+		<link rel="stylesheet" href="../css/style.css" type="text/css" />
+		<link rel="stylesheet" href="../css/swiper.css" type="text/css" />
+		<link rel="stylesheet" href="../css/dark.css" type="text/css" />
+		<link rel="stylesheet" href="../css/font-icons.css" type="text/css" />
+		<link rel="stylesheet" href="../css/animate.css" type="text/css" />
+		<link rel="stylesheet" href="../css/magnific-popup.css" type="text/css" />
+		<link rel="stylesheet" href="../css/radio-checkbox.css" type="text/css" />
+		<link rel="stylesheet" href="../css/calendar.css" type="text/css" />
+		
+		<link href="../css/custom.css" rel="stylesheet" type="text/css">
+		<link href="../css/color.css" rel="stylesheet" type="text/css">
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<!--[if lt IE 9]>
+			<script src="http://css3-mediaqueries-js.googlecode.com/svn/trunk/css3-mediaqueries.js"></script>
+		<![endif]-->
+		<!-- Document Title
+		============================================= -->
+		<title>山屋及營地申請</title>
+	</head>
+	<script>
+	$(document).ready(function () {
+    const $searchToggle = $('#header_keyword');
+    const $searchSection = $('#submit1');
+
+    // Toggle 顯示/隱藏 搜尋表單區塊
+    function toggleSearch() {
+        const isExpanded = $searchToggle.attr('aria-expanded') === 'true';
+        $searchSection.toggle(!isExpanded); // 顯示或隱藏
+        $searchToggle.attr('aria-expanded', !isExpanded); // 更新 aria
+    }
+
+    // 點擊或按 Enter / Space 時切換搜尋區塊
+    $searchToggle.on('click keydown', function (e) {
+        if (e.type === 'click' || e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault(); // 防止預設行為（特別是空白鍵）
+            toggleSearch();
+            e.stopPropagation(); // 防止冒泡到 document 的 click 事件
+        }
+    });
+
+    // 點擊其他地方時收合
+    $(document).on('click', function (e) {
+        // 如果點擊的不是搜尋按鈕或搜尋表單裡面
+        if (!$searchToggle.is(e.target) && $searchToggle.has(e.target).length === 0 &&
+            !$searchSection.is(e.target) && $searchSection.has(e.target).length === 0) {
+            $searchSection.hide();
+            $searchToggle.attr('aria-expanded', 'false');
+        }
+    });
+
+    // 焦點離開時收合（可選，加強版）
+    $searchSection.on('focusout', function (e) {
+        setTimeout(function () { // 延遲一下，確保是否真的離開
+            if (!$(document.activeElement).closest('#submit1').length && !$(document.activeElement).is('#header_keyword')) {
+                $searchSection.hide();
+                $searchToggle.attr('aria-expanded', 'false');
+            }
+        }, 0);
+    });
+});
+    // 監聽鍵盤事件
+    document.addEventListener('keydown', function(event) {
+        // 檢查是否按下 Alt + S
+        if (event.altKey && event.key === 's') {
+            event.preventDefault();  // 防止默認行為
+            var searchForm = document.getElementById('submit1');
+            var searchInput = document.getElementById('keyword');
+
+            // 顯示表單，如果它是隱藏的
+            if (searchForm.style.display === 'none') {
+                searchForm.style.display = 'block';
+            }
+
+            // 將焦點設置到搜尋框
+            searchInput.focus();
+        }
+    });
+	$(document).on('keydown', '#banner-menu > li > a[role="button"]', function (e) {
+	if (e.key !== 'Enter') return;
+
+	e.preventDefault();
+
+	var $btn = $(this);
+	var $li = $btn.parent('li');
+	var $submenu = $li.children('.sub-menu-container');
+	var isOpen = $btn.attr('aria-expanded') === 'true';
+
+	// 先關閉其他選單
+	$('#banner-menu > li > a[role="button"]').attr('aria-expanded', 'false');
+	$('#banner-menu > li').removeClass('current');
+	$('#banner-menu > li > .sub-menu-container').hide();
+
+	if (!isOpen) {
+		$btn.attr('aria-expanded', 'true');
+		$li.addClass('current sfHover');
+		$submenu.show();
+	} else {
+		$btn.attr('aria-expanded', 'false');
+		$li.removeClass('current sfHover');
+		$submenu.hide();
+	}
+});
+$(document).on('click', '#banner-menu > li > a[role="button"]', function (e) {
+	e.preventDefault();
+
+	var $btn = $(this);
+	var $li = $btn.parent('li');
+	var $submenu = $li.children('.sub-menu-container');
+	var isOpen = $btn.attr('aria-expanded') === 'true';
+
+	// 先關閉其他選單
+	$('#banner-menu > li > a[role="button"]').attr('aria-expanded', 'false');
+	$('#banner-menu > li').removeClass('current sfHover');
+	$('#banner-menu > li > .sub-menu-container').hide();
+
+	if (!isOpen) {
+		$btn.attr('aria-expanded', 'true');
+		$li.addClass('current sfHover');
+		$submenu.show();
+	}
+});
+</script>
+<style>
+#banner-menu > li:hover > .sub-menu-container {
+    display: none !important;
+}
+
+#banner-menu > li.sfHover > .sub-menu-container,
+#banner-menu > li.current > .sub-menu-container {
+    display: block !important;
+}
+</style>
+	<body class="stretched">
+		<!-- Document Wrapper
+		============================================= -->
+		<a href="#content_alt" id="gotocenter" style="color:rgb(162,116,67);" title="移至主要內容" class="sr-only sr-only-focusable" >跳到主要內容</a>
+		<div id="wrapper" class="clearfix">
+			<!-- 上方區塊
+			============================================= -->
+			<div id="top-bar" class="dark">
+				<div class="container clearfix">
+					<div class="row justify-content-end align-items-center">
+						<div class="col-12 col-md-auto"> 
+							<div class="top-links on-click">
+								<ul class="top-links-container">
+									<li class="top-links-item d-none d-lg-block"><a title="上方功能" name="link_top" href="#link_top" accesskey="U" id="top_alt" class="alt_class">:::</a></li>
+									<!-- 2022/3/11 新增無障礙 GN1240100E -->
+									<li></li>
+										<!-- 2022/3/11 新增無障礙 GN1240100E 結束 -->
+									<li class="top-links-item"><a href="/" title="返回首頁">回首頁</a></li>
+									<li class="top-links-item"><a href="/sitemap/" title="網站導覽">網站導覽</a></li>
+									<li class="top-links-item d-lg-block d-none"><a href="/download/" title="檔案下載">檔案下載</a></li>
+									<li class="top-links-item d-lg-block d-none"><a href="/links/" title="網網相連">網網相連</a></li>
+									<li class="top-links-item"><a href="https://kgonline-en.forest.gov.tw/" title="English">English</a></li>
+																			<li class="top-links-item "><a href="/members/?mode=sign_in">登入</a></li>
+									
+									<li class="top-links-item"><a href="javascript:;" id="header_keyword" value="搜尋(展開)" role="button" title="搜尋(展開)" aria-expanded="false"><i class="icon-line-search"></i>搜尋<i class="icon-angle-down"></i></a>
+								  <div id="submit1" class="top-links-section">
+									<form action="/all_search/" method="get" autocomplete="off" class="m-0">
+										<div class="form-group">
+											<label for="keyword">關鍵字</label>
+											<input id="keyword" name="keyword" type="text" class="form-control" placeholder="請輸入關鍵字搜尋..." accesskey="S">
+										</div>
+										<button class="button button-style-color button-3d button-large button-rounded btn-block m-0" type="submit">搜尋</button>
+									</form>
+								  </div>
+								</li>
+								</ul>
+								<!--上方選單區塊 end -->
+								
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+			<header id="header" class="index-header">
+				<div id="header-wrap">
+					<div class="container">
+						<div class="header-row">
+							<!-- Logo
+							============================================= -->
+							<div id="logo">
+								<h1 class="m-0"> 
+									<a href="/" title="點擊可回首頁" class="standard-logo" data-dark-logo="images/logo-dark.png"><img src="/archive/logo.png" alt="檜谷山莊 Logo"></a>
+									<a href="/" title="點擊可回首頁" class="retina-logo" data-dark-logo="images/logo-dark@2x.png"><img src="/archive/logo.png" alt="檜谷山莊 Logo"></a>
+								</h1>
+							</div>
+							<!-- #logo end --> 
+
+							<!-- RWD按鈕區塊
+							============================================= -->
+							<script>
+						function header_btn(){
+							if($('#header_btn').attr('value') == '選單(展開)'){
+								$('#header_btn').attr('value','選單(收合)');
+								$('#header_btn').attr('aria-label','選單(收合)');
+								$('#header_btn').attr('aria-expanded','true');
+							}else{
+								$('#header_btn').attr('value','選單(展開)');
+								$('#header_btn').attr('aria-label','選單(展開)');
+								$('#header_btn').attr('aria-expanded','false');
+							}
+							
+						}
+						</script>
+					<div id="primary-menu-trigger">
+					<a href="javascript:;"  type="button" id="header_btn" value="選單(展開)" role="button" aria-label="選單(展開)" onKeyPress="header_btn()"  onclick="header_btn()" aria-expanded="false">
+						<svg class="svg-trigger" viewBox="0 0 100 100">
+							<path d="m 30,33 h 40 c 3.722839,0 7.5,3.126468 7.5,8.578427 0,5.451959 -2.727029,8.421573 -7.5,8.421573 h -20"></path>
+							<path d="m 30,50 h 40"></path>
+							<path d="m 70,67 h -40 c 0,0 -7.5,-0.802118 -7.5,-8.365747 0,-7.563629 7.5,-8.634253 7.5,-8.634253 h 20"></path>
+						</svg>
+						&nbsp;</a>
+					</div>
+					<script>
+					function closeBannerMenu(){
+						$('#banner-menu > li').removeClass('sfHover current');
+						$('#banner-menu > li > a[role="button"]').attr('aria-expanded', 'false');
+						$('#banner-menu > li > .sub-menu-container').hide();
+					}
+					</script>
+					<script>
+					$(document).ready(function() {
+										/*$("li.menu-item > a").on('focus', function() {
+											$(this).parent().addClass("sfHover");
+									});*/
+									$("li.menu-item").on('focusout', function(e) {
+										var $this = $(this);
+									setTimeout(function() {
+										if (!$this.find(":focus").length) {
+												$this.removeClass("sfHover");
+											}
+										}, 100);
+									});
+									$(document).on("keydown", function(e) {
+										if (e.key === "Escape") {
+											$("li.menu-item").removeClass("sfHover");
+										}
+										});
+									});
+					</script>
+							<!-- Banner選單區塊
+							============================================= -->
+							<nav class="primary-menu">
+								<ul id="banner-menu" class="menu-container">
+									<li class="menu-item">
+										<a href="#" class="menu-link" role="button" aria-haspopup="true" aria-expanded="false" data-hover="dropdown" onfocus="banner(this)" title="山莊簡介"><div>山莊簡介</div></a>
+										<ul class="sub-menu-container">
+																							<li class="menu-item"><a class="menu-link" href="/introduction/index.php?parent_id=327" ><div>山永遠都在—安全登山、平安回家影片</div></a></li>												<li class="menu-item"><a class="menu-link" href="/introduction/index.php?parent_id=324" ><div>山稜上的勇者-高山協作員故事影片</div></a></li>												<li class="menu-item"><a class="menu-link" href="/introduction/index.php?parent_id=48" ><div>關於檜谷山莊</div></a></li>												<li class="menu-item"><a class="menu-link" href="/introduction/index.php?parent_id=264" ><div>管理措施</div></a></li>												<li class="menu-item"><a class="menu-link" href="/introduction/index.php?parent_id=257" ><div>檜谷山莊床位配置與營地位置圖</div></a></li>												<li class="menu-item"><a class="menu-link" href="/introduction/index.php?parent_id=51" ><div>交通資訊</div></a></li>												<li class="menu-item"><a class="menu-link" href="/introduction/index.php?parent_id=53" ><div>步道導覽</div></a></li>										</ul>
+									</li>
+									<li class="menu-item">
+										<a href="#" class="menu-link" role="button" aria-haspopup="true" aria-expanded="false" data-hover="dropdown" onfocus="banner(this)" title="最新消息"><div>最新消息</div></a>
+										<ul class="sub-menu-container">
+																							<li class="menu-item"><a class="menu-link" href="/news/index.php?type_id=29"><div>公告事項</div></a></li>												<li class="menu-item"><a class="menu-link" href="/news/index.php?type_id=20"><div>最新訊息</div></a></li>										</ul>
+									</li>
+									<li class="menu-item">
+										<a href="#" class="menu-link" role="button" aria-haspopup="true" aria-expanded="false" data-hover="dropdown" onfocus="banner(this)" title="山莊申請"><div>山莊申請</div></a>
+										<ul class="sub-menu-container">
+											
+											<li class="menu-item"><a class="menu-link" href="/room/index.php"><div>山屋及營地申請</div></a></li>
+											<li class="menu-item"><a class="menu-link" href="/questions/index.php?parent_id=238"><div>申請規則</div></a></li>
+											<li class="menu-item"><a class="menu-link" href="/questions/index.php?parent_id=239"><div>如何申請</div></a></li>
+											<li class="menu-item"><a class="menu-link" href="/room/index.php?mode=record"><div>申請查詢</div></a></li>
+											<li class="menu-item"><a class="menu-link" href="/questions/index.php?parent_id=187"><div>收費基準</div></a></li>
+										</ul>
+									</li>
+
+									<li class="menu-item">
+										<a href="#" class="menu-link" role="button" aria-haspopup="true" aria-expanded="false" data-hover="dropdown" onfocus="banner(this)" title="山莊憩"><div>步道簡介</div></a>
+										<ul class="sub-menu-container">
+																							<li class="menu-item"><a class="menu-link" href="/introduction/index.php?parent_id=250" ><div>步道導覽</div></a></li>												<li class="menu-item"><a class="menu-link" href="/introduction/index.php?parent_id=247" ><div>步道資訊簡介</div></a></li>												<li class="menu-item"><a class="menu-link" href="/introduction/index.php?parent_id=213" ><div>季節景觀特色</div></a></li>												<li class="menu-item"><a class="menu-link" href="/introduction/index.php?parent_id=183" ><div>行程建議</div></a></li>												<li class="menu-item"><a class="menu-link" href="/introduction/index.php?parent_id=189" ><div>北大武山動物資源</div></a></li>												<li class="menu-item"><a class="menu-link" href="/introduction/index.php?parent_id=192" ><div>北大武山哺乳類動物</div></a></li>												<li class="menu-item"><a class="menu-link" href="/introduction/index.php?parent_id=190" ><div>北大武山植物資源</div></a></li>												<li class="menu-item"><a class="menu-link" href="/introduction/index.php?parent_id=191" ><div>北大武山林相變化</div></a></li>												<li class="menu-item"><a class="menu-link" href="/introduction/index.php?parent_id=193" ><div>北大武山附生植物</div></a></li>												<li class="menu-item"><a class="menu-link" href="/introduction/index.php?parent_id=194" ><div>北大武山鳥類分布</div></a></li>										</ul>
+									</li>
+									<li class="menu-item">
+										<a class="menu-link" href="/questions/" title="常見問題" onFocus="banner(this)"><div>常見問題</div></a>
+									</li>
+									<li class="menu-item">
+										<a href="#" class="menu-link" role="button" aria-haspopup="true" aria-expanded="false" data-hover="dropdown" onfocus="banner(this)" title="相關資訊" ><div>相關資訊</div></a>
+										<ul class="sub-menu-container">
+																							<li class="menu-item"><a class="menu-link" class="menu-link" href="/introduction/index.php?parent_id=214" ><div>參考里程座標</div></a></li>												<li class="menu-item"><a class="menu-link" class="menu-link" href="/introduction/index.php?parent_id=210" ><div>射鹿溪發源地</div></a></li>												<li class="menu-item"><a class="menu-link" class="menu-link" href="/introduction/index.php?parent_id=209" ><div>崩塌地</div></a></li>												<li class="menu-item"><a class="menu-link" class="menu-link" href="/introduction/index.php?parent_id=185" ><div>瓦魯斯溪發源地</div></a></li>												<li class="menu-item"><a class="menu-link" class="menu-link" href="/introduction/index.php?parent_id=184" ><div>排灣族五年祭</div></a></li>										</ul>
+									</li>
+									<li class="menu-item"><a class="menu-link" href="/contact_us/" title="聯絡我們" onFocus="banner(this)">聯絡我們</a></li>
+
+								</ul>
+							</nav>
+							<!-- Banner選單區塊 end --> 
+						</div>
+					</div>
+				</div>
+				<div class="header-wrap-clone"></div>
+			</header>
+			<!-- 上方區塊 end -->
+			<!-- 內頁banner區塊
+			============================================= -->
+						
+			<section id="page-title" class="page-banner page-title-center page-title-dark pt-5 pb-5" style="background-image: url('../archive/page_banner_02.jpg'); background-size:cover; ">
+
+				<div class="container clearfix">
+					<h2>山屋及營地申請</h2>
+					<ol class="breadcrumb">
+						<li class="breadcrumb-item"><a href="/">首頁</a></li>
+													<li class="breadcrumb-item"><a href="index.php">山屋及營地申請</a></li>
+											</ol>
+				</div>
+
+			</section>
+			
+			<!-- 內頁banner區塊 end --><script type="text/javascript">
+/*$(document).ready(function (){
+	$(".calendar_table").click(function (){
+		alert('山屋及營地申請請點左邊選單[立即申請]');	
+	});	
+});*/
+function chenge(val){
+	if (val == 'ch'){
+		document.getElementById("ch").style.display = "";
+		document.getElementById("eg").style.display = "none";
+	}else{
+		document.getElementById("ch").style.display = "none";
+		document.getElementById("eg").style.display = "";
+	}
+}
+
+function OMOver(sid)
+{
+	var tds = document.getElementById(sid);
+	tds.bgColor = "#66CCCC;";
+}
+
+function OMOut(sid)
+{
+	var tds = document.getElementById(sid);
+	tds.bgColor = "";
+}
+ 	var year	= 2026;
+	var month 	= 11;
+	var day		= 02;
+	var hour	= 10;
+	var minute 	= 42;
+	var second 	= 30;
+	//var hour_r	= 0;
+
+$('body').everyTime('1s',function()
+{
+	hour_r = 0;
+	minute_r = 0;
+	second++;
+	if (second >= 60){
+		minute++;
+		second = 0;
+		if (minute >= 60){
+			hour++;
+			minute = 0;
+			if (hour >=24){
+				hour = 0;
+			}
+		}
+	}
+	hour_r = hour;
+	minute_r = minute;
+	//alert(second.length);
+	if (second < 10){
+		second = "0"+second;
+	}
+	if (minute < 10){
+		minute_r = "0"+minute;
+	}
+	if (hour < 10){
+		hour_r = "0"+hour;
+	}
+	html = "系統時間："+hour_r+":"+minute_r+":"+second
+	$("#Clock").html(html);
+//get_time();
+});
+</script>
+
+<script type="text/javascript" defer="defer">
+	$(function(){
+		//	中英文說明
+		/*
+		$("#eng").hide();
+		$("#show_chi").click(function(){
+			$("#chi").show();
+			$("#eng").hide();
+		});
+		$("#show_eng").click(function(){
+			$("#eng").show();
+			$("#chi").hide();
+		});
+		*/
+		//	ajax顯示月曆
+		show_calendar("2026", "11");
+		//	ajax主機時間
+		//show_clock();
+	});
+
+	//	聚焦於年分
+	function year_show_calendar(year, month){
+		show_calendar(year, month, 'year');
+	}
+
+	//	聚焦於月分
+	function month_show_calendar(year, month){
+		show_calendar(year, month,'month');
+	}
+
+	//	ajax顯示月曆
+	function show_calendar(year, month, value){
+		$.ajax({
+			url:	"index.php",
+			type:	"POST",
+			data:{	//	傳過去的值
+				"year"	:	year,
+				"month"	:	month,
+                "csrf"  : $('#csrf').val(),
+				"mode"	:	"show_calendar"
+			},
+			error: function(XMLHttpRequest, textStatus, errorThrown){
+				alert(errorThrown);
+			},
+			success: function(html){
+				$("#calendar-page").html(html);
+				if(value == 'year'){
+					$( "#year" ).focus();
+				}
+				if(value == 'month'){
+					$( "#month" ).focus();
+				}
+			}
+		});
+	}
+	//	時鐘
+	function show_clock(){
+		var now = new Date();
+		var y =	now.getFullYear();
+		var m =	now.getMonth()+1;
+		var d =	now.getDate();
+		if(m < 10){m = "0" + m};
+		if(d < 10){d = "0" + d};
+		var day = y+"-"+m+"-"+d;
+		var h = now.getHours();
+		var m = now.getMinutes();
+		var s = now.getSeconds();
+		if(h < 10){h = "0" + h};
+		if(m < 10){m = "0" + m};
+		if(s < 10){s = "0" + s};
+		document.getElementById("show_clock").innerHTML = day+" "+h+":"+m+":"+s;
+		setTimeout("show_clock()",1000);
+	}
+</script>
+
+<!-- Content
+============================================= -->
+<section id="content" class="page-content">
+
+    <div class="content-wrap py-5">
+    
+      <div class="container clearfix">
+      
+      <div class="row gutter-40">
+      <!-- 內頁左方區塊
+      ============================================= -->
+      
+        
+      
+        
+        
+
+            <!-- 內頁左方選單
+            ============================================= -->
+
+              
+<div id="left-menu" class="sidebar col-lg-3 order-lg-first order-last">
+	<div class="sidebar-widgets-wrap">
+		<div class="widget widget_links clearfix mb-4">
+			<a title="左方選單" name="left" href="#left" accesskey="L" class="left_sitemap">:::</a>
+						<ul>
+                <li><a href="/questions/index.php?parent_id=238" title="申請規則">申請規則</a></li>	
+                <li><a href="/questions/index.php?parent_id=239" title="如何申請">如何申請</a></li>
+                <li><a href="/room/index.php?mode=record" title="申請查詢">申請查詢</a></li>				
+                <li><a href="/questions/index.php?parent_id=187" title="收費基準">收費基準</a></li>
+			</ul>
+
+		</div>
+		<!-- 便民服務選單
+        ============================================= -->
+		<div id="left-sub-menu" class="w-100">
+
+    <div class="title"><p>便民服務</p></div>
+    
+    <ul>
+        <li class="list_01"><a href="/room/index.php?mode=record">申請查詢</a></li>
+        <li class="list_02"><a href="https://nv2.npa.gov.tw/NM107-604Client/nV01A01Q_01_Action.do?mode=query&method=doList" rel="noopener noreferrer" target="_blank" title="另開新視窗" >入山證申請</a></li>
+        <li class="list_03"><a href="/introduction/index.php?parent_id=51">交通指引</a></li>
+        <li class="list_04"><a href="/room/">申請須知</a></li>
+        <li class="list_05"><a href="/caution/">注意事項</a></li>
+    </ul>
+
+</div>		 <!-- 便民服務選單 end -->
+	</div>
+</div>
+            <!-- 內頁左方選單區塊 end -->
+            
+            <!-- 便民服務選單
+            ============================================= -->
+            
+            
+            <!-- 便民服務選單 end -->
+
+        
+
+      
+
+      <!-- 內頁左方區塊 end -->
+
+      <!-- 內頁右方選單
+      ============================================= -->	
+
+      <div id="box-center-content" class="col-lg-9 m-0">
+      <a title="內容區" name="content_alt" href="#content_alt" accesskey="C" class="right_sitemap">:::</a>
+                    <!-- 上稿內容區塊
+            ============================================= --><div class="content">
+<div id="is-content">
+	<div id="language"><a style="cursor:pointer" onClick="chenge('ch')">中文說明</a> <a style="cursor:pointer;text-decoration:underline;" onClick="chenge('eg')"><span style="color:#0066FF">Online Reservation</span></a></div>
+	<div>今日抽籤日期 : 2026-11-07 ~ 2026-12-02</div>
+	<div id="ch" style="display:"><div class="textpoint">
+<h3>今日開放山屋及營地申請日期為 2026-11-07 至2027-01-02 (即日起第5天至2個月)。</h3>
+
+<ul style="padding-left: 1em;">
+	<li>可組隊申請每隊人數1〜12名，<span style="color:#af0000;">同天住宿日內不得同時申請山屋或營地</span>。</li>
+	<li>
+	<div><span style="font-family: Tahoma;">申請人務必為領隊及入住人員。有關申請相關資訊(如繳款、床位等)僅有申請人可取得，申請人綁定</span><span style="font-family: Tahoma;">為領隊。</span></div>
+	</li>
+	<li>
+	<div><span style="font-family: Tahoma;">申請系統將於</span><span style="font-family: Tahoma; color: rgb(175, 0, 0);">住宿日前30日下午3點進行床位及營位抽籤，下午3點30分公佈</span><span style="font-family: Tahoma;">，如有連續申請住宿，系統將於最後住宿抽籤日公布網站上，未抽中床位及營位申請單將列入候補(<span style="color:#af0000;">候補名單無順序</span>)。</span></div>
+	</li>
+	<li>
+	<div><span style="font-family: Tahoma; color: rgb(175, 0, 0);">住宿日前5日至29日之期間，系統每日下午3點將針對空餘床位及營位進行抽籤</span><span style="font-family: Tahoma;">，並將抽籤結果於網站上公布。</span></div>
+	</li>
+	<li>
+	<div><span style="font-family: Tahoma;">入住隊伍經申請後，</span><span style="font-family: Tahoma; color: rgb(175, 0, 0);">不得增加入住人數，如欲增加須取消訂單已重新申請方式辦理。</span></div>
+	</li>
+	<li>
+	<div>抽中訂單將以簡訊及EMAIL通知，<span style="color: #af0000;"><u>繳款帳號</u></span>可至訂單<span style="color: #af0000;"><u>繳款資訊</u></span>內查詢，未抽中訂單會自動列入候補不另行通知。</div>
+	</li>
+	<li>
+	<div>申請單抽中未繳款前最多減少2員，請至編輯內修改刪除，人員減少後將產生新的繳款帳號可至<u>繳款資訊</u>內查詢，系統不另行通知</div>
+	</li>
+	<li>
+	<div>繳款完成後訂單會自動變更成<u>已收款</u>，系統不另行通知，臨櫃繳款者請於次日後查詢。</div>
+	</li>
+	<li>
+	<div><span style="font-family: Tahoma;">上山日攜帶證件供登山口人員或山莊管理員查詢核對後即會告知床位或營位號。</span></div>
+	</li>
+	<li>
+	<div><span style="font-family: Tahoma;">申請進入北大武山國家步道從事登山活動之民眾，其餐飲、營帳、睡袋、個人健康需要之氧氣瓶及醫藥用品等，均由民眾自備</span></div>
+	</li>
+	<li>
+	<div><span style="font-family: Tahoma;"><strong><span style="color: #af0000;">訂單抽中後，只能更換領隊，禁止更換入住人員</span></strong></span></div>
+	</li>
+	<li>
+	<div><span style="font-family: Tahoma;">訂房前請詳閱「</span><span style="color: #af0000;"><a href="https://kgonline.forest.gov.tw/questions/index.php?parent_id=238" rel="noreferrer noopenner" target="_blank" title="另開新視窗"><span style="font-family: Tahoma;">申請規則</span></a></span><span style="font-family: Tahoma;">」說明</span></div>
+	</li>
+	<li>
+	<div><span style="font-family: Tahoma;">若因修繕或公務暫停住宿之訊息請詳「</span><span style="color: #af0000;"><a href="https://kgonline.forest.gov.tw/news/?type_id=20" rel="noreferrer noopenner" target="_blank" title="另開新視窗"><span style="font-family: Tahoma;">最新消息</span></a></span><span style="font-family: Tahoma;"> 」</span></div>
+	</li>
+	<li>
+	<div><span style="color: #af0000;">申請山屋（營地）請點選日期，進行訂屋流程。</span></div>
+	</li>
+</ul>
+</div>
+
+<div class="alert alert-danger"><span style="font-size: medium;"><strong>請加入「國家災害防救科技中心」LINE官方帳號，並訂閱屏東縣之颱風、降雨等即時防災資訊(亦可全部訂閱)。本山屋及步道於颱風警報期間及降雨達豪雨標準(24小時內200mm或3小時內100mm)時將暫停開放。</strong></span><br />
+<span style="font-size:medium;"><b>依教育部訂定之「登山活動應注意事項」第5點，登山者自行從事登山活動時，應本於風險自我承擔，投保適當之保險。登山服務業者、職業登山嚮導、登山團體或其他登山活動之主辦單位，應協助有意願投保相關保險之登山者及相關人員投保適當之保險。</b></span></div>
+
+<div class="alert alert-danger"><span style="font-size: larger;">信用卡退刷期限已由原60日延長至90日，籲請民眾如有取消行程需求，務請自行掌控時程，以避免影響自身權益。</span></div>
+
+<p><span style="font-size: larger;">&nbsp;</span></p>
+
+<div><a aria-label="國家災害防救科技中心(另開新視窗)" href="/archive/國家災害防救科技中心.jpg" rel="noreferrer noopenner" target="_blank" title="另開新視窗"><img alt="國家災害防救科技中心.jpg" src="/archive/國家災害防救科技中心.jpg" width="50%" /></a><img alt="透過QR code加入NTDR Line好友" src="/archive/國家災害防救科技中心2.jpg" width="50%" /></div>
+
+<div>&nbsp;</div>
+
+<div class="alert alert-danger"><span style="font-size: medium;"><strong>【守護山林】請加入「山老鼠雷達站」LINE森林盜伐通報平台，或撥打森林保護專線：0800-000-930（您您您，救山林），林業及自然保育署將依檢舉竊取森林主副產物破案獎金核發檢舉獎金。</strong></span></div>
+
+<div class="center"><img alt="守護山林" height="512" src="/archive/image_2020_11_09T02_32_39_753Z(1).png" width="350" />
+<p>&nbsp;</p>
+</div>
+
+<div class="alert alert-danger">
+<p><span style="font-size: x-large;">禁止事項：依森林法<span style="font-size: x-large;">第</span>34條規定，森林區域及森林保護區內，不得有引火行為，如引火整地、營火、烤肉等，違者依同條第56條規定處新台幣十二萬元 以上六十萬元以下罰鍰。<br />
+檢舉盜伐、通報森林火災，保林專線電話：0800-000930、0800-057930</span></p>
+</div>
+
+<p>&nbsp;</p>
+</div>
+	<div id="eg" style="display:none"><div class="textpoint">
+<h3>Applications for cabins and campsites are open from $start to $end (5 days to 2 months from now).</h3>
+
+<ul style="padding-left: 1em;">
+	<li>
+	<div><span style="font-family: Tahoma; font-size: small;">People can apply in groups. Beds can be reserved for 1 to 12&nbsp;people per group, and campsites can be reserved for 1 to 4 people per group. Each group can apply for a maximum of 3&nbsp;campsites. </span></div>
+	</li>
+	<li>
+	<div><span style="font-family: Tahoma; font-size: small;">The applicant must be the group leader and a member of the group staying. Application-related information (such as payment, bed availability, etc.) is only available to the applicant, who is bound as the group leader. </span></div>
+	</li>
+	<li>
+	<div><span style="font-family: Tahoma; font-size: small;">The application system will draw lots for beds and camping spaces at 3:00 PM on the 30th day before the accommodation date, and the results will be announced at 3:30 PM.</span><span style="font-family: Tahoma; font-size: small;">If you have applied for accommodation consecutively, the system will announce the final accommodation lottery date on the website. Applications that were not selected for beds or camping spaces will be placed on a waiting list (the waiting list is not ordered).</span></div>
+	</li>
+	<li>
+	<div><span style="font-family: Tahoma; font-size: small; color: #af0000;">From 5 to 29 days before your arrival date, a lottery will be held daily at 3:00 PM for available beds and camping spots. The results will be announced on the website. </span></div>
+	</li>
+	<li>
+	<div><span style="font-family: Tahoma; font-size: small;">Once a team has applied, additional guests are not permitted. To add guests, you must cancel your reservation and reapply. </span></div>
+	</li>
+	<li>
+	<div>Winning orders will be notified via SMS and email. The payment account number can be found in the order&#39;s <span style="color: #af0000;"><u>Payment Information</u></span>. Unselected orders will be automatically placed on the waiting list without further notice.</div>
+	</li>
+	<li>
+	<div>Up to two members can be removed from the selected application before payment. Please modify or delete them in the edit section. After the number of members is reduced, a new payment account number will be generated and can be found in the <u>Payment Information</u>. The system will not notify you further.</div>
+	</li>
+	<li>
+	<div>Once payment is completed, the order will automatically be changed to <u>Paid</u>. The system will not notify you further. Those who paid at the counter should check the next day or later.</div>
+	</li>
+	<li>
+	<div><span style="font-family: Tahoma; font-size: small;">On your day of climbing, please bring your ID to the trailhead staff or the lodge administrator for verification. Your bed or campsite number will then be provided. </span></div>
+	</li>
+	<li>
+	<div><span style="font-family: Tahoma; font-size: small;">Those applying to enter the Beidawushan National Trail for mountaineering activities are required to provide their own meals, tents, sleeping bags, oxygen cylinders, and medical supplies for personal health needs.</span></div>
+	</li>
+	<li>
+	<div><span style="font-size: 0.800em; font-family: Tahoma;"><strong><span style="font-size: small;"><span style="color: #af0000;">Once your reservation is selected, only the tour leader can be changed; changes to the guests are prohibited.</span></span></strong></span></div>
+	</li>
+	<li>
+	<div><span style="font-family: Tahoma;"><span style="font-size: small;">Please read the &quot;</span></span><span style="color: #af0000;"><a href="https://kgonline.forest.gov.tw/questions/index.php?parent_id=238" rel="noreferrer noopener" target="_blank" title="Open in a new window(另開新視窗)"><span style="font-family: Tahoma;"><span style="font-size: small;">Application Rules</span></span></a></span><span style="font-family: Tahoma;"><span style="font-size: small;">&quot; Instructions</span></span></div>
+	</li>
+	<li>
+	<div><span style="font-family: Tahoma;"><span style="font-size: small;">For information regarding temporary accommodation suspension due to renovations or official duties, please refer to &quot;</span></span><span style="color: #af0000;"><a href="https://kgonline.forest.gov.tw/news/?type_id=20" rel="noreferrer noopener" target="_blank" title="Open in a new window(另開新視窗)"><span style="font-family: Tahoma;"><span style="font-size: small;">Latest News</span></span></a></span><span style="font-family: Tahoma;"><span style="font-size: small;"> 》</span></span></div>
+	</li>
+	<li>
+	<div><span style="color: #af0000;">To apply for a cabin (campsite), please select a date and proceed with the reservation process. </span></div>
+	</li>
+</ul>
+</div>
+
+<div class="alert alert-danger"><span style="font-size: medium;"><strong>Please join the National Disaster Prevention and Relief Science and Technology Center&#39;s official LINE account and subscribe to Pingtung County&#39;s real-time disaster prevention information, including typhoons and rainfall (you can also subscribe to all information). This mountain hut and trails will be closed during typhoon warnings and when rainfall reaches heavy rain standards (200mm in 24 hours or 100mm in 3 hours). </strong></span><br />
+<span style="font-size:medium;"><b>According to Point 5 of the &quot;Precautions for Mountaineering Activities&quot; stipulated by the Ministry of Education, climbers should assume all risks when engaging in mountaineering activities on their own and purchase appropriate insurance. Mountaineering service providers, professional mountain guides, mountaineering groups, and other mountaineering activity organizers should assist climbers and related personnel who wish to purchase appropriate insurance. </b></span></div>
+
+<div class="alert alert-danger"><span style="font-size: larger;">The credit card refund period has been extended from 60 days to 90 days. If you need to cancel your trip, please manage your schedule to avoid affecting your rights. </span></div>
+
+<div class="alert alert-danger"><span style="font-size: medium;"><strong>[Protect Our Forests] Please join the &quot;Mountain Mouse Radar Station&quot; LINE illegal logging reporting platform or call the Forest Protection Hotline: 0800-000-930 (You, You, Save Our Forests). The Forestry and Conservation Department will issue a reward for reporting the theft of forest products and byproducts. </strong></span></div>
+
+<div class="alert alert-danger">
+<p><span style="font-size: x-large;">Prohibitions: According to Article 34 of the Forest Act, any fire-related activities, such as land preparation, campfires, or barbecues, are prohibited within forest areas and forest reserves. Violators will be fined NT$120,000 to NT$600,000 in accordance with Article 56 of the same Act.<br />
+To report illegal logging and forest fires, contact the forest protection hotline: 0800-000930, 0800-057930</span></p>
+</div>
+
+<p>&nbsp;</p>
+</div>
+	<div id="button_list" style="margin-bottom:25px;">
+		<a href="/room/order_terms.php?date=2027-01-02&mode=add_r" class="button button-3d button-rounded button-red">
+			<i class="icon-ok"></i>
+            外籍保留申請
+        </a>
+    </div>
+    <input type="hidden" id="csrf" name="csrf" value="YXdkMjI2MDIwMjYtMTEtMDI=" />
+    <div id="calendar-page">
+        
+    </div>
+    
+        </div>
+    
+	<div id="btn_list">
+    <div id="page_box"></div>
+    <div id="return_button"></div>
+
+	</div>
+
+            <!-- 上稿內容區塊 end -->
+      </div>
+      </div>
+
+      <!-- 內頁右方選單 end -->
+
+      </div>
+
+    </div>
+
+</section><!-- #content end -->
+
+    <div id="footer_text"></div>
+
+
+
+
+		<!-- Footer
+		============================================= -->
+		<footer id="footer">
+
+
+
+          <!-- 頁尾資訊區塊
+          ============================================= -->
+          <div id="copyrights">
+
+            <div class="container clearfix">
+
+              <!-- 下方logo區塊
+              ============================================= -->
+
+              <div id="footer_logo" class="col-md-3">
+                <img src="/archive/footer_logo.png" alt="檜谷山莊 Logo">
+              </div>
+
+              <!-- 下方logo區塊 end -->
+
+              <!-- 下方上稿內容區塊
+              ============================================= -->
+
+              <div id="footer_text" class="col-md-9">
+
+               <!-- 上稿內容 -->
+
+				<div class="content">聯絡電話：08-7236941轉 森林育樂科&nbsp;329<br />
+傳真：08-7236706<br />
+信箱：dm64@forest.gov.tw<br />
+林業及自然保育署屏東分署 地址: 900 屏東市民興路39號</div>
+
+<p>&nbsp;</p>
+
+               <!-- 上稿內容 end -->
+
+               </div>
+
+               <!-- 下方上稿內容區塊 end -->
+            	<!-- 無障礙標章 -->
+				<div id="footer_conformance" class="col-md-2">
+					<a href="https://accessibility.moda.gov.tw/Applications/Detail?category=20260504142947" title="無障礙網站-標章明細"> 
+						<img src="/archive/footer_conformance_levelAA.png" alt="通過AA無障礙網頁檢測" /> 
+						<!-- <img src="/archive/footer_conformance_levelA.png" border="0" width="88" height="31" alt="通過A無障礙網頁檢測" />  -->
+					</a>
+             	</div>
+            	<!-- 無障礙標章 end -->
+             </div>
+           </div>
+
+          <!-- 頁尾資訊區塊 end -->
+
+		</footer>
+
+        <!-- #footer end -->
+
+	</div><!-- #wrapper end -->
+
+	<!-- Go To Top
+	============================================= -->
+	<script>
+		$(document).ready(function(){
+			
+			$('#gotoTop_1').keyup(function(e){  //對id監聽  
+				switch(e.keyCode) {  
+					case 13:  
+						$('#gotoTop_1').trigger("click");
+						$('.standard-logo').focus();
+					break;
+				}
+			}); 
+			
+			$('#gotoTop').keyup(function(e){  //對id監聽  
+				switch(e.keyCode) {  
+					case 13:  
+						$('#gotoTop').trigger("click");
+						$('.standard-logo').focus();
+					break;
+				}
+			}); 
+		});
+	</script>  
+	
+	<a href="#" id="gotoTop" tabindex="0" class="icon-angle-up" role="button" title="gotoTop" aria-label="到最上方"></a>
+
+	<!-- External JavaScripts
+	============================================= -->
+	<!-- 改到 header，index -->
+  <script type="text/javascript" src="/js/jquery.js"></script>
+	<script type="text/javascript" src="/js/plugins.js"></script>
+
+	<!-- Footer Scripts
+	============================================= -->
+	<script type="text/javascript" src="/js/functions.js"></script>
+  	<script>
+	/* 2022/3/11 新增 解除 超連結click點擊事件*/
+	$(function(){
+		$("#banner_menu a").off("click");
+	});
+  	</script>
+</body>
+</html>
+
+

@@ -1,0 +1,1993 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html lang="zh-Hant-TW" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <title>山屋及營地申請</title>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  <meta name="keywords" content="天池山莊,天池,天池山莊訂房系統,天池山莊訂房,登山,天池訂房,南投登山">
+  <meta name="description" content="天池山莊,天池,天池山莊訂房系統,天池山莊訂房,登山,天池訂房,南投登山">
+  <meta name="author" content="藝凡數位科技有限公司,https://www.evonne.com.tw/">
+  <meta name="copyright" content="藝凡數位科技有限公司"> 
+  <meta name="distribution" content="global"> 
+  <meta name="revisit-after" content="1 days"> 
+  <meta name="robots" content="all"> 
+
+    <link href="https://fonts.googleapis.com/css?family=Poppins:300,400,500,600,700,900|Caveat+Brush&display=swap" rel="stylesheet" type="text/css" />
+  <link rel="stylesheet" href="/library/css/bootstrap.css" type="text/css" />
+  <link rel="stylesheet" href="/library/css/style.css" type="text/css" />
+  <link rel="stylesheet" href="/library/css/swiper.css" type="text/css" />
+  <link rel="stylesheet" href="/library/css/dark.css" type="text/css" />
+  <link rel="stylesheet" href="/library/css/font-icons.css" type="text/css" />
+  <link rel="stylesheet" href="/library/css/animate.css" type="text/css" />
+  <link rel="stylesheet" href="/library/css/magnific-popup.css" type="text/css" />
+  <link rel="stylesheet" href="/library/css/radio-checkbox.css" type="text/css" />
+
+  <link href="/libraries/style/css/css.css" rel="stylesheet" type="text/css">
+
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <script type="text/javascript" src="/library/js/jquery.js"></script>
+
+
+</head>
+
+
+
+<!-- Google Analytics -->
+<script type="text/javascript">
+// Google 分析
+  var _gaq = _gaq || [];
+  _gaq.push(['_setAccount', '']);
+  _gaq.push(['_trackPageview']);
+
+  (function() {
+    var ga = document.createElement('script'); ga.type = 'text/javascript'; ga.async = true;
+    ga.src = ('https:' == document.location.protocol ? 'https://ssl' : 'http://www') + '.google-analytics.com/ga.js';
+    var s = document.getElementsByTagName('script')[0]; s.parentNode.insertBefore(ga, s);
+  })();
+</script>
+<style>
+/* 紅色鍵盤焦點樣式 */
+#header_keyword:focus,
+#header_keyword:focus-visible,
+#submit1 input:focus,
+#submit1 input:focus-visible,
+#submit1 button:focus,
+#submit1 button:focus-visible {
+	outline: 3px solid #ff0000 !important;
+	outline-offset: 3px !important;
+	box-shadow: 0 0 0 2px #ffffff !important;
+}
+
+#header_keyword,
+#submit1 input,
+#submit1 button {
+	outline-offset: 3px;
+}
+
+#top_search_item.search-open > .top-links-section {
+	display: block !important;
+	visibility: visible !important;
+	opacity: 1 !important;
+}
+
+#header_keyword i {
+	pointer-events: none;
+}
+</style>
+
+<script>
+$(document).ready(function () {
+	var $searchItem = $('#top_search_item');
+	var $searchToggle = $('#header_keyword');
+	var $searchSection = $('#submit1');
+	var $searchInput = $('#header_search_keyword');
+
+	function openSearch() {
+		$searchItem.addClass('search-open');
+
+		$searchSection
+			.show()
+			.attr('aria-hidden', 'false');
+
+		$searchToggle
+			.attr('aria-expanded', 'true')
+			.attr('aria-label', '搜尋選單收合')
+			.attr('title', '搜尋選單收合');
+	}
+
+	function closeSearch() {
+		$searchItem.removeClass('search-open');
+
+		$searchSection
+			.hide()
+			.attr('aria-hidden', 'true');
+
+		$searchToggle
+			.attr('aria-expanded', 'false')
+			.attr('aria-label', '搜尋選單展開')
+			.attr('title', '搜尋選單展開');
+	}
+
+	function toggleSearch() {
+		if ($searchToggle.attr('aria-expanded') === 'true') {
+			closeSearch();
+		} else {
+			openSearch();
+		}
+	}
+
+	closeSearch();
+
+	$searchToggle.on('click keydown', function (e) {
+		var key = e.key || e.keyCode;
+
+		if (
+			e.type === 'click' ||
+			key === 'Enter' ||
+			key === ' ' ||
+			key === 'Spacebar' ||
+			key === 13 ||
+			key === 32
+		) {
+			e.preventDefault();
+			e.stopPropagation();
+			toggleSearch();
+		}
+
+		if (key === 'Escape' || key === 27) {
+			e.preventDefault();
+			closeSearch();
+			$searchToggle.focus();
+		}
+	});
+
+	$searchSection.on('keydown', function (e) {
+		var key = e.key || e.keyCode;
+
+		if (key === 'Escape' || key === 27) {
+			e.preventDefault();
+			closeSearch();
+			$searchToggle.focus();
+		}
+	});
+
+	$(document).on('click', function (e) {
+		if (
+			!$searchToggle.is(e.target) &&
+			$searchToggle.has(e.target).length === 0 &&
+			!$searchSection.is(e.target) &&
+			$searchSection.has(e.target).length === 0
+		) {
+			closeSearch();
+		}
+	});
+
+	$searchItem.on('focusout', function () {
+		setTimeout(function () {
+			if (!$searchItem[0].contains(document.activeElement)) {
+				closeSearch();
+			}
+		}, 10);
+	});
+
+	$(document).on('keydown', function (event) {
+		if (event.altKey && event.key.toLowerCase() === 's') {
+			event.preventDefault();
+			openSearch();
+			$searchInput.focus();
+		}
+	});
+});
+</script>
+<body class="page-body stretched no-transition">
+<noscript>您的瀏覽器不支援JavaScript，請更換支援 JavaScript 的瀏覽器。</noscript>
+<a href="#content" id="gotocenter" title="跳到主要內容區塊" tabindex="1" class="sr-only sr-only-focusable">跳到主要內容區塊</a>
+	<!-- Document Wrapper
+	============================================= -->
+	<div id="wrapper" class="clearfix">
+    <!-- 最上方區塊
+    ============================================= -->
+    <div id="top-bar" class="dark ">
+      <div class="container clearfix">
+        <div class="row justify-content-end align-items-center">
+          <div class="col-12 col-md-auto"> 
+            <!-- Top Links
+            ============================================= -->
+            <div class="top-links on-click">
+              <ul class="top-links-container">
+                <li class="top-links-item d-none d-lg-block">
+                  <a title="Top menu" name="link_top" href="#link_top" accesskey="U" id="top_alt" class="alt_class">:::</a>
+                </li>
+                <li class="top-links-item"><a href="/sitemap/" title="網站導覽">網站導覽</a></li>
+                                  <li class="top-links-item"><a href="/user/?mode=sign_up" title="註冊會員">註冊會員</a></li>
+                  <li class="top-links-item"><a href="/user/" title="會員登入">會員登入</a></li>
+                                <li class="top-links-item"><a href="/faq/index.php?parent_id=198" title="常見問題">常見問題</a></li>
+                                <li class="top-links-item" id="top_search_item">
+                  <a href="javascript:;" id="header_keyword" role="button" aria-label="搜尋選單展開" aria-controls="submit1" aria-expanded="false" title="搜尋選單展開">
+                    <i class="icon-line-search" aria-hidden="true"></i>搜尋<i class="icon-angle-down" aria-hidden="true"></i>
+                  </a>
+
+                  <div id="submit1" class="top-links-section" aria-hidden="true">
+                    <form action="/all_search/index.php" method="get" autocomplete="off" class="m-0">
+
+                      <div class="form-group">
+                        <label for="header_search_keyword">關鍵字</label>
+                        <input id="header_search_keyword" name="keyword" type="text" class="form-control" placeholder="請輸入關鍵字搜尋..." title="請輸入關鍵字搜尋" accesskey="S">
+                      </div>
+
+                      <input name="vc" type="hidden" value="98797d6c9ed4e997745478e6f08f64b0" />
+
+                      <button class="button button-green button-3d button-large button-rounded btn-block m-0" type="submit" title="送出搜尋" aria-label="送出搜尋">搜尋</button>
+                    </form>
+                  </div>
+                </li>
+        <li>
+					<style>
+	body > .skiptranslate {
+		display: none;
+	}
+	.goog-logo-link {
+		display: none !important;
+	}
+	.goog-te-gadget {
+		color: transparent !important;
+	}
+	.goog-te-banner-frame.skiptranslate {
+		display: none !important;
+	}
+	a[href="https://translate.google.com"] {
+		display: none !important;
+	}
+	.visually-hidden {
+		position: absolute !important;
+		width: 1px !important;
+		height: 1px !important;
+		padding: 0 !important;
+		margin: -1px !important;
+		overflow: hidden !important;
+		clip: rect(0, 0, 0, 0) !important;
+		white-space: nowrap !important;
+		border: 0 !important;
+	}
+</style>
+
+<div>
+	<div id="google_translate_element" style="display:none;"></div>
+
+	<label for="site_language" class="visually-hidden">選擇網站語言</label>
+
+	<select id="site_language"
+			name="site_language"
+			translate="no"
+			title="選擇網站語言"
+			aria-label="選擇網站語言"
+			aria-describedby="site_language_hint">
+		<option value="">Language</option>
+		<option value="zh-TW">繁體中文</option>
+		<option value="zh-CN">简体中文</option>
+		<option value="en">English</option>
+		<option value="ja">日本語</option>
+		<option value="ko">한국어</option>
+		<option value="th">ภาษาไทย</option>
+		<option value="vi">Tiếng Việt</option>
+		<option value="ms">Bahasa Malaysia</option>
+		<option value="id">Bahasa Indonesia</option>
+	</select>
+
+	<button type="button"
+			id="site_language_apply"
+			onclick="applySiteLanguage()"
+			title="套用網站語言">
+		套用
+	</button>
+
+	<span id="site_language_hint" class="visually-hidden">
+		請先選擇語言，再按套用按鈕變更網站語言。
+	</span>
+
+	<span id="site_language_status"
+		  class="visually-hidden"
+		  aria-live="polite"></span>
+</div>
+
+<script type="text/javascript">
+	function googleTranslateElementInit() {
+		new google.translate.TranslateElement({
+			pageLanguage: 'zh-TW',
+			autoDisplay: false,
+			includedLanguages: 'zh-TW,zh-CN,en,ja,ko,th,vi,ms,id',
+			layout: google.translate.TranslateElement.InlineLayout.VERTICAL
+		}, 'google_translate_element');
+	}
+
+	function applySiteLanguage() {
+		var select = document.getElementById('site_language');
+		var status = document.getElementById('site_language_status');
+		var lang = select.value;
+
+		if (lang === '') {
+			status.textContent = '尚未選擇語言。';
+			return;
+		}
+
+		var googleCombo = document.querySelector('.goog-te-combo');
+
+		if (!googleCombo) {
+			status.textContent = '翻譯工具尚未載入，請稍後再試。';
+			return;
+		}
+
+		googleCombo.value = lang;
+
+		var event;
+		if (typeof Event === 'function') {
+			event = new Event('change', {
+				bubbles: true
+			});
+		} else {
+			event = document.createEvent('HTMLEvents');
+			event.initEvent('change', true, false);
+		}
+
+		googleCombo.dispatchEvent(event);
+
+		status.textContent = '已套用網站語言。';
+	}
+</script>
+					<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+					<script src="https://translate.google.com/translate_a/element.js?cb=googleTranslateElementInit"></script>
+				</li>
+              </ul>
+            </div>
+            <!-- top-links end --> 
+          </div>
+        </div>
+      </div>
+    </div>
+
+		<!-- 上方區塊
+		============================================= -->
+		<header id="header" class="page-header">
+
+			<div id="header-wrap">
+
+				<div class="container">
+          <div class="header-row">
+
+					<!-- Logo
+					============================================= -->
+					  <div id="logo">
+              <h1 class="m-0">
+                            <a href="../home.php" class="standard-logo" data-dark-logo="../libraries/style/images/logo-dark.png" title="天池山莊"><img src="../libraries/style/archive/logo.png" alt="天池山莊 Logo"></a>
+                            <a href="../home.php" class="retina-logo" data-dark-logo="../libraries/style/images/logo-dark@2x.png" title="天池山莊"><img src="../libraries/style/archive/logo.png" alt="天池山莊 Logo"></a>
+						</h1>
+                    </div>
+                    
+                    <!-- #logo end -->
+
+					<!-- 上方選單區塊
+					============================================= -->
+
+          <!-- 上方輔助項目區塊
+				    ============================================= -->
+					
+					              
+            <!-- 上方輔助項目區塊 end -->
+
+            <!-- RWD按鈕區塊
+				    ============================================= -->
+					
+            <script>
+						function header_btn(){
+							if($('#header_btn').attr('value') == '選單(展開)'){
+								$('#header_btn').attr('value','選單(收合)');
+								$('#header_btn').attr('aria-label','選單(收合)');
+								$('#header_btn').attr('aria-expanded','true');
+							}else{
+								$('#header_btn').attr('value','選單(展開)');
+								$('#header_btn').attr('aria-label','選單(展開)');
+								$('#header_btn').attr('aria-expanded','false');
+							}
+							
+						}
+						</script>
+					<div id="primary-menu-trigger">
+					<a href="javascript:;"  type="button" id="header_btn" value="選單(展開)" role="button" aria-label="選單(展開)" onkeypress="header_btn()"  onclick="header_btn()" aria-expanded="false">
+						<svg class="svg-trigger" viewBox="0 0 100 100">
+							<path d="m 30,33 h 40 c 3.722839,0 7.5,3.126468 7.5,8.578427 0,5.451959 -2.727029,8.421573 -7.5,8.421573 h -20"></path>
+							<path d="m 30,50 h 40"></path>
+							<path d="m 70,67 h -40 c 0,0 -7.5,-0.802118 -7.5,-8.365747 0,-7.563629 7.5,-8.634253 7.5,-8.634253 h 20"></path>
+						</svg>
+						&nbsp;</a>
+					</div>
+
+            <script>
+              function banner(ele){
+                  $("li.menu-item").removeClass("sfHover"); 			$(ele).closest("li").addClass("sfHover"); 			$(ele).closest("li.sub-menu").addClass("sfHover");
+              }
+            </script>
+            <script>
+$(document).ready(function() {
+					/*$("li.menu-item > a").on('focus', function() {
+						 $(this).parent().addClass("sfHover");
+				});*/
+				$("li.menu-item").on('focusout', function(e) {
+					var $this = $(this);
+				setTimeout(function() {
+					if (!$this.find(":focus").length) {
+							$this.removeClass("sfHover");
+						}
+					}, 100);
+				});
+				$(document).on("keydown", function(e) {
+					if (e.key === "Escape") {
+						$("li.menu-item").removeClass("sfHover");
+					}
+					});
+				});
+</script>
+<style>
+/* 紅色鍵盤焦點 */
+#banner-menu > li.menu-item > a.menu-link:focus,
+#banner-menu > li.menu-item > a.menu-link:focus-visible,
+#banner-menu .sub-menu-container a.menu-link:focus,
+#banner-menu .sub-menu-container a.menu-link:focus-visible {
+	outline: 3px solid #ff0000 !important;
+	outline-offset: 3px !important;
+	box-shadow: 0 0 0 2px #ffffff !important;
+}
+
+/* 強制取消 hover 自動展開 */
+#banner-menu > li.menu-item > .sub-menu-container {
+	display: none !important;
+	visibility: hidden !important;
+	opacity: 0 !important;
+}
+
+/* 只有點擊或 Enter 展開後，才顯示子選單 */
+#banner-menu > li.menu-item.menu-open > .sub-menu-container {
+	display: block !important;
+	visibility: visible !important;
+	opacity: 1 !important;
+}
+
+/* 就算滑鼠 hover，也不要自動展開 */
+#banner-menu > li.menu-item:hover > .sub-menu-container {
+	display: none !important;
+	visibility: hidden !important;
+	opacity: 0 !important;
+}
+
+/* 但如果已經是 menu-open，hover 時仍保持展開 */
+#banner-menu > li.menu-item.menu-open:hover > .sub-menu-container {
+	display: block !important;
+	visibility: visible !important;
+	opacity: 1 !important;
+}
+</style>
+
+<script>
+$(document).ready(function () {
+
+	var $mainItems = $('#banner-menu > li.menu-item');
+	var $menuButtons = $mainItems.has('> .sub-menu-container').children('a.menu-link');
+
+	/*
+	 * 初始化：
+	 * 只有「有子選單」的第一層主選單才當作可展開按鈕
+	 */
+	$mainItems.each(function (index) {
+		var $li = $(this);
+		var $link = $li.children('a.menu-link').first();
+		var $submenu = $li.children('.sub-menu-container').first();
+
+		if ($submenu.length) {
+			var menuText = $.trim($link.text());
+
+			if (!$submenu.attr('id')) {
+				$submenu.attr('id', 'banner_submenu_' + index);
+			}
+
+			$link
+				.attr('role', 'button')
+				.attr('aria-haspopup', 'true')
+				.attr('aria-expanded', 'false')
+				.attr('aria-controls', $submenu.attr('id'))
+				.attr('aria-label', menuText + '選單展開')
+				.attr('title', menuText + '選單展開');
+
+			$li.removeClass('menu-open sfHover');
+			$submenu.hide();
+		} else {
+			/*
+			 * 沒有子選單的項目，例如「相關連結」「常見問題」
+			 * 不應該設定 role="button"、aria-haspopup、aria-expanded
+			 * 否則 Freego / 人工檢測可能會認為它是可展開元件
+			 */
+			$link
+				.removeAttr('role')
+				.removeAttr('aria-haspopup')
+				.removeAttr('aria-expanded')
+				.removeAttr('aria-controls')
+				.removeAttr('aria-label');
+		}
+	});
+
+	function closeAllMenus() {
+		$mainItems.each(function () {
+			var $li = $(this);
+			var $link = $li.children('a.menu-link').first();
+			var $submenu = $li.children('.sub-menu-container').first();
+
+			if ($submenu.length) {
+				var menuText = $.trim($link.text());
+
+				$li.removeClass('menu-open sfHover');
+
+				$link
+					.attr('aria-expanded', 'false')
+					.attr('aria-label', menuText + '選單展開')
+					.attr('title', menuText + '選單展開');
+
+				$submenu
+					.hide()
+					.attr('aria-hidden', 'true');
+			}
+		});
+	}
+
+	function openMenu($link) {
+		var $li = $link.parent('li.menu-item');
+		var $submenu = $li.children('.sub-menu-container').first();
+		var menuText = $.trim($link.text());
+
+		closeAllMenus();
+
+		$li.addClass('menu-open sfHover');
+
+		$link
+			.attr('aria-expanded', 'true')
+			.attr('aria-label', menuText + '選單收合')
+			.attr('title', menuText + '選單收合');
+
+		$submenu
+			.show()
+			.attr('aria-hidden', 'false');
+	}
+
+	function closeMenu($link) {
+		var $li = $link.parent('li.menu-item');
+		var $submenu = $li.children('.sub-menu-container').first();
+		var menuText = $.trim($link.text());
+
+		$li.removeClass('menu-open sfHover');
+
+		$link
+			.attr('aria-expanded', 'false')
+			.attr('aria-label', menuText + '選單展開')
+			.attr('title', menuText + '選單展開');
+
+		$submenu
+			.hide()
+			.attr('aria-hidden', 'true');
+	}
+
+	function toggleMenu($link) {
+		var isOpen = $link.attr('aria-expanded') === 'true';
+
+		if (isOpen) {
+			closeMenu($link);
+		 } else {
+			openMenu($link);
+		}
+	}
+
+	/*
+	 * 滑鼠移過不展開：
+	 * 若原本版型或外掛有 hover 展開，這裡強制移除 sfHover
+	 */
+	$mainItems.on('mouseenter mouseover', function () {
+		if (!$(this).hasClass('menu-open')) {
+			$(this)
+				.removeClass('sfHover')
+				.children('.sub-menu-container')
+				.hide()
+				.attr('aria-hidden', 'true');
+		}
+	});
+
+	/*
+	 * 點擊才展開 / 收合
+	 */
+	$menuButtons.on('click', function (e) {
+		e.preventDefault();
+		e.stopPropagation();
+
+		toggleMenu($(this));
+	});
+
+	/*
+	 * Tab 到主選單不展開
+	 * 只有 Enter / Space 才展開
+	 */
+	$menuButtons.on('keydown', function (e) {
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			e.stopPropagation();
+
+			toggleMenu($(this));
+		}
+
+		if (e.key === 'Escape') {
+			e.preventDefault();
+
+			closeMenu($(this));
+			$(this).focus();
+		}
+	});
+
+	/*
+	 * 在子選單內按 Esc，收合並回到主選單
+	 */
+	$('#banner-menu .sub-menu-container').on('keydown', function (e) {
+		if (e.key === 'Escape') {
+			e.preventDefault();
+
+			var $li = $(this).parent('li.menu-item');
+			var $link = $li.children('a.menu-link').first();
+
+			closeMenu($link);
+			$link.focus();
+		}
+	});
+
+	/*
+	 * Tab 離開該主選單區塊後，自動收合
+	 */
+	$mainItems.on('focusout', function () {
+		var $li = $(this);
+
+		setTimeout(function () {
+			if (!$li[0].contains(document.activeElement)) {
+				var $link = $li.children('a.menu-link').first();
+
+				if ($li.children('.sub-menu-container').length) {
+					closeMenu($link);
+				}
+			}
+		}, 10);
+	});
+
+	/*
+	 * 點擊選單外部時全部收合
+	 */
+	$(document).on('click', function (e) {
+		if (!$(e.target).closest('#banner-menu').length) {
+			closeAllMenus();
+		}
+	});
+});
+</script>
+            <nav class="primary-menu">
+              <ul id="banner-menu" class="menu-container">
+                <li class="menu-item"><a class="menu-link" role="button" aria-haspopup="true" aria-expanded="false" href="../home.php" title="首頁"><div>首頁</div></a></li>
+                <li class="menu-item"><a class="menu-link" role="button" aria-haspopup="true" aria-expanded="false" href="##" title="山莊簡介"><div>山莊簡介</div></a>
+                  <ul class="sub-menu-container">
+                    <li class="menu-item"><a class="menu-link" href="/about_us/?parent_id=160" title="許登山者一個家"><div>許登山者一個家</div></a></li>	
+                    <li class="menu-item"><a class="menu-link" href="/about_us/?parent_id=191" title="山莊與平面圖"><div>山莊與平面圖</div></a></li>	
+                  </ul>
+                </li>
+                <li class="menu-item"><a class="menu-link" role="button" aria-haspopup="true" aria-expanded="false" href="##" title="最新消息"><div>最新消息</div></a>
+                  <ul class="sub-menu-container">
+                    <li class="menu-item"><a class="menu-link" href="/news/?type_id=127" title="最新訊息"><div>最新訊息</div></a></li>	
+                    <li class="menu-item"><a class="menu-link" href="/news/?type_id=130" title="公告事項"><div>公告事項</div></a></li>
+                  </ul>
+                </li>
+                <li class="menu-item"><a class="menu-link" role="button" aria-haspopup="true" aria-expanded="false" href="##" title="線上申請"><div>線上申請</div></a>
+                  <ul class="sub-menu-container">
+                    <li class="menu-item"><a class="menu-link" href="/room/" title="山屋及營地申請" ><div>山屋及營地申請</div></a></li>
+                    <li class="menu-item"><a class="menu-link" href="/ifa/?parent_id=253" title="住宿申請作業須知"><div>住宿申請作業須知</div></a></li>
+                                                            <li class="menu-item"><a class="menu-link" href="/ifa/?parent_id=189" title="各項申請流程"><div>各項申請流程</div></a></li>
+                    <li class="menu-item"><a class="menu-link" href="/ifa/?parent_id=192" title="收費及退費基準"><div>收費及退費基準</div></a></li>
+                    <li class="menu-item"><a class="menu-link" href="/room?mode=black_list" title="停權名單"><div>停權名單</div></a></li>
+                    <li class="menu-item"><a class="menu-link" href="/ifa/?parent_id=252" title="檔案下載"><div>檔案下載</div></a></li>
+                    					<li class="menu-item"><a class="menu-link" href="https://www.2860cabin.tw/" title="餐飲及裝備租借訂購"><div>餐點訂購及裝備租借<div style="color:yellow;">(最晚入住日前4天)</div></div></a></li>
+                  </ul>  
+                </li>
+                <li class="menu-item"><a class="menu-link" role="button" aria-haspopup="true" aria-expanded="false" href="##" title="步道探索"><div>步道探索</div></a>
+                  <ul class="sub-menu-container">
+                    <li class="menu-item"><a class="menu-link" href="/fetrip/?parent_id=248" title="無痕山林七大準則"><div>無痕山林七大準則</div></a></li>	
+                    <li class="menu-item"><a class="menu-link" href="/fetrip/?parent_id=195" title="能高越嶺道"><div>能高越嶺道</div></a></li>
+                    <li class="menu-item"><a class="menu-link" href="/fetrip/?parent_id=202" title="天池"><div>天池</div></a></li>
+                    <li class="menu-item"><a class="menu-link" href="/fetrip/?parent_id=201" title="木炭窯遺址"><div>木炭窯遺址</div></a></li>
+                    <li class="menu-item"><a class="menu-link" href="/fetrip/?parent_id=200" title="三疊瀑布"><div>三疊瀑布</div></a></li>
+                    <li class="menu-item"><a class="menu-link" href="/fetrip/?parent_id=197" title="光被八表紀念碑"><div>光被八表紀念碑</div></a></li>	
+                    <li class="menu-item"><a class="menu-link" href="/fetrip/?parent_id=196" title="建議行程"><div>建議行程</div></a></li>
+                    <li class="menu-item"><a class="menu-link" href="/fetrip/?parent_id=171" title="趣遊南投"><div>趣遊南投</div></a></li>
+                  </ul>
+                </li>
+                <li class="menu-item"><a class="menu-link" role="button" aria-haspopup="true" aria-expanded="false" href="/links/" title="相關連結"><div>相關連結</div></a></li>
+                <li class="menu-item"><a class="menu-link" role="button" aria-haspopup="true" aria-expanded="false" href="/faq/index.php?parent_id=198" title="常見問題"><div>常見問題</div></a></li>
+                  
+              </ul>
+            </nav>
+                    
+                    <!--上方選單區塊 end -->
+          </div>
+				</div>
+			</div>
+      <div class="header-wrap-clone"></div>
+		</header>
+        
+        <!-- 上方區塊 end -->
+
+        <!-- 首頁banner區塊
+		============================================= -->
+
+        <div id="page_banner">
+        
+            <!-- 跑馬文字區塊
+		    ============================================= -->
+
+                        
+            <!-- 跑馬文字區塊 end -->
+            
+            <!-- 首頁banner區塊
+		    ============================================= -->
+            
+
+              <div id="oc-slider" class="owl-carousel owl-carousel-full image-carousel carousel-widget with-carousel-dots" data-margin="0" data-nav="ture" data-pagi="false" data-animate-out="fadeOut" data-items-xs="1" data-items-sm="1" data-items-md="1" data-items-lg="1" data-items-xl="1" style="padding: 20px 0;">
+
+                <!-- 資料列表 -->
+
+                <div class="oc-item"><img src="../libraries/style/archive/page_banner_01.jpg" alt="山莊風景圖-1"></div>
+                <div class="oc-item"><img src="../libraries/style/archive/page_banner_02.jpg" alt="山莊風景圖-2"></div>
+
+                <!-- 資料列表 end -->
+                
+              </div>
+            
+          </div>
+          
+          <!-- 首頁banner區塊 end -->
+<script type="text/javascript">
+/*$(document).ready(function (){
+	$(".calendar_table").click(function (){
+		alert('山屋及營地申請請點左邊選單[立即申請]');	
+	});	
+});*/
+function chenge(val){
+	if (val == 'ch'){
+		document.getElementById("ch").style.display = "";
+		document.getElementById("eg").style.display = "none";
+	}else{
+		document.getElementById("ch").style.display = "none";
+		document.getElementById("eg").style.display = "";
+	}
+}
+function check(val){
+	alert("本山莊為實名制，請確實填寫入住資料。");
+	window.location = '/room/order_terms.php?mode=add&date='+val;
+}
+function OMOver(sid)
+{
+	var tds = document.getElementById(sid);
+	tds.bgColor = "#66CCCC;";
+}
+
+function OMOut(sid)
+{
+	var tds = document.getElementById(sid);
+	tds.bgColor = "";
+}
+ 	var year	 	= 2026;
+	var month 	= 11;
+	var day		  = 02;
+	var hour 		= 10;
+	var minute 	= 42;
+	var second 	= 22;
+	//var hour_r	= 0;
+
+$('body').everyTime('1s',function()
+{
+	hour_r = 0;
+	minute_r = 0;
+	second++;
+	if (second >= 60){
+		minute++;
+		second = 0;
+		if (minute >= 60){
+			hour++;
+			minute = 0;
+			if (hour >=24){
+				hour = 0;
+			}
+		}
+	}
+	hour_r = hour;
+	minute_r = minute;
+	//alert(second.length);
+	if (second < 10){
+		second = "0"+second;
+	}
+	if (minute < 10){
+		minute_r = "0"+minute;
+	}
+	if (hour < 10){
+		hour_r = "0"+hour;
+	}
+	html = "系統時間："+hour_r+":"+minute_r+":"+second
+	$("#Clock").html(html);
+//get_time();
+});
+</script>
+
+<!-- Content
+============================================= -->
+<section id="content" class="page-content">
+  <div class="content-wrap py-5"><div class="container clearfix"><div class="row gutter-40">
+      
+      <!-- 內頁左方區塊
+      ============================================= -->
+      
+      <div id="left-menu" class="sidebar col-lg-3 order-lg-first order-last">    
+      
+        <a title="左方選單" name="left" href="#left" accesskey="L" class="left_sitemap">:::</a>
+        
+        <div class="sidebar-widgets-wrap">
+
+            <!-- 內頁左方選單
+            ============================================= -->
+
+              <div class="widget widget_links clearfix">
+	<div class="menu-title">
+			</div>
+	<div class="menu-content">
+		<ul>
+			<li><a href="/room/" title="山屋及營地申請" >山屋及營地申請</a></li>
+			<li><a href="/ifa/?parent_id=253" title="住宿申請作業須知">住宿申請作業須知</a></li>
+									<li><a href="/ifa/?parent_id=189" title="各項申請流程">各項申請流程</a></li>
+			<li><a href="/ifa/?parent_id=192" title="收費及退費基準">收費及退費基準</a></li>
+			<li><a href="/room?mode=black_list" title="停權名單">停權名單</a></li>
+			<li><a href="/ifa/?parent_id=252" title="檔案下載">檔案下載</a></li>
+					
+		</ul>
+	</div>
+</div>
+            <!-- 內頁左方選單區塊 end -->
+            
+            <!-- 便民服務選單
+            ============================================= -->
+            
+            
+            <!-- 便民服務選單 end -->
+
+        </div>
+
+      </div>
+
+      <!-- 內頁左方區塊 end -->
+
+      <!-- 內頁右方選單
+      ============================================= -->	
+
+      <div id="box-center-content" class="col-lg-9 m-0">
+
+        
+<div id="path">
+	<ul>
+		<li><a title="內容區" name="content" href="#content" accesskey="C" id="content" class="alt_class">:::</a></li>
+		<li><a class="home" href="/home.php" title="首頁">首頁</a></li><li class="active"><a href="index.php" aria-current="page" title="山屋及營地申請">山屋及營地申請</a></li>	</ul>
+</div>
+
+        <div id="is_title"><h2>山屋及營地申請</h2></div>
+
+            <!-- 上稿內容區塊
+            ============================================= -->
+<div id="is-content">
+        <div>今日抽籤日期 : 2026-11-06 ~ 2026-12-02</div>
+	<div id="ch" style="display:">
+	1. 今日開放訂房日期為 2026-11-07 至 2027-01-02 (即日起第5天至2個月)。<br>
+	2. 今天抽 2026-12-02 抽籤時間為下午3點(住房日30日前抽籤),當日下午4點公布。<br>
+		<p><span style="color:#b22222;"><span style="font-size: 1em;"><span style="font-family: 微軟正黑體;">※使用免費信箱，有可能會將系統寄出繳費通知信判斷為垃圾信件，導致收不到信，請</span><span style="font-family: 微軟正黑體;">抽籤選到之隊伍，務必至網站訂單查詢系統中列印繳費通知單。</span></span></span></p>
+<p><span style="font-family: 微軟正黑體;">※ 抽中之隊伍，系統將自動發出信件通知，亦可在</span><span style="font-family: 微軟正黑體; color: rgb(178, 34, 34);">訂單查詢</span><span style="font-family: 微軟正黑體;">系統中</span><span style="font-family: 微軟正黑體; color: rgb(178, 34, 34);">列印繳費通知單</span><span style="font-family: 微軟正黑體;">。</span><br />
+<span style="font-family: 微軟正黑體;">※&nbsp;</span><span style="font-family: 微軟正黑體;">抽中</span><span style="font-family: 微軟正黑體;">之隊伍，請在繳費期限內繳費，逾期視同放棄，系統會自動將訂單釋出。</span><br />
+<span style="font-family: 微軟正黑體;">※&nbsp;</span><span style="font-family: 微軟正黑體;">操作方式</span><span style="font-family: 微軟正黑體;">：</span><span style="font-family: 微軟正黑體;">點選欲申請住宿之日期，填寫相關資料與隊員資料</span><span style="font-family: 微軟正黑體;">。</span><br />
+<span style="font-family: 微軟正黑體;">3.&nbsp;</span><span style="font-family: 微軟正黑體;">住宿利用之申請，於住宿日<span style="color:#b22222;">前60日</span>開放受理，至住宿日<span style="color:#b22222;">前第5日下午15時整</span>截止。</span><br />
+<span style="font-family: 微軟正黑體;">4. 住宿日（含）前<span style="color:#b22222;">第5日至29日</span>之期間，系統每日下午3時，將針對空餘床位進行抽籤。</span><br />
+<span style="font-family: 微軟正黑體;">5.&nbsp;</span><span style="font-family: 微軟正黑體;">申請住宿前請詳閱</span><span style="color: rgb(178, 34, 34);"><strong style="font-family: 微軟正黑體;">住宿申請須知</strong></span><span style="font-family: 微軟正黑體;">及</span><span style="color: rgb(178, 34, 34);"><strong style="font-family: 微軟正黑體;">收費基準</strong></span><span style="font-family: 微軟正黑體;">。</span><span style="font-family: 微軟正黑體;"><br />
+※&nbsp;</span><span face="微軟正黑體">請山友注意預攀登奇萊南峰，係為太魯閣國家公園之地區，須另向國家公園申請入園證。 相關連結如下(開新分頁)：<br />
+</span><span style="font-family: 微軟正黑體;"><a href="https://hike.taiwan.gov.tw/" target="_blank" title="臺灣國家公園入園入山線上申請服務網(另開新視窗)">臺灣國家公園入園入山線上申請服務網</a></span><span face="微軟正黑體"><br type="_moz" />
+</span></p>
+<p><span style="font-family: 微軟正黑體; font-size: 1em;"><span style="background-color:#afeeee;">欲辦理人員</span><span style="color:#a52a2a;"><span style="background-color:#afeeee;">變更</span></span><span style="background-color:#afeeee;">及</span><span style="color:#a52a2a;"><span style="background-color:#afeeee;">減少</span></span><span style="background-color:#afeeee;">等作業，</span></span><span style="font-family: 微軟正黑體; font-size: 1em;"><span style="background-color:#afeeee;">請詳閱</span></span><a href="/ifa/?parent_id=189" style="font-family: 微軟正黑體; font-size: 1em;"><span style="color:#0000cd;"><span style="background-color:#afeeee;" title="各項申請流程">各項申請流程</span></span></a><span style="font-family: 微軟正黑體; font-size: 1em;"><span style="background-color:#afeeee;">。</span></span><br />
+<strong><span face="微軟正黑體"><span style="font-size: 1.250em;">請於入住時，出示<span style="color:#b22222;">訂單明細</span>與<span style="color:#b22222;">繳費收據</span>以及<span style="color:#b22222;">全隊員身份證件</span>。<br />
+</span></span></strong><span style="font-family: 微軟正黑體;">※ 刷卡請印訂單明細作為入住資料</span></p>
+<div align="center"><img width="100%" src="/archive/天池山莊營地配置圖-111年度.jpg" alt="天池山莊營位配置圖" /></div>
+<p><span style="font-family: &quot;Times New Roman&quot;;">圖片解說：</span><br />
+<span style="font-family: &quot;Times New Roman&quot;;">紅框區塊</span><span style="font-family: &quot;Times New Roman&quot;; font-size: 13.3333px;">(圖中編號4至26)</span><span style="font-family: &quot;Times New Roman&quot;;">為小營地3M*3M<br />
+</span><span style="font-family: &quot;Times New Roman&quot;;">藍框區塊</span><span style="font-family: &quot;Times New Roman&quot;; font-size: 13.3333px;">(圖中編號1至3)</span><span style="font-family: &quot;Times New Roman&quot;; font-size: 12px;">為大營地4M*4M<br />
+<br />
+</span></p>
+<div class="alert alert-danger"><b style="font-size: medium;">請加入「國家災害防救科技中心」LINE官方帳號，並訂閱南投縣之颱風、降雨等即時防災資訊(亦可全部訂閱)。本山莊及步道於颱風警報期間及降雨達豪雨標準(24小時內200mm或3小時內100mm)時將暫停開放。</b><br />
+<span size="3"><b>依教育部訂定之「登山活動應注意事項」第5點，登山者自行從事登山活動時，應本於風險自我承擔，投保適當之保險。登山服務業者、職業登山嚮導、登山團體或其他登山活動之主辦單位，應協助有意願投保相關保險之登山者及相關人員投保適當之保險。</b></span></div>
+<p>&nbsp;</p>
+<div><a href="/archive/國家災害防救科技中心.jpg" title="國家災害防救科技中心.jpg"><img src="/archive/國家災害防救科技中心.jpg" width="50%" alt="國家災害防救科技中心.jpg" /></a><img src="/archive/國家災害防救科技中心2.jpg" alt="透過QR code加入NTDR Line好友" width="50%" /></div>
+<div><span style="color: rgb(255, 102, 0);">&nbsp;</span></div>
+<p><span style="color: rgb(255, 102, 0);"><span style="font-size: medium;"> </span></span></p>
+<div>&nbsp;</div>
+<div>&nbsp;</div>
+<div>&nbsp;</div>
+<div class="alert alert-danger"><span style="font-size: medium;"><strong>禁止事項：依森林法第34條規定，森林區域及森林保護區內，不得有引火行為，如引火整地、營火、烤肉等， 違者依同條第56條規定處新台幣十二萬元以上六十萬元 以下罰鍰。</strong></span></div>
+<div class="alert alert-danger"><span style="font-size: medium;"><strong>【守護山林】請加入「山老鼠雷達站」LINE森林盜伐通報平台，或撥打森林保護專線：0800-000-930（您您您，救山林）</strong></span><strong><span style="font-size: medium;">、0800-057-930</span></strong><strong style="font-size: medium;">，林業署將依檢舉竊取森林主副產物破案獎金核發檢舉獎金。</strong></div>
+<div class="center">&nbsp;</div>
+<p>&nbsp;</p>    </div>
+		<div id="eg" style="display:none"><p>※ The reservation is open for <span style="color:#ff0000">5</span> to <span style="color:#ff0000">60</span> days after today. Therefore, you may reserve an accommodation from (<span style="color:#ff0000"> 2019/10/06&nbsp;</span>) to (<span style="color:#ff0000"> 2019/12/01</span>) . <br />
+※ The accommodation charges in the peak season(10month to 2 month) are as the same as them on holidays.<br />
+<strong>※ The online reservation is open until <span style="color:#ff0033">3 </span>days before the day you will stay. If you don&rsquo;t make the payment of the reservation in time, (in 3 days after the reservation made) the reservation will become uncompleted. If you have read there are [<span style="color:#6666ff">some vacancies</span>] in 3 days before the day you will stay, please make your reservation by calling us. </strong></p>
+<p><br />
+<strong>The admission and food are not included in the accommodation charges (There is a restaurant inside this area). <br />
+For the hygienic reason, no pets are allowed inside the rooms. <br />
+If you need to cancel the reservation after you made the payment, please apply the payment returns online (Continue the original reservation). The account name of the payment return must be the same as the cancellation maker. </strong></p>
+<p><strong>If you can not make the payment by the ATM, please visit the post offices or banks to fill out a money order with the following information:</strong><br />
+<strong>Bank and branch: Bank of Taiwan, Chung-Hsin Village Branch (you may ask the clerk to write the Chinese for you) </strong></p>
+<p><strong>Bank code: 004&nbsp;&nbsp; branch code: 0130 </strong><br />
+<strong>Account: Nantou Forest District Office (you may ask the clerk to write the Chinese for you) </strong><br />
+<strong>Invoice number: please fill the number on the booking invoice, and start from the left end. </strong></p>
+<p><span style="color: rgb(255, 0, 0);">The rules for deduction of cancellation: (apply from the 1st of October, 2019) <br />
+1.Deduct 100% of the payment return if the cancellation is made in 3 days before the day booked.<br />
+2.Deduct 50% of the payment return if the cancellation is made in 4 to 5 days before the day booked. <br />
+3.No deduction if the cancellation is made in more than 6 days before the day booked.</span> <span style="color: #ff0000"><strong> </strong></span></p>
+<p><strong>Please notice that the check-in is after 3:00pm and check-out is before 11:00am. </strong></p>
+<p><strong>If there are any personal reason that make you need to cancel the booking, and for your rights, please make the cancellation in more than 6 days before the day booked. The personal reasons do not include nature disasters such as typhoons, earthquakes, or road blocked, etc. </strong></p>
+<p><strong>Aowanda Service Center : 049-2974511</strong></p></div>
+     <div id="button_list" style="margin-bottom:25px;">
+    	<a href="/room/order_terms.php?date=2027-01-02&mode=add_r" class="button button-3d button-rounded button-red" title="外籍保留申請">
+        	<i class="icon-ok"></i>
+            外籍保留申請
+        </a>
+    </div>
+        <form id="form1" name="form1" method="get" action="index.php#main2">
+		<div class="events-calendar-header clearfix">
+			<label for="date_set[year]">選擇日期：</label>
+			<div class="day_search">
+				<div class="row">
+					<div class="col-md-6">
+						<div class="form-group">
+							<label for="date_set[year]">年</label>
+							<select name="date_set[year]" id="date_set[year]" class="form-control">
+																	<option value="2026" selected>2026</option>
+																	<option value="2027" >2027</option>
+															</select>
+						</div>
+					</div>
+				
+					<div class="col-md-6">
+						<div class="form-group">
+							<label for="date_set[month]">月</label>
+							<select name="date_set[month]" id="date_set[month]" onchange="javascrip:form1.submit()" class="form-control">
+															<option value="1" >1</option>
+															<option value="2" >2</option>
+															<option value="3" >3</option>
+															<option value="4" >4</option>
+															<option value="5" >5</option>
+															<option value="6" >6</option>
+															<option value="7" >7</option>
+															<option value="8" >8</option>
+															<option value="9" >9</option>
+															<option value="10" >10</option>
+															<option value="11" selected>11</option>
+															<option value="12" >12</option>
+														</select>
+						</div>
+					</div>
+				</div>
+			</div>
+			<input type="hidden" name="csrf" value="YXdkMjI2MDIwMjYtMTEtMDI=" />
+		</div>
+    </form>
+	<div class="table-responsive">
+		<table width="100%" border="0" cellpadding="2" cellspacing="2" bordercolor="#666666" class="calendar_table">
+		<tr>
+		<td height="40" valign="top" ><table width="100%" border="0" cellpadding="2" cellspacing="2" bordercolor="#666666" >
+			<tr>
+			<th align="middle" bgcolor="#cccccc" width="14.285%">日</th>
+			<th bgcolor="#cccccc" align="middle" width="14.285%">一</th>
+			<th bgcolor="#cccccc" align="middle" width="14.285%">二</th>
+			<th bgcolor="#cccccc" align="middle" width="14.285%">三</th>
+			<th bgcolor="#cccccc" align="middle" width="14.285%">四</th>
+			<th bgcolor="#cccccc" align="middle" width="14.285%">五</th>
+			<th bgcolor="#cccccc" align="middle" width="14.285%">六</th>
+			</tr>
+			<tr>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">1</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+				</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">2</span></strong>
+					<td
+					bgcolor="#66CC99">
+	
+					<div class="text_content">
+	今天日期			</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">3</span></strong>
+					<td
+					bgcolor="#FEE9DE">
+	
+					<div class="text_content">
+															</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">4</span></strong>
+					<td
+					bgcolor="#FEE9DE">
+	
+					<div class="text_content">
+															</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">5</span></strong>
+					<td
+					bgcolor="#FEE9DE">
+	
+					<div class="text_content">
+															</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">6</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(17)<br />
+								<span>目前報名</span> : 12<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(2)<br />
+								<span>目前報名</span> : 0<br />
+																				
+																								<span>小營地3*3</span>(18)<br />
+								<span>目前報名</span> : 0<br />
+																													<a href="?mode=user_list&date=2026-11-06">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">7</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(1)<br />
+								<span>目前報名</span> : 301<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(0)<br />
+								<span>目前報名</span> : 0<br />
+																				
+																								<span>小營地3*3</span>(0)<br />
+								<span>目前報名</span> : 2<br />
+																					<a href="##" id="tds_7" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-07')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-07">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+			</tr><tr>									<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">8</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(9)<br />
+								<span>目前報名</span> : 1<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(3)<br />
+								<span>目前報名</span> : 0<br />
+																				
+																								<span>小營地3*3</span>(18)<br />
+								<span>目前報名</span> : 0<br />
+																					<a href="##" id="tds_8" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-08')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-08">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">9</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(47)<br />
+								<span>目前報名</span> : 3<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(3)<br />
+								<span>目前報名</span> : 0<br />
+																				
+																								<span>小營地3*3</span>(23)<br />
+								<span>目前報名</span> : 0<br />
+																					<a href="##" id="tds_9" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-09')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-09">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">10</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(3)<br />
+								<span>目前報名</span> : 1<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(3)<br />
+								<span>目前報名</span> : 0<br />
+																				
+																								<span>小營地3*3</span>(23)<br />
+								<span>目前報名</span> : 0<br />
+																					<a href="##" id="tds_10" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-10')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-10">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">11</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(29)<br />
+								<span>目前報名</span> : 0<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(3)<br />
+								<span>目前報名</span> : 0<br />
+																				
+																								<span>小營地3*3</span>(23)<br />
+								<span>目前報名</span> : 0<br />
+																					<a href="##" id="tds_11" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-11')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-11">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">12</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(5)<br />
+								<span>目前報名</span> : 0<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(3)<br />
+								<span>目前報名</span> : 0<br />
+																				
+																								<span>小營地3*3</span>(19)<br />
+								<span>目前報名</span> : 0<br />
+																					<a href="##" id="tds_12" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-12')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-12">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">13</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(0)<br />
+								<span>目前報名</span> : 102<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(3)<br />
+								<span>目前報名</span> : 0<br />
+																				
+																								<span>小營地3*3</span>(16)<br />
+								<span>目前報名</span> : 0<br />
+																					<a href="##" id="tds_13" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-13')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-13">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">14</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(0)<br />
+								<span>目前報名</span> : 353<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(0)<br />
+								<span>目前報名</span> : 1<br />
+																				
+																								<span>小營地3*3</span>(0)<br />
+								<span>目前報名</span> : 15<br />
+																					<a href="##" id="tds_14" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-14')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-14">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+			</tr><tr>									<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">15</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(1)<br />
+								<span>目前報名</span> : 61<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(1)<br />
+								<span>目前報名</span> : 0<br />
+																				
+																								<span>小營地3*3</span>(16)<br />
+								<span>目前報名</span> : 0<br />
+																					<a href="##" id="tds_15" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-15')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-15">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">16</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(2)<br />
+								<span>目前報名</span> : 0<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(3)<br />
+								<span>目前報名</span> : 0<br />
+																				
+																								<span>小營地3*3</span>(18)<br />
+								<span>目前報名</span> : 0<br />
+																					<a href="##" id="tds_16" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-16')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-16">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">17</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(0)<br />
+								<span>目前報名</span> : 0<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(0)<br />
+								<span>目前報名</span> : 0<br />
+																				
+																								<span>小營地3*3</span>(21)<br />
+								<span>目前報名</span> : 0<br />
+																					<a href="##" id="tds_17" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-17')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-17">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">18</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(12)<br />
+								<span>目前報名</span> : 0<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(3)<br />
+								<span>目前報名</span> : 0<br />
+																				
+																								<span>小營地3*3</span>(22)<br />
+								<span>目前報名</span> : 0<br />
+																					<a href="##" id="tds_18" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-18')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-18">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">19</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(0)<br />
+								<span>目前報名</span> : 19<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(3)<br />
+								<span>目前報名</span> : 1<br />
+																				
+																								<span>小營地3*3</span>(20)<br />
+								<span>目前報名</span> : 0<br />
+																					<a href="##" id="tds_19" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-19')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-19">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">20</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(1)<br />
+								<span>目前報名</span> : 26<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(3)<br />
+								<span>目前報名</span> : 0<br />
+																				
+																								<span>小營地3*3</span>(18)<br />
+								<span>目前報名</span> : 0<br />
+																					<a href="##" id="tds_20" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-20')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-20">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">21</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(1)<br />
+								<span>目前報名</span> : 485<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(1)<br />
+								<span>目前報名</span> : 2<br />
+																				
+																								<span>小營地3*3</span>(0)<br />
+								<span>目前報名</span> : 2<br />
+																					<a href="##" id="tds_21" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-21')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-21">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+			</tr><tr>									<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">22</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(3)<br />
+								<span>目前報名</span> : 34<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(1)<br />
+								<span>目前報名</span> : 2<br />
+																				
+																								<span>小營地3*3</span>(11)<br />
+								<span>目前報名</span> : 0<br />
+																					<a href="##" id="tds_22" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-22')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-22">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">23</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(10)<br />
+								<span>目前報名</span> : 0<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(3)<br />
+								<span>目前報名</span> : 0<br />
+																				
+																								<span>小營地3*3</span>(23)<br />
+								<span>目前報名</span> : 0<br />
+																					<a href="##" id="tds_23" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-23')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-23">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">24</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(59)<br />
+								<span>目前報名</span> : 0<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(1)<br />
+								<span>目前報名</span> : 0<br />
+																				
+																								<span>小營地3*3</span>(23)<br />
+								<span>目前報名</span> : 0<br />
+																					<a href="##" id="tds_24" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-24')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-24">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">25</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(26)<br />
+								<span>目前報名</span> : 5<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(3)<br />
+								<span>目前報名</span> : 0<br />
+																				
+																								<span>小營地3*3</span>(23)<br />
+								<span>目前報名</span> : 0<br />
+																					<a href="##" id="tds_25" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-25')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-25">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">26</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(6)<br />
+								<span>目前報名</span> : 0<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(3)<br />
+								<span>目前報名</span> : 0<br />
+																				
+																								<span>小營地3*3</span>(21)<br />
+								<span>目前報名</span> : 0<br />
+																					<a href="##" id="tds_26" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-26')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-26">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">27</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(1)<br />
+								<span>目前報名</span> : 52<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(3)<br />
+								<span>目前報名</span> : 0<br />
+																				
+																								<span>小營地3*3</span>(20)<br />
+								<span>目前報名</span> : 0<br />
+																					<a href="##" id="tds_27" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-27')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-27">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">28</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(1)<br />
+								<span>目前報名</span> : 324<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(0)<br />
+								<span>目前報名</span> : 0<br />
+																				
+																								<span>小營地3*3</span>(2)<br />
+								<span>目前報名</span> : 2<br />
+																					<a href="##" id="tds_28" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-28')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-28">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+			</tr><tr>									<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">29</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(0)<br />
+								<span>目前報名</span> : 60<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(2)<br />
+								<span>目前報名</span> : 0<br />
+																				
+																								<span>小營地3*3</span>(18)<br />
+								<span>目前報名</span> : 6<br />
+																					<a href="##" id="tds_29" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-29')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-29">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" >				<table width="100%" border="0" cellpadding="0" cellspacing="0">
+				<tr>
+					<strong><span style="color:#e70000;">30</span></strong>
+					<td
+					>
+	
+					<div class="text_content">
+																																						<div id="main" style=""> <img src="../images/room/wood.png" width="16" height="16" alt="床位圖示" /> <text color="#4B0F00">天池山莊</text></div>
+													
+																								<span>床位</span>(35)<br />
+								<span>目前報名</span> : 0<br />
+																								<div id="main" style=""> <img src="../images/room/maple.png" width="16" height="16" alt="床位圖示" /> <text color="#003C00">周圍營地</text></div>
+													
+																								<span>大營地4*4</span>(3)<br />
+								<span>目前報名</span> : 0<br />
+																				
+																								<span>小營地3*3</span>(20)<br />
+								<span>目前報名</span> : 0<br />
+																					<a href="##" id="tds_30" class="button button-3d button-mini button-rounded button-green" onclick="check('2026-11-30')" onmouseover="this.style.backgroundColor='#99BBFF'" onmouseout="this.style.backgroundColor=''" style=" cursor:pointer;">線上申請</a><br />
+																						<a href="?mode=user_list&date=2026-11-30">已抽名單</a>
+					</div>
+				</td>
+				</tr>
+				</table>
+				</td>
+												<td height="80" valign="top" ></td>
+												<td height="80" valign="top" ></td>
+												<td height="80" valign="top" ></td>
+												<td height="80" valign="top" ></td>
+												<td height="80" valign="top" ></td>
+			</tr><tr>									<td height="80" valign="top" ></td>
+												<td height="80" valign="top" ></td>
+												<td height="80" valign="top" ></td>
+												<td height="80" valign="top" ></td>
+												<td height="80" valign="top" ></td>
+												<td height="80" valign="top" ></td>
+												<td height="80" valign="top" ></td>
+			</tr><tr>						</tr>
+		</table></td>
+		</tr>
+		</table>
+	</div>
+</div>
+<div id="btn_list">
+            <div id="page_box"></div>
+            <div id="return_button"></div>
+
+</div>
+
+            <!-- 上稿內容區塊 end -->
+
+      </div>
+
+      <!-- 內頁右方選單 end -->
+  </div></div></div>
+</section><!-- #content end -->		<!-- Footer
+		============================================= -->
+		<footer id="footer" class="index-footer dark text-center text-lg-left mt-lg-6">
+        
+          <!-- 胖頁尾區塊
+		  ============================================= -->
+<script>
+              document.addEventListener('DOMContentLoaded', function () {
+                var toggleLink = document.getElementById('toggleLink');
+                var toggleContent = document.getElementById('toggleContent');
+
+                if (!toggleLink || !toggleContent) {
+                  return;
+                }
+
+                /* 避免原本 inline onclick 或版型 JS 干擾 */
+                toggleLink.removeAttribute('onclick');
+
+                function openContent() {
+                  toggleContent.hidden = false;
+                  toggleContent.style.display = 'block';
+                  toggleContent.setAttribute('aria-hidden', 'false');
+
+                  toggleLink.setAttribute('aria-expanded', 'true');
+                  toggleLink.setAttribute('aria-label', '收合內容');
+                  toggleLink.setAttribute('title', '收合內容');
+                  toggleLink.textContent = '收合';
+                }
+
+                function closeContent() {
+                  toggleContent.hidden = true;
+                  toggleContent.style.display = 'none';
+                  toggleContent.setAttribute('aria-hidden', 'true');
+
+                  toggleLink.setAttribute('aria-expanded', 'false');
+                  toggleLink.setAttribute('aria-label', '展開內容');
+                  toggleLink.setAttribute('title', '展開內容');
+                  toggleLink.textContent = '展開';
+                }
+
+                function toggleText(event) {
+                  if (event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }
+
+                  var isOpen = toggleLink.getAttribute('aria-expanded') === 'true';
+
+                  if (isOpen) {
+                    closeContent();
+                  } else {
+                    openContent();
+                  }
+                }
+
+                /* 初始狀態 */
+                closeContent();
+
+                /* 滑鼠點擊 */
+                toggleLink.addEventListener('click', function (event) {
+                  toggleText(event);
+                });
+
+                /* 鍵盤 Enter / Space 展開收合 */
+                toggleLink.addEventListener('keydown', function (event) {
+                  var key = event.key || event.keyCode;
+
+                  if (
+                    key === 'Enter' ||
+                    key === ' ' ||
+                    key === 'Spacebar' ||
+                    key === 13 ||
+                    key === 32
+                  ) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    toggleText(event);
+                  }
+                });
+              });
+            </script>
+          <div id="footer_sitemap" class="postcontent">
+            <div id="faqs" class="faqs">
+          
+              <div class="toggle faq faq-marketplace faq-authors m-0 p-0 border-0">
+                <div class="toggle-header center m-0">
+                  <div class="toggle-title">
+                      <a id="toggleLink" href="##" title="展開內容" role="button" aria-controls="toggleContent" aria-expanded="false" aria-label="展開內容">展開</a>
+                  </div>
+                </div>
+                <div class="toggle-content" id="toggleContent" hidden aria-hidden="true">
+                  <div class="container py-lg-5 py-3">
+                    
+                    <table id="pc_sitemap" width="100%" border="0" cellspacing="0" cellpadding="0">
+                      <tbody>
+                        <tr>
+                        
+                          <td valign="top">
+                            <div class="title">山莊簡介</div>
+                            <ul>
+                              <li><a title="許登山者一個家" href="/about_us/?parent_id=160">許登山者一個家</a></li>
+                              <li><a title="山莊與平面圖" href="/about_us/?parent_id=191">山莊與平面圖</a></li>
+                            </ul>
+                          </td>   
+
+                          <td valign="top">
+                            <div class="title">最新消息</div>
+                            <ul>
+                              <li><a href="/news/?type_id=127" title="最新訊息">最新訊息</a></li>
+                              <li><a href="/news/?type_id=130" title="公告事項">公告事項</a></li>
+                            </ul>
+                          </td>   
+                          
+                          <td valign="top">
+                            <div class="title">線上申請</div>
+                            <ul>
+                                                <li><a href="/ifa/?parent_id=214" title="山屋及營地申請">山屋及營地申請</a></li>
+                              							  <li><a href="/ifa/?parent_id=253" title="住宿申請作業須知">住宿申請作業須知</a></li>
+                              <li><a href="/ifa/?parent_id=189" title="各項申請流程">各項申請流程</a></li>
+                              <li><a href="/ifa/?parent_id=192" title="收費基準">收費基準</a></li>
+                              <li><a href="/ifa/?parent_id=216" title="其他相關規定">其他相關規定</a></li>
+                                                          </ul>
+                          </td> 
+                          
+                          <td valign="top">
+                            <div class="title">山遊憩</div>
+                            <ul>
+                            <li><a href="/fetrip/?parent_id=248" title="無痕山林七大準則">無痕山林七大準則</a></li>	
+                <li><a href="/fetrip/?parent_id=195" title="能高越嶺道">能高越嶺道</a></li>
+                    <li><a href="/fetrip/?parent_id=202" title="天池">天池</a></li>
+                    <li><a href="/fetrip/?parent_id=201" title="木炭窯遺址">木炭窯遺址</a></li>
+                    <li><a href="/fetrip/?parent_id=200" title="三疊瀑布">三疊瀑布</a></li>
+                    <li><a href="/fetrip/?parent_id=197" title="光被八表紀念碑">光被八表紀念碑</a></li>
+                    <li><a href="/fetrip/?parent_id=196" title="建議行程">建議行程</a></li>
+                    <li><a href="/fetrip/?parent_id=171" title="趣遊南投">趣遊南投</a></li>
+                            </ul>
+                          </td> 
+                          
+                          <td valign="top">
+                            <div class="title">相關連結</div>
+                            <ul>
+                              <li><a title="相關連結" href="/links/" >相關連結</a></li>	
+                            </ul>
+                          </td> 
+                          
+
+                          <!-- <td valign="top">
+                            <div class="title">聯絡我們</div>
+                            <ul>
+                              <li><a class="Contact" href="/contact_us/recommend.php" title="聯絡我們">聯絡我們</a></li>	
+                            </ul> 
+                          </td>  -->
+                          
+                        </tr>
+                    </tbody>
+                  </table>
+                    
+                    
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+              
+          <!-- 胖頁尾區塊 end -->
+
+          <!-- 頁尾資訊區塊
+          ============================================= -->
+          <div id="footer-content">  
+            <div class="container">
+              <div class="footer-widgets-wrap dark py-4">
+                <!-- 上稿內容區塊
+                ============================================= -->
+
+                <div id="footer-text" class="mb-3">
+                  <!-- 上稿內容 --> 
+                  <div class="content">
+                    <div>
+<style type="text/css">@media (max-width: 991px) {
+#footer-share {
+    text-align: center;
+}
+}
+</style>
+</div>
+
+<p style="margin-bottom: 5px;">地址：546023南投縣仁愛鄉中興巷100號<br />
+林業及自然保育署南投分署&nbsp; 電話：049-2365226分機2500 傳真：049-2357598<br />
+客服時間:早上 08：00~12：00 下午:13:00~17:00(請於上班日之時間洽詢)<br />
+服務人員不是24小時上班接電話, 若有問題請於上班時間來電詢問</p>
+
+<p style="margin-bottom: 5px;">電子信箱:tcservice@forest.gov.tw</p>
+
+<p style="margin-bottom: 5px;">&nbsp;</p>
+                  </div>
+                  <!-- 上稿內容 end -->
+                </div>
+                
+                <!-- 上稿內容區塊 end -->
+              
+                <!-- 瀏覽人次區塊
+                ============================================= -->
+                <div id="footrt-information" class="">
+                  您是第<span>673,394</span>位瀏覽者｜
+                  瀏覽人次：<span>10209878</span>人
+                  <span id="footer-share"><a href="https://www.facebook.com/groups/1960852200728408/" title="天池山莊大小事(另開新視窗)" target="_blank" class="social-icon si-colored si-facebook" style="&#10;    color: #fff;&#10;    font-weight: bold;&#10;    float: none;&#10;    display: inline-block;&#10;">f</a></ㄋ>
+                </div>
+                
+                <!-- 瀏覽人次區塊 end -->
+              </div>
+             </div>
+           </div>
+           <!-- 頁尾資訊區塊 end -->
+           <!-- 底層選單區塊
+          ============================================= -->
+          
+          <div id="footer_bottom_menu">
+            <div class="container clearfix">
+              <div class="row justify-content-between align-items-center">
+                <div class="col-lg-auto">
+                  <a href="https://accessibility.moda.gov.tw/Applications/Detail?category=20260720144838" title="無障礙網站">
+                    <img src="/archive/無障礙標章2_2AA級圖示.png" border="0" width="88" height="31" alt="通過AA無障礙網頁檢測" />
+                  </a>
+                </div>
+                <div class="col-lg-auto">
+                  <ul>
+                      <li><a title="政府網站資料開放宣告" href="/content/?parent_id=233">資訊服務網著作權</a></li>
+                      <li><a title="網站安全政策" href="/content/?parent_id=245">網站安全政策</a></li>
+                      <li><a title="隱私權保護政策" href="/content/?parent_id=239">隱私權保護政策</a></li>
+                      <li><a title="網站安全防護與回復機制" href="/content/?parent_id=240">資訊安全政策</a></li>
+                      <li><a title="政府網站資料開放宣告" href="/content/?parent_id=262">政府網站資料開放宣告</a></li>
+                  </ul>
+                </div>
+              </div>
+			      </div>
+		      </div>
+          <!-- 底層選單區塊 end -->
+
+		</footer>
+        
+        <!-- #footer end -->
+
+	</div><!-- #wrapper end -->
+
+	<!-- Go To Top
+	============================================= -->
+    <script>
+		$(document).ready(function(){
+			$('#gotoTop').focusin(function(e){  //對id監聽  
+				console.log('focusin');
+			}); 
+
+			$('#gotoTop').keyup(function(e){  //對id監聽  
+				switch(e.keyCode) {  
+					case 13:  
+						$('#gotoTop').trigger("click");
+						$('.standard-logo').focus();
+					break;
+				}
+			}); 
+		});
+	</script> 
+	<a href="#" id="gotoTop" tabindex="0" class="icon-angle-up" role="button" title="gotoTop" aria-label="到最上方"></a>
+
+  
+  <!-- External JavaScripts
+	============================================= -->
+	<script type="text/javascript" src="/library/js/plugins.js"></script>
+
+	<!-- Footer Scripts
+	============================================= -->
+	<script type="text/javascript" src="/library/js/functions.js"></script>
+
+
+</div>  <!--最外層DIV--結束-->
+</body>
+</html>
+
