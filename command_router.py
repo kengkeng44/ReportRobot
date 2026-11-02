@@ -555,7 +555,7 @@ TODO_USAGE = (
 )
 
 
-def _handle_todo_subcmd(user_id, body):
+def _handle_todo_subcmd(user_id, body, by=None):
     """處理 /待辦 加|完成|刪|清完成 子命令；用 regex 支援「加X」黏在一起。"""
     import personal
     body = body.strip()
@@ -567,7 +567,7 @@ def _handle_todo_subcmd(user_id, body):
         if not item:
             return TODO_USAGE
         # 走完整解析，跟預填鍵盤同一條路 —— 兩種寫法得到同樣的結果
-        return _record_spoken_todo(user_id, item)
+        return _record_spoken_todo(user_id, item, by=by)
 
     # 完成（= 直接刪除，不留勾在清單裡）
     m = re.match(r"^(?:完成|做完|done)\s*(\d+)$", body, re.IGNORECASE)
@@ -608,7 +608,7 @@ def _handle_todo_subcmd(user_id, body):
     # 「待辦 P0 」，使用者補完內容送出後就走到這裡。
     if not body:
         return TODO_USAGE
-    return _record_spoken_todo(user_id, body)
+    return _record_spoken_todo(user_id, body, by=by)
 
 
 def _handle_preview(user_id):
@@ -1023,7 +1023,7 @@ def _format_due(start, end):
     return _one(start) + (f" → {_one(end)}" if end else "")
 
 
-def _record_spoken_todo(user_id, text):
+def _record_spoken_todo(user_id, text, by=None):
     """待命中收到的自由文字 → 記成待辦。回覆給 reply_message。
 
     **內容先寫進 Notion，才問缺的欄位。** 順序是刻意的：使用者中途跑掉、
@@ -1042,6 +1042,7 @@ def _record_spoken_todo(user_id, text):
     tid = personal.add_todo(
         user_id, content,
         start=parsed["start"], end=parsed["end"], priority=parsed["priority"],
+        by=by,
     )
 
     lines = [f"✅ 已記下：{content}"]

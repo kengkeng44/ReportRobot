@@ -213,6 +213,13 @@ def todo_list_flex(items, only_important=False):
             rows.append(_separator())
         text_preview = t["text"][:40]
         due = _due_label(t)
+        # 群組共用清單才有輸入者；兩個人一起看時才知道是誰想到的
+        tags = [due] if due else []
+        if t.get("for"):
+            tags.append(f"👤 {t['for']}")
+        if t.get("by"):
+            tags.append(f"✍️ {t['by']}")
+        due = "　".join(tags)
         row_texts = [{
             "type": "text", "text": f"⬜ {t['text']}",
             "size": "sm", "color": _TEXT_DARK,

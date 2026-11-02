@@ -309,11 +309,46 @@ def test_verify_requires_liff_id(monkeypatch):
 def test_group_todo_uses_group_as_owner(env, monkeypatch):
     import personal
     seen = []
-    monkeypatch.setattr(cr, "_handle_todo_subcmd", lambda key, body: seen.append((key, body)) or "ok")
+    monkeypatch.setattr(cr, "_handle_todo_subcmd", lambda key, body, by=None: seen.append((key, body)) or "ok")
     monkeypatch.setattr(personal, "list_todos", lambda key: seen.append((key, None)) or [])
     cr.handle("待辦 繳電費 1200", ctx=_group(user=GF))   # 不能被當成一筆帳
     cr.handle("待辦", ctx=_group(user=ADMIN))
     assert seen == [(GROUP, "繳電費 1200"), (GROUP, None)]
+
+
+def test_group_todo_multiline_adds_each_line_with_author(env, monkeypatch):
+    """「待辦」換行貼一整張清單：每行一件、空行和重複的「待辦」丟掉、記下是誰打的。"""
+    import personal
+    added = []
+    monkeypatch.setattr(cl, "_name", lambda uid, gid=None: "小螢")
+    monkeypatch.setattr(personal, "add_todo",
+                        lambda key, text, by=None, **kw: added.append((key, text, by)) or 1)
+    monkeypatch.setattr(personal, "list_todos", lambda key: [])
+    reply = cr.handle("待辦\n買衛生紙\n\n夾子 (煮飯用)\n待辦\n抹布至少6條", ctx=_group(user=GF))
+    assert added == [(GROUP, "買衛生紙", "小螢"), (GROUP, "夾子 (煮飯用)", "小螢"),
+                     (GROUP, "抹布至少6條", "小螢")]
+    assert "3 件" in reply[0]
+
+
+def test_todo_for_someone_with_date(env, monkeypatch):
+    """「幫陳小螢記 要買麵包 11/2」→ 待辦，日期、幫誰、誰記的都留著；有金額的仍是記帳。"""
+    import personal
+    added = []
+    monkeypatch.setattr(cl, "_name", lambda uid, gid=None: "仁和")
+    monkeypatch.setattr(personal, "add_todo",
+                        lambda key, text, **kw: added.append((key, text, kw)) or 1)
+    monkeypatch.setattr(personal, "list_todos", lambda key: [])
+    reply = cr.handle("幫陳小螢記 要買麵包 11/2", ctx=_group(user=ADMIN))
+    key, text, kw = added[0]
+    assert (key, text, kw["for_"], kw["by"]) == (GROUP, "要買麵包", "陳小螢", "仁和")
+    assert (kw["start"].month, kw["start"].day) == (11, 2)
+    assert "陳小螢" in reply[0] and "仁和" in reply[0]
+
+
+def test_todo_card_shows_author():
+    from flex_builder import todo_list_flex
+    card = todo_list_flex([{"id": 1, "text": "買衛生紙", "by": "小螢", "for": "仁和"}])
+    assert "✍️ 小螢" in str(card) and "👤 仁和" in str(card)
 
 
 def test_group_todo_postback_uses_group(env, monkeypatch):

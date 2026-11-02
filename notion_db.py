@@ -1210,6 +1210,8 @@ def todos_load_for_user(user_id):
                 "start": start,
                 "end": end,
                 "priority": _read_select(props, "優先度") or None,
+                "by": _read_rich_text(props, "輸入者"),
+                "for": _read_rich_text(props, "幫誰記"),
             })
         return out
     except Exception as e:
@@ -1318,7 +1320,7 @@ def _read_date_range(props, name):
 
 
 def todos_create(user_id, text, local_id, category=None,
-                 start=None, end=None, priority=None):
+                 start=None, end=None, priority=None, by=None, for_=None):
     """建立一筆待辦。回 page_id 或 None。
 
     category 未指定時歸到「生活」—— 寧可分錯也不要留空，
@@ -1347,11 +1349,25 @@ def todos_create(user_id, text, local_id, category=None,
     # schema 而不是報錯，那種偏移完全沒有訊號（同 _SPEND_CATEGORIES）
     if priority in TODO_PRIORITIES:
         props["優先度"] = {"select": {"name": priority}}
+    if by:
+        props["輸入者"] = {"rich_text": [{"text": {"content": by}}]}
+    if for_:
+        props["幫誰記"] = {"rich_text": [{"text": {"content": for_}}]}
 
     try:
         page = client.pages.create(parent={"database_id": db_id}, properties=props)
         return page["id"]
     except Exception as e:
+        if "輸入者" in props or "幫誰記" in props:
+            # 舊的 Todos 表沒有這兩欄：少一個名字總比整件事沒記到好
+            print(f"[notion] todos_create 帶輸入者失敗，改不帶重試：{e}")
+            props.pop("輸入者", None)
+            props.pop("幫誰記", None)
+            try:
+                return client.pages.create(parent={"database_id": db_id},
+                                           properties=props)["id"]
+            except Exception as e2:
+                e = e2
         print(f"[notion] todos_create 失敗：{e}")
         return None
 
