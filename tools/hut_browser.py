@@ -12,11 +12,13 @@
   python tools/hut_browser.py --forest     林業署三站也在本機抓（Railway 被擋時的備案）
   加 --headed 會開看得到的瀏覽器視窗（headless 被擋時試一次用）
 
-token：~/.hut_monitor/admin_token（一行，ReportRobot 的 ADMIN_TOKEN，從 Infisical 複製，不要貼進聊天）
+token：先讀環境變數 ADMIN_TOKEN（Windows 使用者環境變數，HANDOFF 的 admin 端點也用這個），
+沒有才讀 ~/.hut_monitor/admin_token（一行，從 Infisical 複製，不要貼進聊天）
 """
 
 import argparse
 import json
+import os
 import sys
 import time
 from datetime import date
@@ -33,6 +35,17 @@ HOME = Path.home() / ".hut_monitor"
 FIXTURES = ROOT / "tests" / "fixtures" / "hut"
 PAGE_GAP = 4   # 地點之間停 4 秒
 MONTHS = 2     # 當月＋下月
+
+
+def _read_token():
+    """環境變數 ADMIN_TOKEN 優先，沒有才讀 ~/.hut_monitor/admin_token；都沒有回 ""。"""
+    token = os.environ.get("ADMIN_TOKEN", "").strip()
+    if token:
+        return token
+    try:
+        return (HOME / "admin_token").read_text(encoding="utf-8-sig").strip()
+    except OSError:
+        return ""
 
 
 def _wait_calendar(page, prefix="", timeout=30000):
@@ -147,12 +160,9 @@ def main(argv=None):
 
     token = None
     if not (args.dry_run or args.recon):
-        try:
-            token = (HOME / "admin_token").read_text(encoding="utf-8-sig").strip()
-        except OSError:
-            token = ""
+        token = _read_token()
         if not token:
-            print("找不到 ~/.hut_monitor/admin_token 或內容為空，已停止（沒有開瀏覽器）")
+            print("找不到 ADMIN_TOKEN（環境變數或 ~/.hut_monitor/admin_token），已停止（沒有開瀏覽器）")
             return 2
 
     from playwright.sync_api import sync_playwright

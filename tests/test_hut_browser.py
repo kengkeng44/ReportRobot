@@ -159,3 +159,13 @@ def test_blocked_after_select_does_not_click_search():
     slots, errors = hb.collect_onestop(page, sleep=lambda s: None)
     assert slots == [] and set(errors) == set(hut_onestop.ONESTOP)
     assert not any(a[0] == "click" for a in page.actions)
+
+
+def test_token_env_first_then_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(hb, "HOME", tmp_path)
+    monkeypatch.delenv("ADMIN_TOKEN", raising=False)
+    assert hb._read_token() == ""
+    (tmp_path / "admin_token").write_text("from-file\n", encoding="utf-8")
+    assert hb._read_token() == "from-file"
+    monkeypatch.setenv("ADMIN_TOKEN", " from-env ")
+    assert hb._read_token() == "from-env"

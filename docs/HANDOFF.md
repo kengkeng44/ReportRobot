@@ -431,6 +431,12 @@ Invoke-RestMethod -Method Post -Uri "$base/admin/setup-richmenu" -Headers $h
 
 # 看持倉解析來源(debug 用)
 Invoke-RestMethod -Uri "$base/admin/portfolio-debug" -Headers $h
+
+# 山屋監控:Railway 連林業署三站的狀態(status / csrf)
+Invoke-RestMethod -Method Post -Uri "$base/admin/hut-probe" -Headers $h
+# 山屋監控:手動跑一次檢查(第一次只建基準,不寄變化信)
+Invoke-RestMethod -Method Post -Uri "$base/admin/hut-run" -Headers $h
+# /admin/hut-ingest 是本機 tools/hut_browser.py 送一站式結果用的,不用手動打
 ```
 
 ### 排程
@@ -440,6 +446,8 @@ Invoke-RestMethod -Uri "$base/admin/portfolio-debug" -Headers $h
 | 每日推播(群組,LINE) | 07:00 | `DAILY_CRON` |
 | 每日個人報(email) | 07:00 | 同上,跟在群組版後面跑 |
 | 財務同步 | 15:30 | `FINANCE_CRON`(預設 `30 7 * * *` UTC) |
+| 山屋監控(07:00 那次另寄當天抽籤／開放日) | 07:00／16:30／23:30,開機 3 分鐘後建基準 | 寫死在 `server.py` |
+| 山屋一站式(本機 Windows 排程「山屋一站式」) | 06:50／16:20／23:20 | `tools/hut_browser_task.ps1` 註冊;log 在 `~/.hut_monitor/log.txt` |
 
 個人版 2026-08-20 起改寄 Gmail(`mailer.py`),不再吃 LINE push 配額 ——
 push 每月 200 則,群組版每天已佔一則,個人版再佔一則等於一半花在自己身上。
@@ -564,6 +572,7 @@ ReportRobot（根頁,NOTION_PARENT_PAGE_ID）
 | `REPORT_EMAIL_TO` | 個人報收件者 | 沒設就寄給 `GMAIL_USER` 自己 |
 | `TW_HOLDINGS` | 台股起始庫存**備援** `代號:股數@均價`,逗號分隔 | 無 —— 正常走 Notion「起始庫存」表,這個只在 Notion 讀不到時生效 |
 | `TW_HOLDINGS_ASOF` | 上面那份備援庫存的基準日 `YYYY-MM-DD` | 無 —— **沒設則整份 TW_HOLDINGS 失效** |
+| `HUT_FOREST_ON_SERVER` | 山屋監控:林業署三站由 Railway 抓(`1`);Railway 被擋時設 `0`,改由本機 `hut_browser.py --forest` 送 | `1` |
 | `PERSONAL_USER_ID` | 個人版每日信要放誰的待辦 / 提醒(LINE user id) | **退回 `ADMIN_LINE_USER_ID`**(同一個人);兩個都沒設才跳過這兩個區塊,其他照寄 |
 
 > ⚠️ `TW_HOLDINGS_ASOF` 是必填不是選填。`build_portfolio` 會跳過基準日以前的成交
