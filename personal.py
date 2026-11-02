@@ -72,6 +72,8 @@ def _ensure_todos_loaded(user_id):
                     "start": r.get("start"),
                     "end": r.get("end"),
                     "priority": r.get("priority"),
+                    "by": r.get("by") or "",
+                    "for": r.get("for") or "",
                 })
                 max_local_id = max(max_local_id, r["local_id"])
             _TODO_NEXT_ID[user_id] = max_local_id
@@ -111,7 +113,7 @@ def is_pending_todo(user_id):
         return True
 
 
-def add_todo(user_id, text, start=None, end=None, priority=None):
+def add_todo(user_id, text, start=None, end=None, priority=None, by=None, for_=None):
     """新增一筆待辦，回 local id。
 
     start/end/priority 都是選填 —— 既有的 `/待辦 加 X` 不帶它們。
@@ -127,6 +129,7 @@ def add_todo(user_id, text, start=None, end=None, priority=None):
             "created_at": datetime.now(),
             "page_id": None,
             "start": start, "end": end, "priority": priority,
+            "by": by or "", "for": for_ or "",
         }
         _TODOS.setdefault(user_id, []).append(item)
     # Notion 寫在 lock 外（避免持鎖打網路 IO）
@@ -135,7 +138,7 @@ def add_todo(user_id, text, start=None, end=None, priority=None):
             import notion_db
             page_id = notion_db.todos_create(
                 user_id, text, next_id,
-                start=start, end=end, priority=priority,
+                start=start, end=end, priority=priority, by=by, for_=for_,
             )
             if page_id:
                 with _LOCK:
