@@ -27,6 +27,8 @@ SOURCES = [
     # 富邦這個寄件人只寄行動銀行通知；不是轉帳成功的信 parser 會回空，不用靠主旨過濾
     ('from:mbank@dfm.taipeifubon.com.tw', bank_transfer.fubon),
     ('from:service@pxbillrc01.cathaybk.com.tw subject:"CUBE App轉帳通知"', bank_transfer.cathay_cube),
+    # 郵局通知寄到另一個信箱，sync 會改用 _post_service() 讀
+    ('from:mpost@mail.post.gov.tw subject:行動郵局交易通知', bank_transfer.post),
 ]
 
 DEFAULT_LOOKBACK_DAYS = 7
@@ -74,7 +76,33 @@ def fetch_messages(service, query, max_results=50):
     return out
 
 
-TRANSFER_SOURCES = [s for s in SOURCES if s[1] in (bank_transfer.fubon, bank_transfer.cathay_cube)]
+TRANSFER_SOURCES = [s for s in SOURCES
+                    if s[1] in (bank_transfer.fubon, bank_transfer.cathay_cube, bank_transfer.post)]
+
+# 寄到第二個信箱的寄件來源：用 POST_TOKEN_PICKLE_B64（setup_post_token.py 產生）讀
+SECOND_INBOX_PARSERS = (bank_transfer.post,)
+
+
+def _post_service():
+    """第二個信箱（郵局通知寄到的那個）的 Gmail service。沒設定或授權壞掉回 None。"""
+    import pickle
+    b64 = os.environ.get("POST_TOKEN_PICKLE_B64", "").strip()
+    try:
+        if b64:
+            creds = pickle.loads(base64.b64decode(b64))
+        elif os.path.exists("token_post.pickle"):
+            with open("token_post.pickle", "rb") as f:
+                creds = pickle.load(f)
+        else:
+            return None
+        if not creds.valid and creds.expired and creds.refresh_token:
+            from google.auth.transport.requests import Request
+            creds.refresh(Request())
+        from googleapiclient.discovery import build
+        return build("gmail", "v1", credentials=creds, cache_discovery=False)
+    except Exception as e:
+        print(f"[finance] 第二信箱授權失敗（POST_TOKEN_PICKLE_B64）：{e}")
+        return None
 
 
 def sync(service=None, lookback_days=DEFAULT_LOOKBACK_DAYS, notion=None, sources=None, max_results=50):
@@ -114,10 +142,18 @@ def sync(service=None, lookback_days=DEFAULT_LOOKBACK_DAYS, notion=None, sources
         print("[finance] 讀不到既有指紋，本次放棄以免寫入重複")
         return stats
 
+    post_service = False   # 用到才建；None = 沒設定
     for query, parser in (sources or SOURCES):
+        svc = service
+        if parser in SECOND_INBOX_PARSERS:
+            if post_service is False:
+                post_service = _post_service()
+            if post_service is None:
+                continue
+            svc = post_service
         stats["sources"] += 1
         full_query = f"{query} newer_than:{lookback_days}d"
-        for mid, html in fetch_messages(service, full_query, max_results=max_results):
+        for mid, html in fetch_messages(svc, full_query, max_results=max_results):
             try:
                 txns = parser.parse(html)
             except Exception as e:

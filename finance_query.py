@@ -144,8 +144,9 @@ def _portfolio_brief():
         current = get_live_price(ticker)
         if current is None:
             continue
-        cost = p["shares"] * p["avg_cost"]
         mv = p["shares"] * current
+        # 成本未知（月對帳單庫存沒有成本欄）就拿市值當成本：市值照算，損益當 0，不亂報賺賠
+        cost = p["shares"] * p["avg_cost"] if p.get("avg_cost") is not None else mv
         # AU9901 黃金存摺也歸入台幣（user 提供 TWD 報價）
         is_tw_like = _is_tw_ticker(ticker) or (ticker or "").upper().startswith("AU")
         if is_tw_like:

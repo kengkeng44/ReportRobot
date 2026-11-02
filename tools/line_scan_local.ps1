@@ -25,6 +25,13 @@ $export_rows = Join-Path $home_dir 'rows_export.json'
 Remove-Item $export_rows -ErrorAction SilentlyContinue
 Remove-Item $diary_dir -Recurse -ErrorAction SilentlyContinue
 
+# 一次性對帳：有 audit_pending 就先匯出全部日子的轉帳到 transfers_all.json（給人工比對方向），成功才拿掉旗標
+$audit_flag = Join-Path $home_dir 'audit_pending'
+if (Test-Path $audit_flag) {
+    & $python $scan --audit (Join-Path $home_dir 'transfers_all.json')
+    if ($LASTEXITCODE -eq 0) { Remove-Item $audit_flag }
+}
+
 & $python $scan --dry-run
 # 2＝LINE 沒登入、3＝電腦鎖定：整個沒做到，下次觸發再試。
 # 1＝有聊天室開不起來（log 裡有寫是哪個）：做到的照樣處理，不然一個壞掉全部卡住

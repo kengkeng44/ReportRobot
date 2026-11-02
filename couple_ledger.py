@@ -713,8 +713,13 @@ def settle_text(rows, label):
     if not rows:
         return f"💑 {label}還沒有記帳。"
 
+    # Notion 手打的列常常只有付款人名字沒有 ID —— 用同名列的 ID 補上，
+    # 不然同一個人會被拆成兩個，結算變成「付款人超過兩位」
+    id_by_name = {r["payer"]: r["payer_id"] for r in rows
+                  if r.get("payer") and r.get("payer_id")}
+
     def pid_of(r):
-        return r.get("payer_id") or r.get("payer") or "?"
+        return r.get("payer_id") or id_by_name.get(r.get("payer")) or r.get("payer") or "?"
 
     names = {}
     for r in rows:

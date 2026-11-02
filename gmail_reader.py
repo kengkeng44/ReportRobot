@@ -658,10 +658,21 @@ def _build_snapshots(statements, env=None):
     # 起始庫存以 Notion「起始庫存」表為主（使用者可以用 App 直接改），
     # 環境變數留著當備援 —— Notion 掛掉時還有東西可用。
     # 月對帳單庫存優先於兩者：那是券商給的真實資料，不是人填的。
+    # 例外：Notion 基準日比對帳單月底還新就用 Notion —— 對帳單庫存表沒有成本，
+    # 使用者照 App 庫存頁填的那份同時有股數和均價，而且比較接近現況（2026-10-30）。
     have = {snap["market"] for snap in snapshots}
     for market, positions in _group_starting_holdings().items():
         if market in have:
-            continue
+            stmt = next(s for s in snapshots if s["market"] == market)
+            if positions["cutoff"] <= holdings.month_end(*stmt["period"]):
+                # 對帳單比較新但沒有成本：股數沒變的那幾檔沿用 Notion 均價。
+                # 股數變了就不沿用 —— 中間有買賣，舊均價已經不對，寧可顯示未知
+                for ticker, h in stmt["holdings"].items():
+                    old = positions["holdings"].get(ticker)
+                    if h.get("avg_cost") is None and old and old["shares"] == h["shares"]:
+                        h["avg_cost"] = old.get("avg_cost")
+                continue
+            snapshots.remove(stmt)
         snapshots.append(positions)
         have.add(market)
 
@@ -715,6 +726,15 @@ def _group_starting_holdings():
     # 要跳過，硬用會少算或雙重計算
     return {m: snap for m, snap in grouped.items()
             if snap["cutoff"] and snap["holdings"]}
+
+
+def _cost_value(p):
+    """排序用的成本金額。月對帳單庫存沒有成本欄，avg_cost 是 None（見 holdings），當 0 排最後。
+
+    2026-10 起美股改用 9 月對帳單庫存當起點，整個部位都是 None，
+    這裡直接相乘丟 TypeError，被外層 except 吃掉後回 {}，LINE 就顯示「目前無持倉資料」。
+    """
+    return p['shares'] * p['avg_cost'] if p.get('avg_cost') is not None else 0
 
 
 def get_portfolio_from_gmail():
@@ -820,13 +840,11 @@ def get_portfolio_from_gmail():
         if not portfolio:
             print("  無持倉")
         else:
-            for ticker, p in sorted(
-                portfolio.items(),
-                key=lambda x: x[1]['shares'] * x[1]['avg_cost'],
-                reverse=True,
-            ):
-                cost_value = p['shares'] * p['avg_cost']
-                print(f"  {ticker}: {p['shares']} 股 @ 均價 {p['avg_cost']:.2f}（成本 {cost_value:,.0f}）")
+            for ticker, p in sorted(portfolio.items(), key=lambda x: _cost_value(x[1]), reverse=True):
+                if p['avg_cost'] is None:
+                    print(f"  {ticker}: {p['shares']} 股 @ 均價 未知")
+                else:
+                    print(f"  {ticker}: {p['shares']} 股 @ 均價 {p['avg_cost']:.2f}（成本 {_cost_value(p):,.0f}）")
         print("========================")
         return portfolio
     except Exception as e:
@@ -842,7 +860,7 @@ def get_stocks_from_gmail():
         return []
     sorted_tickers = sorted(
         portfolio.items(),
-        key=lambda x: x[1]['shares'] * x[1]['avg_cost'],
+        key=lambda x: _cost_value(x[1]),
         reverse=True,
     )
     top3 = [ticker for ticker, _ in sorted_tickers[:3]]
