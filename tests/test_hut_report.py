@@ -57,4 +57,4 @@ def test_line_summary():
 
 def test_line_summary_none():
     checked = datetime(2026, 11, 2, 7, 0, tzinfo=timezone(timedelta(hours=8)))
-    assert "目前沒有週末／連假夠 2 人的空位" in hr.line_summary([], checked, {})
+    assert "目前沒有週五六日夠 2 人的空位" in hr.line_summary([], checked, {})

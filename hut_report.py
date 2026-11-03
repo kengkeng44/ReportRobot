@@ -55,7 +55,7 @@ def build_email(changes, events, errors, today):
         lines = []
         for c in highlights:
             lines += [_change_line(c), f"  → {hut_info.apply_phrase(c.slot)}"]
-        parts.append("<b>重點（週末／連假、夠 2 人）</b>\n" + "\n".join(lines))
+        parts.append("<b>重點（週五六日、夠 2 人）</b>\n" + "\n".join(lines))
     if changes:
         ordered = sorted(changes, key=lambda c: (c.slot.site, c.slot.unit, c.slot.day))
         parts.append("<b>全部變化</b>\n" + "\n".join(_change_line(c) for c in ordered))
@@ -76,7 +76,7 @@ def build_email(changes, events, errors, today):
 
 
 def line_summary(slots, checked_at, errors):
-    """slots 已由呼叫端篩過「在監控範圍內」。列週末／連假夠 2 人的日子。"""
+    """slots 已由呼叫端篩過「在監控範圍內」。列週五六日夠 2 人的日子。"""
     lines = [f"山屋（{checked_at:%m/%d %H:%M} 查）"]
     by_unit = {}
     for s in sorted(slots, key=lambda s: s.day):
@@ -87,7 +87,7 @@ def line_summary(slots, checked_at, errors):
             days = "、".join(f"{fmt_day(s.day)} {s.remaining}{_word(s)}" for s in ss[:LINE_MAX_PER_UNIT])
             lines.append(f"{unit}：{days}")
     else:
-        lines.append("目前沒有週末／連假夠 2 人的空位")
+        lines.append("目前沒有週五六日夠 2 人的空位")
     if errors:
         lines.append("沒查到：" + "、".join(hut_info.place(s) for s in sorted(errors)))
     lines.append("完整內容看 Gmail")

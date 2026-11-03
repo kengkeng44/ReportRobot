@@ -5,12 +5,12 @@ import hut_calendar as hc
 TODAY = date(2026, 11, 2)  # 週一
 
 
-def test_good_night_is_night_before_day_off():
-    assert hc.is_good_night(date(2026, 11, 6))       # 週五晚 → 隔天週六
-    assert hc.is_good_night(date(2026, 11, 7))       # 週六晚 → 隔天週日
-    assert not hc.is_good_night(date(2026, 11, 8))   # 週日晚 → 隔天上班
-    assert not hc.is_good_night(date(2026, 11, 4))
-    assert hc.is_good_night(date(2026, 12, 31))      # 隔天元旦
+def test_good_night_is_fri_sat_sun():
+    assert hc.is_good_night(date(2026, 11, 6))       # 週五
+    assert hc.is_good_night(date(2026, 11, 7))       # 週六
+    assert hc.is_good_night(date(2026, 11, 8))       # 週日
+    assert not hc.is_good_night(date(2026, 11, 4))   # 週三
+    assert not hc.is_good_night(date(2026, 12, 31))  # 元旦前一晚是週四，連假不查
 
 
 def test_minus_months():
