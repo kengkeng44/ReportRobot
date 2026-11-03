@@ -704,3 +704,16 @@ def test_missing_title_returns_none():
     kids = _FakeChildren([[_child_page("p1", "AAA")]])
 
     assert notion_db._find_child(kids, "parent", "ZZZ", "child_page") is None
+
+
+def test_hut_tables_live_in_hut_section():
+    assert notion_db._DB_SECTION["山屋空位"] == "山屋"
+    assert notion_db._DB_SECTION["山屋變化紀錄"] == "山屋"
+    slots = notion_db._SCHEMAS["山屋空位"]
+    assert slots["鍵"] == {"title": {}}
+    for name in ("地點", "單位", "類型", "住宿日", "星期", "週末", "剩餘", "報名", "更新時間", "備註"):
+        assert name in slots
+    log = notion_db._SCHEMAS["山屋變化紀錄"]
+    assert log["摘要"] == {"title": {}}
+    for name in ("地點", "單位", "住宿日", "週末", "之前", "之後", "變化時間"):
+        assert name in log

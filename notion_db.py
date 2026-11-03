@@ -61,6 +61,11 @@ _SECTIONS = {
         "icon": "📡",
         "dbs": ("定位點",),
     },
+    # 山屋空位監控（hut_monitor 每次檢查寫入）。獨立一區，之後拿來分析各山屋釋出規律。
+    "山屋": {
+        "icon": "⛰️",
+        "dbs": ("山屋空位", "山屋變化紀錄"),
+    },
 }
 
 _DB_SECTION = {db: sec for sec, cfg in _SECTIONS.items() for db in cfg["dbs"]}
@@ -124,6 +129,12 @@ _SPEND_CATEGORIES = (
 )
 
 SPEND_CATEGORIES = tuple(name for name, _ in _SPEND_CATEGORIES)
+
+# 名稱對齊 hut_info.PLACE（山屋監控的地點顯示名）
+_HUT_PLACES = (
+    ("嘉明湖／向陽", "blue"), ("天池", "green"), ("檜谷", "brown"), ("排雲", "purple"),
+    ("九九", "orange"), ("雪霸", "yellow"), ("奇萊", "red"), ("南湖", "pink"),
+)
 SPEND_CATEGORY_DEFAULT = "其他"
 
 
@@ -469,6 +480,34 @@ _SCHEMAS = {
                         ("主食", "orange"), ("調味料", "brown"), ("罐頭乾貨", "gray")),
         "已購買": {"checkbox": {}},
         "來源": _select(("手動", "default"), ("低庫存自動", "blue"), ("食譜缺料", "purple")),
+    },
+    # 山屋空位：每個「地點×單位×住宿日」一列＋每站一列站況，upsert。
+    # 過期的列不刪，留著分析；讀取時用住宿日 filter 只拿今天以後的。
+    # 設計：docs/superpowers/specs/2026-11-03-hut-dashboard-notion-design.md
+    "山屋空位": {
+        "鍵": {"title": {}},                                    # site|unit|YYYY-MM-DD；站況列是 site|站況
+        "地點": _select(*_HUT_PLACES),
+        "單位": {"rich_text": {}},
+        "類型": _select(("床位", "blue"), ("營地", "green"), ("站況", "gray")),
+        "住宿日": {"date": {}},
+        "星期": _select(("一", "default"), ("二", "default"), ("三", "default"),
+                        ("四", "default"), ("五", "orange"), ("六", "red"), ("日", "red")),
+        "週末": {"checkbox": {}},                                # 住宿日是週五、六、日
+        "剩餘": {"number": {"format": "number"}},
+        "報名": {"number": {"format": "number"}},
+        "更新時間": {"date": {}},                                # 這列最後一次寫入（站況列 = 最後一次檢查）
+        "備註": {"rich_text": {}},                               # 站況列：「正常」或錯誤訊息
+    },
+    # 剩餘數有變才新增一列，只增不改。
+    "山屋變化紀錄": {
+        "摘要": {"title": {}},                                   # 例「九九 11/21(五) 0→2」
+        "地點": _select(*_HUT_PLACES),
+        "單位": {"rich_text": {}},
+        "住宿日": {"date": {}},
+        "週末": {"checkbox": {}},
+        "之前": {"number": {"format": "number"}},
+        "之後": {"number": {"format": "number"}},
+        "變化時間": {"date": {}},
     },
 }
 
