@@ -406,7 +406,8 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
     # 山屋名額監控：07:00／16:30／23:30（docs/superpowers/specs/2026-11-02-hut-monitor-design.md）
-    # 07:00 那班就算沒有空位變化，今天有抽籤／開放日也寄。開機 3 分鐘後先跑一次當基準（不寄信）。
+    # 07:00 那班就算沒有空位變化，今天有抽籤／開放日也寄。
+    # 開機 3 分鐘後先從 Notion 補快照再檢查（補不到才當基準、不寄信）。
     def _run_hut_check(send_events_today=False):
         try:
             import hut_monitor
@@ -414,8 +415,16 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"[hut] 檢查失敗（非致命）：{e}")
 
+    def _run_hut_boot():
+        try:
+            import hut_monitor
+            print(f"[hut] 從 Notion 補回 {hut_monitor.restore_from_notion()} 筆快照")
+        except Exception as e:
+            print(f"[hut] 補快照失敗（非致命）：{e}")
+        _run_hut_check()
+
     scheduler.add_job(
-        _run_hut_check,
+        _run_hut_boot,
         DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(minutes=3)),
         id="hut_check_boot",
         replace_existing=True,

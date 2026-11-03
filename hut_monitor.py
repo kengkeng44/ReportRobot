@@ -1,9 +1,11 @@
 """山屋名額監控：抓 → 跟上次比 → 有變化寄 Gmail；LINE「山屋」回最新摘要。
 
-狀態只放記憶體。Railway 重新部署後第一次檢查當基準、不寄信，最多漏一次變化。
+狀態放記憶體；開機先 restore_from_notion 從 Notion 補回快照，重新部署後第一次檢查就能比對。
+Notion 讀不到才退回舊行為：第一次檢查當基準、不寄信。
 一站式由本機 tools/hut_browser.py 用真瀏覽器抓，POST /admin/hut-ingest 送進來，
 60 分鐘內的才算數（本機比伺服器早 10 分鐘跑）。
 HUT_FOREST_ON_SERVER=0 時林業署三站也改由本機送（Railway 國外 IP 被擋時的備案）。
+寄信只寄住宿日是週五、六、日的增加；全部空位（含平日）寫進 Notion（hut_notion，背景執行緒）。
 
 設計：docs/superpowers/specs/2026-11-02-hut-monitor-design.md
 """
@@ -13,6 +15,7 @@ import threading
 from datetime import timedelta
 
 import hut_calendar
+import hut_notion
 import hut_onestop
 import hut_report
 import hut_sources
@@ -25,6 +28,8 @@ FAIL_ALERT = 3
 LOTTERY_SITES = {"jmlnt", "kgonline", "onestop_paiyun"}  # 抽籤前的「剩餘」只是還沒分配
 MIN_AHEAD, LOTTERY_MAX_AHEAD, MAX_AHEAD = 5, 30, 61
 MISSING = "本次沒查到（電腦沒開）"
+WEEKEND = hut_notion.WEEKEND
+_NOTION_BUSY = threading.Lock()  # 上一次同步還沒寫完（第一次約 2 分鐘）就跳過這次
 
 _LOCK = threading.Lock()
 _snapshot = {}       # Slot.key() -> remaining
@@ -119,12 +124,65 @@ def _notify(err, ctx):
     notify_admin(err, ctx)
 
 
-def run_check(send_events_today=False, now=None, fetch=None, send=None, notify=None):
+def restore_from_notion(today=None, load=None):
+    """快照是空的時候從 Notion「山屋空位」補回。回傳補回的筆數；失敗回 0。"""
+    today = today or today_tpe()
+    load = load or hut_notion.load_rows
+    try:
+        rows = load(today) or {}
+    except Exception as e:
+        print(f"[hut_monitor] 從 Notion 補快照失敗，照舊建基準：{type(e).__name__}: {e}")
+        return 0
+    n = 0
+    with _LOCK:
+        if _snapshot:
+            return 0
+        for key, (_, remaining, _) in rows.items():
+            site, _, rest = key.partition("|")
+            unit, _, day = rest.rpartition("|")
+            if not unit or remaining is None:   # 站況列、看不出剩餘的列
+                continue
+            _snapshot[(site, unit, day)] = int(remaining)
+            _baselined.add(site)
+            n += 1
+    return n
+
+
+def _notion_job(slots, errors, now, notify):
+    """寫 Notion；失敗跟抓取失敗一樣連續 3 次才通知。"""
+    try:
+        hut_notion.sync(slots, errors, now)
+    except Exception as e:
+        with _LOCK:
+            _fails["notion"] = _fails.get("notion", 0) + 1
+            n = _fails["notion"]
+        print(f"[hut_monitor] Notion 寫入失敗（第 {n} 次）：{type(e).__name__}: {e}")
+        if n == FAIL_ALERT:
+            notify(e, {"module": "hut_monitor", "section": "notion"})
+        return
+    with _LOCK:
+        _fails["notion"] = 0
+
+
+def _sync_in_background(slots, errors, now, notify):
+    def work():
+        if not _NOTION_BUSY.acquire(blocking=False):
+            print("[hut_monitor] 上一次 Notion 同步還沒寫完，這次跳過")
+            return
+        try:
+            _notion_job(slots, errors, now, notify)
+        finally:
+            _NOTION_BUSY.release()
+    threading.Thread(target=work, daemon=True, name="hut-notion").start()
+
+
+def run_check(send_events_today=False, now=None, fetch=None, send=None, notify=None, sync=None):
     now = now or now_tpe()
     today = now.date()
     fetch = fetch or hut_sources.fetch_all
     send = send or _send_email
     notify = notify or _notify
+    sync = sync or _sync_in_background
 
     on_server = _forest_on_server()
     slots, errors = fetch(today) if on_server else ([], {})
@@ -133,7 +191,8 @@ def run_check(send_events_today=False, now=None, fetch=None, send=None, notify=N
         slots = slots + in_slots
         errors = {**errors, **in_errors}
         ok_sites = {s.site for s in slots}
-        changes = _diff(slots, today)
+        # 平日的增加只記 Notion 不寄信；快照照樣更新，下次不會重報
+        changes = [c for c in _diff(slots, today) if c.slot.day.weekday() in WEEKEND]
         for s in slots:
             _snapshot[s.key()] = s.remaining
         cutoff = today.isoformat()
@@ -154,6 +213,8 @@ def run_check(send_events_today=False, now=None, fetch=None, send=None, notify=N
     for site in alerts:
         notify(RuntimeError(f"{site} 連續 {FAIL_ALERT} 次沒查到：{errors[site]}"),
                {"module": "hut_monitor", "section": site})
+
+    sync(slots, errors, now, notify)
 
     sent = False
     try:
