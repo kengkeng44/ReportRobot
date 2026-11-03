@@ -39,6 +39,8 @@ def test_watchable_window():
     assert hm.watchable(_s("jmlnt", "嘉明湖山屋", FRI, 1), TODAY)
     assert not hm.watchable(_s("tconline", "天池山莊", date(2026, 11, 5), 1), TODAY)  # <5 天
     assert not hm.watchable(_s("tconline", "天池山莊", date(2027, 1, 10), 1), TODAY)  # >61 天
+    assert not hm.watchable(_s("tconline", "天池山莊", date(2026, 11, 25), 1), TODAY)  # 週三不看
+    assert hm.watchable(_s("tconline", "天池山莊", date(2026, 11, 29), 1), TODAY)      # 週日看
 
 
 def test_first_run_is_baseline_then_increase_is_change():

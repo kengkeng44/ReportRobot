@@ -35,7 +35,12 @@ _LOG_KEYWORDS = {"編輯紀錄", "異動紀錄", "修改紀錄", "紀錄"}
 # 「午餐 120 小美付」：尾巴「某某付」= 幫某某記。名字要在記帳成員名單上
 _PAYER_SUFFIX_RE = re.compile(r"^(.*\S)\s+(\S{1,12})付$")
 _CHART_RE = re.compile(r"^(?:圖表|圓餅圖|圓餅|統計)(?:\s*(.+))?$")
-_TODO_RE = re.compile(r"^(?:待辦|todo)(?:\s+(.*))?$", re.IGNORECASE)
+# 「10月圖表」「上個月圖表」：月份寫在前面也要認
+_CHART_PREFIX_RE = re.compile(r"^(.+?)\s*的?(?:圖表|圓餅圖|圓餅|統計)$")
+# 「幫陳小螢記 要買麵包 11/2」：沒有金額的「幫某某記」是替對方記一件待辦
+_TODO_FOR_RE = re.compile(r"^幫\s*@?(\S{1,12}?)\s*記\s*[：:]?\s*(.+)$", re.S)
+# re.S：「待辦」換行接一串清單也要認得，不然整段掉到私訊指令那邊
+_TODO_RE = re.compile(r"^(?:待辦|todo)(?:\s+(.*))?$", re.IGNORECASE | re.S)
 
 HELP_TEXT = (
     "💑 共同記帳怎麼用\n\n"
@@ -54,7 +59,8 @@ HELP_TEXT = (
     "　圖表　　　← 本月共同支出圓餅圖（圖表 9月 看別的月）" + chr(10) +
     "　選單　　　← 叫出按鈕卡，長按設成公告就會釘在最上面\n\n"
     "兩人共用的待辦：\n"
-    "　待辦 買衛生紙　← 新增\n"
+    "　待辦 買衛生紙　← 新增（換行打很多行＝一次加很多件）\n"
+    "　幫小螢記 要買麵包 11/2　← 記一件小螢的事，日期一起記\n"
     "　待辦　　　　　← 看清單，按「完成」就劃掉\n\n"
     "沒指定的話，誰打的字就算誰付的錢。私訊或表單記成「共同」的、" + chr(10) +
     "全聯刷卡，也會自動同步過來（算你付的）。" + chr(10) + chr(10) +
@@ -816,7 +822,18 @@ def _settle_reply(rows, label, offset, today):
         if off > 0 or off == offset or any(o[1] == _month_cmd(today, off) for o in options):
             continue
         options.append((_month_label(today, off), _month_cmd(today, off)))
-    return quick_reply_text(settle_text(rows, label), options)
+    return quick_reply_text(settle_text(rows, label) + _db_line(), options)
+
+
+def _db_line():
+    """回覆最後一行附共同帳本的 Notion 連結，想看細項直接點。拿不到就不附。"""
+    try:
+        import notion_db
+        url = notion_db.couple_db_url()
+    except Exception as e:
+        print(f"共同帳本網址取得失敗：{e}")
+        url = ""
+    return f"\n📒 共同帳本：{url}" if url else ""
 
 
 def _chart_reply(offset, today):
@@ -829,15 +846,16 @@ def _chart_reply(offset, today):
     rows = notion_db.couple_load(limit=500, since=since, until=until)
     image = couple_chart.chart_messages(rows, label)
     if not image:
-        return f"💑 {label}還沒有共同支出，沒有圖可以畫。"
+        return f"💑 {label}還沒有共同支出，沒有圖可以畫。{_db_line()}"
     options = []
     for off in (offset - 1, offset + 1):
         if off <= 0:
             options.append((_month_label(today, off),
                             "圖表 " + _month_cmd(today, off).split(" ", 1)[1]))
     options.append(("看結算", _month_cmd(today, offset)))
-    return [image, quick_reply_text(f"{label}共同支出依品項分。打「結算」看誰該給誰。",
-                                    options)]
+    text = (f"{label}共同支出依品項分。打「結算」看誰該給誰。"
+            f"\n🖼 圖表：{image['originalContentUrl']}{_db_line()}")
+    return [image, quick_reply_text(text, options)]
 
 
 def _ym(today, offset):
@@ -892,7 +910,7 @@ def recent_reply(rows, n=10):
     """最近幾筆，每筆一顆「編輯」開表單。沒設 LIFF 就退回純文字。"""
     import liff_api
     if not rows or not liff_api.liff_url():
-        return recent_text(rows, n)
+        return recent_text(rows, n) + _db_line()
 
     def _row(r):
         tag = "個人" if r.get("kind") == "個人" else "共同"
@@ -919,6 +937,11 @@ def recent_reply(rows, n=10):
             body.append(_row(r))
     body.append({"type": "text", "text": "按「編輯」可以改品項、金額、日期、誰付的，或刪掉。",
                  "size": "xxs", "color": "#8a96a0", "wrap": True})
+    db = _db_line().strip()
+    if db:
+        url = db.split("：", 1)[1]
+        body.append({"type": "button", "style": "link", "height": "sm",
+                     "action": {"type": "uri", "label": "📒 Notion 共同帳本", "uri": url}})
     return {"type": "flex", "altText": recent_text(rows, n)[:300],
             "contents": {"type": "bubble", "body": {
                 "type": "box", "layout": "vertical", "spacing": "sm", "contents": body}}}
@@ -994,13 +1017,25 @@ def handle(text, ctx):
     if m:
         return _todo((m.group(1) or "").strip(), ctx)
 
+    # 有金額的「幫小螢記 午餐 120」仍是記帳（往下走），沒金額的才是待辦
+    # 先把日期拿掉再判斷：「要買麵包 11/2」的 2 會被當成金額
+    m = _TODO_FOR_RE.match(t)
+    if m and not parse_entry(_without_dates(m.group(2))):
+        return _todo_for(m.group(1), m.group(2).strip(), ctx)
+
     try:
         today = today_tpe()
 
-        m = _CHART_RE.match(t)
+        m = _CHART_RE.match(t) or _CHART_PREFIX_RE.match(t)
         if m:
             # 「圖表 9月」借用結算的月份解析，兩個指令吃一樣的月份寫法
-            offset = _settle_offset(("結算 " + m.group(1)) if m.group(1) else "結算", today)
+            arg = (m.group(1) or "").strip()
+            if arg in ("上個月", "上月"):
+                offset = -1
+            elif arg in ("這個月", "本月"):
+                offset = 0
+            else:
+                offset = _settle_offset(("結算 " + arg) if arg else "結算", today)
             if offset is not None:
                 return _chart_reply(offset, today)
 
@@ -1067,6 +1102,19 @@ def _strip_payer(t, ctx):
     return t, None
 
 
+def _todo_card(key):
+    """群組清單卡，底下附這個群組自己的 Notion 待辦表（跟你私人的分開）。"""
+    import notion_db
+    import personal
+    from flex_builder import todo_list_flex
+    try:
+        url = notion_db.todos_db_url(key)
+    except Exception as e:
+        print(f"待辦表網址取得失敗：{e}")
+        url = ""
+    return todo_list_flex(personal.list_todos(key), db_url=url)
+
+
 def _todo(body, ctx):
     """群組待辦：兩人共用一份，用群組 ID 當清單主人。
 
@@ -1083,10 +1131,54 @@ def _todo(body, ctx):
         return None
     try:
         if not body:
-            return todo_list_flex(personal.list_todos(key))
-        return command_router._handle_todo_subcmd(key, body)
+            return _todo_card(key)
+        by = _name((ctx or {}).get("user_id"), key)
+        lines = [ln.strip() for ln in body.splitlines()]
+        # 貼上來的清單常常第一行又是「待辦」或空行，這些不是事情
+        lines = [ln for ln in lines if ln and ln.lower() not in ("待辦", "todo")]
+        if len(lines) > 1:
+            # 一次很多件就不逐件問截止日，不然一張清單換來六張按鈕卡
+            for ln in lines:
+                personal.add_todo(key, ln, by=by)
+            return [f"✅ 已記下 {len(lines)} 件待辦" + (f"（{by}）" if by else ""),
+                    _todo_card(key)]
+        return command_router._handle_todo_subcmd(key, lines[0] if lines else body, by=by)
     except Exception as e:
         print(f"群組待辦失敗：{e}")
+        return "待辦暫時連不上，等一下再試。"
+
+
+def _without_dates(text):
+    import todo_parse
+    from tz_utils import today_tpe
+    return todo_parse.parse_dates(text.strip(), today_tpe())[2].strip()
+
+
+def _todo_for(who, body, ctx):
+    """「幫陳小螢記 要買麵包 11/2」→ 群組清單多一件，標上是誰的、誰記的。
+
+    日期用規則解析就好；認不出就不設，不再跳截止日按鈕 —— 這句話本來
+    就是隨口交代，追問反而打斷對話。記下的時間 Notion 自己有（建立時間）。
+    """
+    import personal
+    import todo_parse
+    from flex_builder import todo_list_flex
+    from tz_utils import now_tpe, today_tpe
+
+    key = (ctx or {}).get("group_id")
+    if not key:
+        return None
+    by = _name((ctx or {}).get("user_id"), key)
+    try:
+        start, end, rest = todo_parse.parse_dates(body, today_tpe())
+        content = rest.strip() or body
+        personal.add_todo(key, content, start=start, end=end, by=by, for_=who)
+        when = f"📅 {start.month}/{start.day}　" if start else ""
+        stamp = now_tpe().strftime("%m/%d %H:%M")
+        return [f"✅ 幫 {who} 記下：{content}\n{when}✍️ {by or '有人'} {stamp} 記",
+                _todo_card(key)]
+    except Exception as e:
+        print(f"幫人記待辦失敗：{e}")
         return "待辦暫時連不上，等一下再試。"
 
 

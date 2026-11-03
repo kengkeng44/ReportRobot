@@ -168,14 +168,19 @@ def _see_all_button():
     }
 
 
-def _todo_footer(only_important):
+def _todo_footer(only_important, db_url=""):
     box = _add_todo_button()
     if only_important:
         box["contents"].append(_see_all_button())
+    if db_url:
+        # 這張清單自己的 Notion 表（一個主人一張），點開只看得到這份
+        box["contents"].append({"type": "button", "style": "link", "height": "sm",
+                                "action": {"type": "uri", "label": "📒 Notion 待辦表",
+                                           "uri": db_url}})
     return box
 
 
-def todo_list_flex(items, only_important=False):
+def todo_list_flex(items, only_important=False, db_url=""):
     """items: [{'id': int, 'text': str}, ...]
 
     only_important=True 表示這是「只列 P0」的檢視：空狀態的文案不同
@@ -202,17 +207,36 @@ def todo_list_flex(items, only_important=False):
                      "margin": "sm"},
                 ],
             },
-            "footer": _todo_footer(only_important),
+            "footer": _todo_footer(only_important, db_url),
         }
         return _wrap(bubble, alt=("📋 沒有重要待辦" if only_important
                                   else "📋 沒有待辦事項"))
 
+    # 有類型就按類型分組、每組上面一行小標；舊資料沒類型時照原順序，不加小標
+    typed = any(t.get("type") for t in items)
+    if typed:
+        from todo_parse import TODO_TYPES
+        order = {name: i for i, name in enumerate(TODO_TYPES)}
+        items = sorted(items, key=lambda t: order.get(t.get("type") or "📌 其他", len(order)))
     rows = []
+    current = None
     for i, t in enumerate(items):
-        if i > 0:
+        kind = (t.get("type") or "📌 其他") if typed else None
+        if kind != current:
+            current = kind
+            rows.append({"type": "text", "text": kind, "size": "xs", "weight": "bold",
+                         "color": _TEXT_LIGHT, "margin": "lg" if i else "none"})
+        elif i > 0:
             rows.append(_separator())
         text_preview = t["text"][:40]
         due = _due_label(t)
+        # 群組共用清單才有輸入者；兩個人一起看時才知道是誰想到的
+        tags = [due] if due else []
+        if t.get("for"):
+            tags.append(f"👤 {t['for']}")
+        if t.get("by"):
+            tags.append(f"✍️ {t['by']}")
+        due = "　".join(tags)
         row_texts = [{
             "type": "text", "text": f"⬜ {t['text']}",
             "size": "sm", "color": _TEXT_DARK,
@@ -253,7 +277,7 @@ def todo_list_flex(items, only_important=False):
             "backgroundColor": _LIGHT_BG, "paddingAll": "lg",
             "contents": rows,
         },
-        "footer": _todo_footer(only_important),
+        "footer": _todo_footer(only_important, db_url),
     }
     return _wrap(bubble, alt=(f"📋 重要待辦（{len(items)} 筆）" if only_important
                               else f"📋 待辦清單（{len(items)} 筆）"))

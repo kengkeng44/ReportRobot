@@ -309,17 +309,69 @@ def test_verify_requires_liff_id(monkeypatch):
 def test_group_todo_uses_group_as_owner(env, monkeypatch):
     import personal
     seen = []
-    monkeypatch.setattr(cr, "_handle_todo_subcmd", lambda key, body: seen.append((key, body)) or "ok")
+    monkeypatch.setattr(cr, "_handle_todo_subcmd", lambda key, body, by=None: seen.append((key, body)) or "ok")
     monkeypatch.setattr(personal, "list_todos", lambda key: seen.append((key, None)) or [])
     cr.handle("待辦 繳電費 1200", ctx=_group(user=GF))   # 不能被當成一筆帳
     cr.handle("待辦", ctx=_group(user=ADMIN))
     assert seen == [(GROUP, "繳電費 1200"), (GROUP, None)]
 
 
+def test_group_todo_multiline_adds_each_line_with_author(env, monkeypatch):
+    """「待辦」換行貼一整張清單：每行一件、空行和重複的「待辦」丟掉、記下是誰打的。"""
+    import personal
+    added = []
+    monkeypatch.setattr(cl, "_name", lambda uid, gid=None: "小螢")
+    monkeypatch.setattr(personal, "add_todo",
+                        lambda key, text, by=None, **kw: added.append((key, text, by)) or 1)
+    monkeypatch.setattr(personal, "list_todos", lambda key: [])
+    reply = cr.handle("待辦\n買衛生紙\n\n夾子 (煮飯用)\n待辦\n抹布至少6條", ctx=_group(user=GF))
+    assert added == [(GROUP, "買衛生紙", "小螢"), (GROUP, "夾子 (煮飯用)", "小螢"),
+                     (GROUP, "抹布至少6條", "小螢")]
+    assert "3 件" in reply[0]
+
+
+def test_todo_for_someone_with_date(env, monkeypatch):
+    """「幫陳小螢記 要買麵包 11/2」→ 待辦，日期、幫誰、誰記的都留著；有金額的仍是記帳。"""
+    import personal
+    added = []
+    monkeypatch.setattr(cl, "_name", lambda uid, gid=None: "仁和")
+    monkeypatch.setattr(personal, "add_todo",
+                        lambda key, text, **kw: added.append((key, text, kw)) or 1)
+    monkeypatch.setattr(personal, "list_todos", lambda key: [])
+    reply = cr.handle("幫陳小螢記 要買麵包 11/2", ctx=_group(user=ADMIN))
+    key, text, kw = added[0]
+    assert (key, text, kw["for_"], kw["by"]) == (GROUP, "要買麵包", "陳小螢", "仁和")
+    assert (kw["start"].month, kw["start"].day) == (11, 2)
+    assert "陳小螢" in reply[0] and "仁和" in reply[0]
+
+
+def test_chart_month_first_and_links(env, monkeypatch):
+    """「10月圖表」等於「圖表 10月」，回覆附圖片連結和共同帳本連結。"""
+    import couple_chart
+    seen = []
+    monkeypatch.setattr(notion_db, "couple_load",
+                        lambda **kw: seen.append(kw["since"]) or [{"kind": "共同", "total": 100}])
+    monkeypatch.setattr(couple_chart, "chart_messages",
+                        lambda rows, label: {"type": "image", "originalContentUrl": "https://x/c.png",
+                                             "previewImageUrl": "https://x/c.png"})
+    monkeypatch.setattr(notion_db, "couple_db_url", lambda: "https://www.notion.so/abc")
+    a = cr.handle("10月圖表", ctx=_group())
+    cr.handle("圖表 10月", ctx=_group())
+    assert seen[0] == seen[1] and seen[0].endswith("-10-01")
+    text = str(a[1])
+    assert "https://x/c.png" in text and "https://www.notion.so/abc" in text
+
+
+def test_todo_card_shows_author():
+    from flex_builder import todo_list_flex
+    card = todo_list_flex([{"id": 1, "text": "買衛生紙", "by": "小螢", "for": "仁和"}])
+    assert "✍️ 小螢" in str(card) and "👤 仁和" in str(card)
+
+
 def test_group_todo_postback_uses_group(env, monkeypatch):
     import personal
     done = []
-    monkeypatch.setattr(personal, "delete_todo", lambda key, tid: done.append((key, tid)) or True)
+    monkeypatch.setattr(personal, "complete_todo", lambda key, tid: done.append((key, tid)) or True)
     monkeypatch.setattr(personal, "list_todos", lambda key: [])
     cr.handle_postback("action=todo_complete&id=3", GF, ctx=_group(user=GF))
     cr.handle_postback("action=todo_complete&id=4", ADMIN, ctx=DM)
@@ -946,3 +998,69 @@ def test_partner_sync_error_does_not_break_my_sync(env, monkeypatch):
     monkeypatch.setattr(notion_db, "partner_txns_pending", boom)
     monkeypatch.setattr(notion_db, "transactions_checked_pending", lambda: [])
     assert cl.sync_checked() == 0
+
+
+def test_todo_db_split_by_owner(monkeypatch):
+    """你、記帳群組、其他人各一張待辦表。"""
+    monkeypatch.setenv("ADMIN_LINE_USER_ID", "Uadmin")
+    monkeypatch.setenv("COUPLE_GROUP_ID", "Cgroup")
+    assert notion_db._todos_db_name("Uadmin") == "Todos"
+    assert notion_db._todos_db_name("Cgroup") == "共同待辦"
+    other = notion_db._todos_db_name("Uother123456")
+    assert other == "待辦｜123456" and notion_db._DB_SECTION[other] == "待辦"
+    assert notion_db._DB_SECTION["共同待辦"] == "共同記帳"
+
+
+def test_partner_todos_go_to_shared_page(monkeypatch):
+    """小螢私訊記的待辦放「共同記帳」頁的小螢待辦，她的網頁才讀得到。"""
+    monkeypatch.setenv("ADMIN_LINE_USER_ID", "Uadmin")
+    monkeypatch.setenv("COUPLE_GROUP_ID", "Cgroup")
+    monkeypatch.setenv("PARTNER_LINE_USER_ID", "Upartner")
+    assert notion_db._todos_db_name("Upartner") == "小螢待辦"
+    assert notion_db._DB_SECTION["小螢待辦"] == "共同記帳"
+    assert notion_db._todos_db_name("Uadmin") == "Todos"
+
+
+def test_todo_type_guess_and_grouping():
+    import todo_parse
+    from flex_builder import todo_list_flex
+    assert todo_parse.guess_type("買洗衣精") == "🛒 採購"
+    assert todo_parse.guess_type("繳電費") == "💳 繳費"
+    assert todo_parse.guess_type("洗衣服") == "🧹 家務"
+    card = str(todo_list_flex([
+        {"id": 1, "text": "洗衣服", "type": "🧹 家務"},
+        {"id": 2, "text": "買衛生紙", "type": "🛒 採購"},
+    ], db_url="https://www.notion.so/x"))
+    assert card.index("🛒 採購") < card.index("買衛生紙") < card.index("🧹 家務") < card.index("洗衣服")
+    assert "https://www.notion.so/x" in card
+
+
+def test_todo_type_guess_new_types():
+    import todo_parse
+    assert todo_parse.guess_type("回淡水拿毛巾跟橄欖油") == "🏡 回家"
+    assert todo_parse.guess_type("帶胃藥回家") == "🏡 回家"
+    assert todo_parse.guess_type("全聯載具歸戶") == "📋 手續"
+    assert todo_parse.guess_type("練習多益題目") == "📚 學習"
+    assert todo_parse.guess_type("Ig 收藏機器人") == "🛠 專案"
+    # 單字「學」「考」不算：參考資料、學校接送不是學習
+    assert todo_parse.guess_type("參考資料") == "📌 其他"
+    # 新類型都在 Notion 選項裡，否則寫入會被拒
+    import notion_db
+    opts = {o["name"] for o in notion_db._SCHEMAS["Todos"]["類型"]["select"]["options"]}
+    assert set(todo_parse.TODO_TYPES) <= opts
+
+
+def test_complete_todo_marks_done_instead_of_archiving(monkeypatch):
+    """完成要留紀錄給儀表板的「已完成」：打勾＋完成時間，不能封存。"""
+    import personal
+    import notion_db
+    calls = []
+    monkeypatch.setattr(personal, "_ensure_todos_loaded", lambda uid: None)
+    monkeypatch.setattr(personal, "_notion_enabled", lambda: True)
+    monkeypatch.setattr(notion_db, "todos_mark_done", lambda pid: calls.append(("done", pid)) or True)
+    monkeypatch.setattr(notion_db, "todos_delete", lambda pid: calls.append(("delete", pid)) or True)
+    monkeypatch.setitem(personal._TODOS, "U_test", [{"id": 7, "text": "x", "done": False, "page_id": "p7"}])
+    assert personal.complete_todo("U_test", 7) is True
+    assert calls == [("done", "p7")]
+    assert personal._TODOS["U_test"] == []
+    assert personal.complete_todo("U_test", 7) is False

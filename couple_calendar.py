@@ -108,10 +108,11 @@ def _todo_line(t, day):
     return f"⬜ [{t['id']}] {t['text']}（{mark}）"
 
 
-def build_preview(day, events, todos):
-    """組明天預告的文字。明天沒有特別活動回 None（呼叫端據此不推）——
-    只有待辦不推，待辦只在有活動那晚順便帶。"""
-    if not events:
+def build_preview(day, events, todos, todo_trigger=False):
+    """組明天預告的文字。明天沒有特別活動、也沒有明天到期的待辦回 None
+    （呼叫端據此不推）。只有逾期的不推 —— 逾期的交給早上 9 點那次提醒，
+    不然同一件事一天被推兩次。"""
+    if not events and not todo_trigger:
         return None
     lines = [f"📅 明天 {day.month}/{day.day}（{_WEEKDAYS[day.weekday()]}）"]
     if events:
@@ -174,9 +175,11 @@ def run_evening_preview(push_func=None, today=None):
         print(f"[couple_calendar] 讀日曆失敗（非致命）：{e}")
         events = []
 
-    text = build_preview(tomorrow, events, todos_due_by(group_id, tomorrow))
+    todos = todos_due_by(group_id, tomorrow)
+    trigger = any(personal._deadline(t) == tomorrow for t in todos)
+    text = build_preview(tomorrow, events, todos, todo_trigger=trigger)
     if not text:
-        print("[couple_calendar] 明天沒有特別活動，不推")
+        print("[couple_calendar] 明天沒有特別活動也沒有到期待辦，不推")
         return None
 
     if push_func is None:
@@ -188,3 +191,99 @@ def run_evening_preview(push_func=None, today=None):
     except Exception as e:
         print(f"[couple_calendar] flag 寫入失敗（非致命）：{e}")
     return text
+
+
+# ─────────────────────────────────────────────────────────
+# 待辦提醒：晚上 21:00 預告明天到期的（上面的 run_evening_preview 帶），
+# 早上 09:00 再推今天到期與逾期的。記帳群組推到群組，你自己的私訊給你。
+# 沒有到期的就不推 —— 每則群組推播吃 2 則月額度（200 則/月）。
+# ─────────────────────────────────────────────────────────
+
+def build_morning(day, todos):
+    if not todos:
+        return None
+    lines = [f"⏰ 今天 {day.month}/{day.day}（{_WEEKDAYS[day.weekday()]}）要做的事"]
+    for t in todos:
+        due = personal._deadline(t)
+        mark = "今天" if due == day else f"⚠️ 逾期 {(day - due).days} 天"
+        who = f"　👤 {t['for']}" if t.get("for") else ""
+        lines.append(f"⬜ [{t['id']}] {t['text']}（{mark}）{who}")
+    lines.append("")
+    lines.append("做完打「待辦」按完成就會消失。")
+    return chr(10).join(lines)
+
+
+def _owner_flag(kind, owner, day):
+    return os.path.join(tempfile.gettempdir(),
+                        f"todo_{kind}_{owner[-6:]}_{day:%Y%m%d}.flag")
+
+
+def _push_once(kind, owner, day, text, push_func):
+    flag = _owner_flag(kind, owner, day)
+    if not text or os.path.exists(flag):
+        return None
+    push_func(owner, text)
+    try:
+        with open(flag, "w") as f:
+            f.write(now_tpe().isoformat())
+    except Exception as e:
+        print(f"[todo_remind] flag 寫入失敗（非致命）：{e}")
+    return text
+
+
+def run_morning_todos(push_func=None, today=None):
+    """排程進入點（09:00 TPE）：今天到期與逾期的待辦。回推出去的文字 list。"""
+    import couple_ledger
+
+    if push_func is None:
+        from line_sender import push_to_user_sync as push_func
+    today = today or now_tpe().date()
+    sent = []
+    owners = [couple_ledger.couple_group_id()] + _people()
+    for owner in [o for o in owners if o]:
+        try:
+            text = build_morning(today, todos_due_by(owner, today))
+        except Exception as e:
+            print(f"[todo_remind] 讀待辦失敗（非致命）：{e}")
+            continue
+        try:
+            if _push_once("am", owner, today, text, push_func):
+                sent.append(text)
+        except Exception as e:
+            print(f"[todo_remind] {owner[-6:]} 早上提醒推送失敗（非致命）：{e}")
+    return sent
+
+
+def _people():
+    """私訊提醒的對象：你和小螢，各推自己私人清單裡的事。"""
+    import notion_db
+
+    out = []
+    for uid in (os.environ.get("ADMIN_LINE_USER_ID", "").strip(), notion_db.partner_line_id()):
+        if uid and uid not in out:
+            out.append(uid)
+    return out
+
+
+def run_evening_personal(push_func=None, today=None):
+    """21:00：你和小螢各自明天到期的私人待辦，私訊預告（群組的由 run_evening_preview 帶）。
+
+    回這次推出去的人數。一個人推失敗（例如小螢沒加喵管家好友）不影響另一個。
+    """
+    if push_func is None:
+        from line_sender import push_to_user_sync as push_func
+    today = today or now_tpe().date()
+    tomorrow = today + timedelta(days=1)
+    sent = 0
+    for owner in _people():
+        try:
+            due = [t for t in personal.list_todos(owner) if personal._deadline(t) == tomorrow]
+            if not due:
+                continue
+            lines = [f"📅 明天 {tomorrow.month}/{tomorrow.day} 到期"]
+            lines.extend(f"⬜ [{t['id']}] {t['text']}" for t in due)
+            if _push_once("pm", owner, tomorrow, chr(10).join(lines), push_func):
+                sent += 1
+        except Exception as e:
+            print(f"[todo_remind] {owner[-6:]} 明天預告失敗（非致命）：{e}")
+    return sent

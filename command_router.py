@@ -555,7 +555,7 @@ TODO_USAGE = (
 )
 
 
-def _handle_todo_subcmd(user_id, body):
+def _handle_todo_subcmd(user_id, body, by=None):
     """處理 /待辦 加|完成|刪|清完成 子命令；用 regex 支援「加X」黏在一起。"""
     import personal
     body = body.strip()
@@ -567,14 +567,14 @@ def _handle_todo_subcmd(user_id, body):
         if not item:
             return TODO_USAGE
         # 走完整解析，跟預填鍵盤同一條路 —— 兩種寫法得到同樣的結果
-        return _record_spoken_todo(user_id, item)
+        return _record_spoken_todo(user_id, item, by=by)
 
-    # 完成（= 直接刪除，不留勾在清單裡）
+    # 完成：LINE 清單拿掉，Notion 打勾留紀錄（儀表板「已完成」看得到）
     m = re.match(r"^(?:完成|做完|done)\s*(\d+)$", body, re.IGNORECASE)
     if m:
         tid = int(m.group(1))
-        if personal.delete_todo(user_id, tid):
-            return f"✅ 待辦 [{tid}] 完成（已自動移除）"
+        if personal.complete_todo(user_id, tid):
+            return f"✅ 待辦 [{tid}] 完成（已移到已完成）"
         return f"找不到編號 {tid} 的待辦"
 
     # 刪
@@ -608,7 +608,7 @@ def _handle_todo_subcmd(user_id, body):
     # 「待辦 P0 」，使用者補完內容送出後就走到這裡。
     if not body:
         return TODO_USAGE
-    return _record_spoken_todo(user_id, body)
+    return _record_spoken_todo(user_id, body, by=by)
 
 
 def _handle_preview(user_id):
@@ -1023,7 +1023,7 @@ def _format_due(start, end):
     return _one(start) + (f" → {_one(end)}" if end else "")
 
 
-def _record_spoken_todo(user_id, text):
+def _record_spoken_todo(user_id, text, by=None):
     """待命中收到的自由文字 → 記成待辦。回覆給 reply_message。
 
     **內容先寫進 Notion，才問缺的欄位。** 順序是刻意的：使用者中途跑掉、
@@ -1042,6 +1042,7 @@ def _record_spoken_todo(user_id, text):
     tid = personal.add_todo(
         user_id, content,
         start=parsed["start"], end=parsed["end"], priority=parsed["priority"],
+        by=by,
     )
 
     lines = [f"✅ 已記下：{content}"]
@@ -1416,7 +1417,7 @@ def handle_postback(data, user_id, ctx=None):
             tid = _int_param("id")
             import personal
             from flex_builder import todo_list_flex
-            ok = personal.delete_todo(user_id, tid)
+            ok = personal.complete_todo(user_id, tid)
             new_list = todo_list_flex(personal.list_todos(user_id))
             if ok:
                 return [f"✅ 已完成 [{tid}]", new_list]

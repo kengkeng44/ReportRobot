@@ -72,6 +72,9 @@ def _ensure_todos_loaded(user_id):
                     "start": r.get("start"),
                     "end": r.get("end"),
                     "priority": r.get("priority"),
+                    "by": r.get("by") or "",
+                    "for": r.get("for") or "",
+                    "type": r.get("type") or "",
                 })
                 max_local_id = max(max_local_id, r["local_id"])
             _TODO_NEXT_ID[user_id] = max_local_id
@@ -111,13 +114,20 @@ def is_pending_todo(user_id):
         return True
 
 
-def add_todo(user_id, text, start=None, end=None, priority=None):
+def add_todo(user_id, text, start=None, end=None, priority=None, by=None, for_=None,
+             todo_type=None):
     """新增一筆待辦，回 local id。
 
     start/end/priority 都是選填 —— 既有的 `/待辦 加 X` 不帶它們。
     沒給就留 None，**不補預設值**：隨手記的事被預設成今天到期，
     隔天信裡就是一行紅字。
+
+    類型（todo_type）相反：沒給就照內容猜一個 —— 清單要按類型分組，
+    猜不到也有「📌 其他」，不會有沒類型的待辦。
     """
+    if not todo_type:
+        import todo_parse
+        todo_type = todo_parse.guess_type(text)
     _ensure_todos_loaded(user_id)
     with _LOCK:
         next_id = _TODO_NEXT_ID.get(user_id, 0) + 1
@@ -127,6 +137,7 @@ def add_todo(user_id, text, start=None, end=None, priority=None):
             "created_at": datetime.now(),
             "page_id": None,
             "start": start, "end": end, "priority": priority,
+            "by": by or "", "for": for_ or "", "type": todo_type,
         }
         _TODOS.setdefault(user_id, []).append(item)
     # Notion 寫在 lock 外（避免持鎖打網路 IO）
@@ -135,7 +146,8 @@ def add_todo(user_id, text, start=None, end=None, priority=None):
             import notion_db
             page_id = notion_db.todos_create(
                 user_id, text, next_id,
-                start=start, end=end, priority=priority,
+                start=start, end=end, priority=priority, by=by, for_=for_,
+                todo_type=todo_type,
             )
             if page_id:
                 with _LOCK:
@@ -177,9 +189,26 @@ def list_todos(user_id):
 
 
 def complete_todo(user_id, todo_id):
-    """目前 UI 設計：完成 = 直接刪除（沒有 done 待保留）。
-    保留此函式做相容，內部呼叫 delete_todo。"""
-    return delete_todo(user_id, todo_id)
+    """完成：從 LINE 清單拿掉，但 Notion 那頁只打勾、記完成時間，不封存。
+    儀表板的「已完成」靠這些列，封存就看不到了。"""
+    _ensure_todos_loaded(user_id)
+    page_id = None
+    with _LOCK:
+        items = _TODOS.get(user_id, [])
+        for i, t in enumerate(items):
+            if t["id"] == todo_id:
+                page_id = t.get("page_id")
+                del items[i]
+                break
+        else:
+            return False
+    if page_id and _notion_enabled():
+        try:
+            import notion_db
+            notion_db.todos_mark_done(page_id)
+        except Exception as e:
+            print(f"[personal/todos] Notion 完成失敗：{e}")
+    return True
 
 
 def delete_todo(user_id, todo_id):

@@ -325,14 +325,15 @@ def test_normalize_category_falls_back_to_default(raw):
 def test_todos_create_writes_category(notion):
     notion_db.todos_create("U123", "買菜", 1, category="專案")
 
-    props = notion.pages.created[0]["properties"]
+    # 非你本人的待辦會先建「待辦」區塊頁，待辦本身是最後一個建立的
+    props = notion.pages.created[-1]["properties"]
     assert props["分類"]["select"]["name"] == "我的專案"
 
 
 def test_todos_create_without_category_still_writes_one(notion):
     notion_db.todos_create("U123", "倒垃圾", 1)
 
-    props = notion.pages.created[0]["properties"]
+    props = notion.pages.created[-1]["properties"]
     assert props["分類"]["select"]["name"] == "生活"
 
 

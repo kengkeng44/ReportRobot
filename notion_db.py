@@ -53,7 +53,13 @@ _SECTIONS = {
     # 分享出去就連同信用卡明細、淨值一起被看到。
     "共同記帳": {
         "icon": "💑",
-        "dbs": ("共同帳本", "共同帳本紀錄", "記帳成員"),
+        "dbs": ("共同帳本", "共同帳本紀錄", "記帳成員", "共同待辦", "小螢待辦"),
+    },
+    # 其他人（不是你、也不是記帳群組）的私人待辦，一人一張表。
+    # 獨立一頁、不分享：每張表只有那個人的事，連結外流也看不到別人的。
+    "待辦": {
+        "icon": "📝",
+        "dbs": (),
     },
     # OwnTracks 原始定位點。刻意不放進「生活紀錄」那頁：那頁會給女友看，
     # 原始座標只是中間產物（每晚整理成每日紀錄後 30 天自動封存）。
@@ -172,6 +178,13 @@ _SCHEMAS = {
         "期間": {"date": {}},
         "優先度": _select(("P0", "red"), ("P1", "orange"),
                           ("P2", "yellow"), ("P3", "gray")),
+        "類型": _select(("🛒 採購", "green"), ("🧹 家務", "brown"), ("💳 繳費", "red"),
+                        ("📅 預約", "blue"), ("💼 工作", "purple"), ("🏡 回家", "orange"),
+                        ("📋 手續", "yellow"), ("📚 學習", "pink"), ("🛠 專案", "default"),
+                        ("📌 其他", "gray")),
+        "輸入者": {"rich_text": {}},
+        "幫誰記": {"rich_text": {}},
+        "完成時間": {"date": {}},
     },
     "Reminders": {
         "Name": {"title": {}},                                  # 提醒內容
@@ -510,6 +523,12 @@ _SCHEMAS = {
         "變化時間": {"date": {}},
     },
 }
+# 記帳群組的待辦另開一張表放在「共同記帳」頁（那頁會分享給女友）：
+# 跟你私人的 Todos 分開，給她連結也看不到你的事。欄位同 Todos。
+_SCHEMAS["共同待辦"] = _SCHEMAS["Todos"]
+# 小螢私訊記的待辦也放「共同記帳」頁：她用自己的 Notion 開待辦網頁，
+# 讀得到這頁、讀不到你的 Todos。
+_SCHEMAS["小螢待辦"] = _SCHEMAS["Todos"]
 
 
 # relation 必須等目標 DB 存在才能建，所以獨立成第二階段（見 spec 3.1）。
@@ -1212,13 +1231,116 @@ def quote_mark_seen(page_id, today):
 # Todos：每筆待辦 = Notion DB 一個 page
 # ─────────────────────────────────────────────────────────
 
+def _todos_db_name(owner_id):
+    """這份待辦清單放哪張表。一個主人一張，彼此看不到。
+
+    - 你（ADMIN_LINE_USER_ID）：沿用原本的 Todos，每日信件照讀
+    - 記帳群組：「共同待辦」，在會分享給女友的「共同記帳」頁
+    - 其他人：「待辦｜ID 末 6 碼」，收在不分享的「待辦」頁
+    """
+    if owner_id and owner_id == os.environ.get("ADMIN_LINE_USER_ID", "").strip():
+        return "Todos"
+    if owner_id and owner_id == os.environ.get("COUPLE_GROUP_ID", "").strip():
+        return "共同待辦"
+    if owner_id and owner_id == partner_line_id():
+        return "小螢待辦"
+    if not owner_id:
+        return "Todos"
+    name = f"待辦｜{owner_id[-6:]}"
+    _SCHEMAS.setdefault(name, _SCHEMAS["Todos"])
+    _DB_SECTION.setdefault(name, "待辦")
+    return name
+
+
+def partner_line_id():
+    """小螢的 LINE userId：PARTNER_LINE_USER_ID 優先，沒設就從記帳成員找非主人的那一位。
+
+    記帳成員有 10 分鐘快取，這裡每筆待辦都會問一次也不會多打 Notion。
+    """
+    env = os.environ.get("PARTNER_LINE_USER_ID", "").strip()
+    if env:
+        return env
+    try:
+        import couple_ledger
+        return ((couple_ledger._partner() or {}).get("user_id") or "").strip()
+    except Exception as e:
+        print(f"[notion] 找不到小螢的 LINE ID（非致命）：{e}")
+        return ""
+
+
+def todos_db_id(owner_id):
+    return get_or_create_db(_todos_db_name(owner_id))
+
+
+def todos_db_url(owner_id):
+    db_id = todos_db_id(owner_id)
+    return f"https://www.notion.so/{db_id.replace('-', '')}" if db_id else ""
+
+
+def _migrate_legacy_todos(owner_id, db_id):
+    """分表以前大家的待辦都在 Todos。第一次載入某個主人的新表時，把他留在
+    Todos 的未完成待辦搬過去：先在新表建好，建成功才封存舊的，中途失敗
+    頂多留一份在舊表，不會弄丟。"""
+    client = _get_client()
+    legacy = get_or_create_db("Todos")
+    if not client or not legacy or legacy == db_id:
+        return
+    try:
+        res = client.databases.query(
+            database_id=legacy,
+            filter={"and": [
+                {"property": "UserId", "rich_text": {"equals": owner_id}},
+                {"property": "Done", "checkbox": {"equals": False}},
+            ]},
+            page_size=100,
+        )
+    except Exception as e:
+        print(f"[notion] 舊待辦讀取失敗：{e}")
+        return
+    keep = ("Name", "UserId", "Done", "LocalId", "分類", "期間", "優先度", "類型", "輸入者", "幫誰記")
+    moved = 0
+    for r in res.get("results", []):
+        props = {}
+        for k, v in (r.get("properties") or {}).items():
+            if k not in keep or not isinstance(v, dict):
+                continue
+            t = v.get("type")
+            val = v.get(t)
+            if t in ("title", "rich_text"):
+                props[k] = {t: [{"text": {"content": b.get("plain_text", "")}} for b in val or []]}
+            elif t == "select":
+                if val:
+                    props[k] = {"select": {"name": val["name"]}}
+            elif t == "date":
+                if val:
+                    props[k] = {"date": {"start": val["start"], "end": val.get("end")}}
+            elif t in ("checkbox", "number"):
+                props[k] = {t: val}
+        if "類型" not in props:
+            # 舊待辦沒有類型，搬家順便補，清單才分得了組
+            import todo_parse
+            name = "".join(b["text"]["content"] for b in props.get("Name", {}).get("title", []))
+            props["類型"] = {"select": {"name": todo_parse.guess_type(name)}}
+        try:
+            client.pages.create(parent={"database_id": db_id}, properties=props)
+            client.pages.update(page_id=r["id"], archived=True)
+            moved += 1
+        except Exception as e:
+            print(f"[notion] 搬待辦失敗（舊的留著）：{e}")
+    if moved:
+        from security_utils import mask
+        print(f"[notion] 待辦搬到新表 {moved} 筆：{mask(owner_id)}")
+
+
 def todos_load_for_user(user_id):
     """載入該 user 所有未完成待辦，回 list of dict
     {page_id, local_id, text, done}。失敗回 []。"""
-    db_id = get_or_create_db("Todos")
+    db_id = todos_db_id(user_id)
     client = _get_client()
     if not db_id or not client:
         return []
+    if _todos_db_name(user_id) != "Todos":
+        _migrate_legacy_todos(user_id, db_id)
     try:
         # 篩 user + done=False
         res = client.databases.query(
@@ -1249,6 +1371,9 @@ def todos_load_for_user(user_id):
                 "start": start,
                 "end": end,
                 "priority": _read_select(props, "優先度") or None,
+                "by": _read_rich_text(props, "輸入者"),
+                "for": _read_rich_text(props, "幫誰記"),
+                "type": _read_select(props, "類型") or "",
             })
         return out
     except Exception as e:
@@ -1357,7 +1482,8 @@ def _read_date_range(props, name):
 
 
 def todos_create(user_id, text, local_id, category=None,
-                 start=None, end=None, priority=None):
+                 start=None, end=None, priority=None, by=None, for_=None,
+                 todo_type=None):
     """建立一筆待辦。回 page_id 或 None。
 
     category 未指定時歸到「生活」—— 寧可分錯也不要留空，
@@ -1367,7 +1493,7 @@ def todos_create(user_id, text, local_id, category=None,
     跟「設成今天」是兩件不同的事，偷偷補預設值會讓隨手記的事
     隔天就變成逾期紅字。
     """
-    db_id = get_or_create_db("Todos")
+    db_id = todos_db_id(user_id)
     client = _get_client()
     if not db_id or not client:
         return None
@@ -1386,11 +1512,28 @@ def todos_create(user_id, text, local_id, category=None,
     # schema 而不是報錯，那種偏移完全沒有訊號（同 _SPEND_CATEGORIES）
     if priority in TODO_PRIORITIES:
         props["優先度"] = {"select": {"name": priority}}
+    if by:
+        props["輸入者"] = {"rich_text": [{"text": {"content": by}}]}
+    if todo_type:
+        props["類型"] = {"select": {"name": todo_type}}
+    if for_:
+        props["幫誰記"] = {"rich_text": [{"text": {"content": for_}}]}
 
     try:
         page = client.pages.create(parent={"database_id": db_id}, properties=props)
         return page["id"]
     except Exception as e:
+        if "輸入者" in props or "幫誰記" in props or "類型" in props:
+            # 舊的 Todos 表沒有這兩欄：少一個名字總比整件事沒記到好
+            print(f"[notion] todos_create 帶輸入者失敗，改不帶重試：{e}")
+            props.pop("輸入者", None)
+            props.pop("幫誰記", None)
+            props.pop("類型", None)
+            try:
+                return client.pages.create(parent={"database_id": db_id},
+                                           properties=props)["id"]
+            except Exception as e2:
+                e = e2
         print(f"[notion] todos_create 失敗：{e}")
         return None
 
@@ -1418,6 +1561,28 @@ def todos_update_fields(page_id, start=None, end=None, priority=None):
         return True
     except Exception as e:
         print(f"[notion] todos_update_fields 失敗：{e}")
+        return False
+
+
+def todos_mark_done(page_id, now=None):
+    """打勾並記下完成時間，留在表裡給儀表板的「已完成」看。回 True/False。
+
+    以前完成 = 封存，完成紀錄一筆都沒留下。完成時間用台北時間寫：
+    Railway 跑在 UTC，不帶時區的話晚上完成的會記成隔天。
+    """
+    client = _get_client()
+    if not client:
+        return False
+    from datetime import timedelta, timezone
+    now = now or datetime.now(timezone(timedelta(hours=8)))
+    try:
+        client.pages.update(page_id=page_id, properties={
+            "Done": {"checkbox": True},
+            "完成時間": {"date": {"start": now.isoformat(timespec="seconds")}},
+        })
+        return True
+    except Exception as e:
+        print(f"[notion] todos_mark_done 失敗：{e}")
         return False
 
 

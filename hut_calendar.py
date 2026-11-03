@@ -6,18 +6,15 @@
 
 from datetime import date, timedelta
 
-import holidays
-
 WEEKDAY = "一二三四五六日"
 
 
-def is_day_off(d):
-    return d.weekday() >= 5 or d in holidays.Taiwan(years=d.year)
+WEEKEND_NIGHTS = (4, 5, 6)  # 週五、六、日晚上；連假多出來的平日不查（使用者 2026-11-03 選的）
 
 
 def is_good_night(d):
-    """住宿日 d 那晚隔天放假（週五、週六、連假前一晚）。"""
-    return is_day_off(d + timedelta(days=1))
+    """住宿日 d 是週五、週六或週日晚上。"""
+    return d.weekday() in WEEKEND_NIGHTS
 
 
 def fmt_day(d):

@@ -56,6 +56,9 @@ def status():
 
 
 def watchable(slot, today):
+    """只看週五六日晚上；先到先得看 5～61 天後，抽籤制抽完才準，看 5～30 天後。"""
+    if not hut_calendar.is_good_night(slot.day):
+        return False
     ahead = (slot.day - today).days
     limit = LOTTERY_MAX_AHEAD if slot.site in LOTTERY_SITES else MAX_AHEAD
     return MIN_AHEAD <= ahead <= limit
