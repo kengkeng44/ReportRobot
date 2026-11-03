@@ -94,6 +94,26 @@ def test_morning_pushes_today_and_overdue(monkeypatch):
     assert again == []
 
 
+def test_partner_gets_own_reminders(monkeypatch):
+    """小螢私人清單的事私訊給小螢；推她失敗不擋你那則。"""
+    monkeypatch.setenv("ADMIN_LINE_USER_ID", "Uadmin")
+    monkeypatch.setenv("PARTNER_LINE_USER_ID", "Upartner")
+    personal.add_todo("Upartner", "還書", start=TODAY)
+    personal.add_todo("Upartner", "剪頭髮", start=TOMORROW)
+    personal.add_todo("Uadmin", "交報告", start=TOMORROW)
+    sent = []
+    couple_calendar.run_morning_todos(push_func=lambda to, m: sent.append((to, m)), today=TODAY)
+    assert "還書" in dict(sent)["Upartner"] and "Uadmin" not in dict(sent)
+
+    def push(to, m):
+        if to == "Upartner":
+            raise RuntimeError("not a friend")
+        got.append((to, m))
+    got = []
+    assert couple_calendar.run_evening_personal(push_func=push, today=TODAY) == 1
+    assert got and got[0][0] == "Uadmin" and "交報告" in got[0][1]
+
+
 def test_due_todos_ride_along_with_event(monkeypatch):
     _events(monkeypatch, [{"summary": "生日", "start": {"date": "2026-10-25"}}])
     personal.add_todo(GROUP, "繳電費", start=TOMORROW)

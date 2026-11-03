@@ -1011,6 +1011,16 @@ def test_todo_db_split_by_owner(monkeypatch):
     assert notion_db._DB_SECTION["共同待辦"] == "共同記帳"
 
 
+def test_partner_todos_go_to_shared_page(monkeypatch):
+    """小螢私訊記的待辦放「共同記帳」頁的小螢待辦，她的網頁才讀得到。"""
+    monkeypatch.setenv("ADMIN_LINE_USER_ID", "Uadmin")
+    monkeypatch.setenv("COUPLE_GROUP_ID", "Cgroup")
+    monkeypatch.setenv("PARTNER_LINE_USER_ID", "Upartner")
+    assert notion_db._todos_db_name("Upartner") == "小螢待辦"
+    assert notion_db._DB_SECTION["小螢待辦"] == "共同記帳"
+    assert notion_db._todos_db_name("Uadmin") == "Todos"
+
+
 def test_todo_type_guess_and_grouping():
     import todo_parse
     from flex_builder import todo_list_flex

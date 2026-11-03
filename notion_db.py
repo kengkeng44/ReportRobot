@@ -53,7 +53,7 @@ _SECTIONS = {
     # 分享出去就連同信用卡明細、淨值一起被看到。
     "共同記帳": {
         "icon": "💑",
-        "dbs": ("共同帳本", "共同帳本紀錄", "記帳成員", "共同待辦"),
+        "dbs": ("共同帳本", "共同帳本紀錄", "記帳成員", "共同待辦", "小螢待辦"),
     },
     # 其他人（不是你、也不是記帳群組）的私人待辦，一人一張表。
     # 獨立一頁、不分享：每張表只有那個人的事，連結外流也看不到別人的。
@@ -487,6 +487,9 @@ _SCHEMAS = {
 # 記帳群組的待辦另開一張表放在「共同記帳」頁（那頁會分享給女友）：
 # 跟你私人的 Todos 分開，給她連結也看不到你的事。欄位同 Todos。
 _SCHEMAS["共同待辦"] = _SCHEMAS["Todos"]
+# 小螢私訊記的待辦也放「共同記帳」頁：她用自己的 Notion 開待辦網頁，
+# 讀得到這頁、讀不到你的 Todos。
+_SCHEMAS["小螢待辦"] = _SCHEMAS["Todos"]
 
 
 # relation 必須等目標 DB 存在才能建，所以獨立成第二階段（見 spec 3.1）。
@@ -1200,12 +1203,30 @@ def _todos_db_name(owner_id):
         return "Todos"
     if owner_id and owner_id == os.environ.get("COUPLE_GROUP_ID", "").strip():
         return "共同待辦"
+    if owner_id and owner_id == partner_line_id():
+        return "小螢待辦"
     if not owner_id:
         return "Todos"
     name = f"待辦｜{owner_id[-6:]}"
     _SCHEMAS.setdefault(name, _SCHEMAS["Todos"])
     _DB_SECTION.setdefault(name, "待辦")
     return name
+
+
+def partner_line_id():
+    """小螢的 LINE userId：PARTNER_LINE_USER_ID 優先，沒設就從記帳成員找非主人的那一位。
+
+    記帳成員有 10 分鐘快取，這裡每筆待辦都會問一次也不會多打 Notion。
+    """
+    env = os.environ.get("PARTNER_LINE_USER_ID", "").strip()
+    if env:
+        return env
+    try:
+        import couple_ledger
+        return ((couple_ledger._partner() or {}).get("user_id") or "").strip()
+    except Exception as e:
+        print(f"[notion] 找不到小螢的 LINE ID（非致命）：{e}")
+        return ""
 
 
 def todos_db_id(owner_id):
