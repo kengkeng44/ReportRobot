@@ -189,9 +189,26 @@ def list_todos(user_id):
 
 
 def complete_todo(user_id, todo_id):
-    """目前 UI 設計：完成 = 直接刪除（沒有 done 待保留）。
-    保留此函式做相容，內部呼叫 delete_todo。"""
-    return delete_todo(user_id, todo_id)
+    """完成：從 LINE 清單拿掉，但 Notion 那頁只打勾、記完成時間，不封存。
+    儀表板的「已完成」靠這些列，封存就看不到了。"""
+    _ensure_todos_loaded(user_id)
+    page_id = None
+    with _LOCK:
+        items = _TODOS.get(user_id, [])
+        for i, t in enumerate(items):
+            if t["id"] == todo_id:
+                page_id = t.get("page_id")
+                del items[i]
+                break
+        else:
+            return False
+    if page_id and _notion_enabled():
+        try:
+            import notion_db
+            notion_db.todos_mark_done(page_id)
+        except Exception as e:
+            print(f"[personal/todos] Notion 完成失敗：{e}")
+    return True
 
 
 def delete_todo(user_id, todo_id):

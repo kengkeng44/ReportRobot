@@ -569,12 +569,12 @@ def _handle_todo_subcmd(user_id, body, by=None):
         # 走完整解析，跟預填鍵盤同一條路 —— 兩種寫法得到同樣的結果
         return _record_spoken_todo(user_id, item, by=by)
 
-    # 完成（= 直接刪除，不留勾在清單裡）
+    # 完成：LINE 清單拿掉，Notion 打勾留紀錄（儀表板「已完成」看得到）
     m = re.match(r"^(?:完成|做完|done)\s*(\d+)$", body, re.IGNORECASE)
     if m:
         tid = int(m.group(1))
-        if personal.delete_todo(user_id, tid):
-            return f"✅ 待辦 [{tid}] 完成（已自動移除）"
+        if personal.complete_todo(user_id, tid):
+            return f"✅ 待辦 [{tid}] 完成（已移到已完成）"
         return f"找不到編號 {tid} 的待辦"
 
     # 刪
@@ -1417,7 +1417,7 @@ def handle_postback(data, user_id, ctx=None):
             tid = _int_param("id")
             import personal
             from flex_builder import todo_list_flex
-            ok = personal.delete_todo(user_id, tid)
+            ok = personal.complete_todo(user_id, tid)
             new_list = todo_list_flex(personal.list_todos(user_id))
             if ok:
                 return [f"✅ 已完成 [{tid}]", new_list]

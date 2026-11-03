@@ -371,7 +371,7 @@ def test_todo_card_shows_author():
 def test_group_todo_postback_uses_group(env, monkeypatch):
     import personal
     done = []
-    monkeypatch.setattr(personal, "delete_todo", lambda key, tid: done.append((key, tid)) or True)
+    monkeypatch.setattr(personal, "complete_todo", lambda key, tid: done.append((key, tid)) or True)
     monkeypatch.setattr(personal, "list_todos", lambda key: [])
     cr.handle_postback("action=todo_complete&id=3", GF, ctx=_group(user=GF))
     cr.handle_postback("action=todo_complete&id=4", ADMIN, ctx=DM)
@@ -1038,3 +1038,19 @@ def test_todo_type_guess_new_types():
     import notion_db
     opts = {o["name"] for o in notion_db._SCHEMAS["Todos"]["類型"]["select"]["options"]}
     assert set(todo_parse.TODO_TYPES) <= opts
+
+
+def test_complete_todo_marks_done_instead_of_archiving(monkeypatch):
+    """完成要留紀錄給儀表板的「已完成」：打勾＋完成時間，不能封存。"""
+    import personal
+    import notion_db
+    calls = []
+    monkeypatch.setattr(personal, "_ensure_todos_loaded", lambda uid: None)
+    monkeypatch.setattr(personal, "_notion_enabled", lambda: True)
+    monkeypatch.setattr(notion_db, "todos_mark_done", lambda pid: calls.append(("done", pid)) or True)
+    monkeypatch.setattr(notion_db, "todos_delete", lambda pid: calls.append(("delete", pid)) or True)
+    monkeypatch.setitem(personal._TODOS, "U_test", [{"id": 7, "text": "x", "done": False, "page_id": "p7"}])
+    assert personal.complete_todo("U_test", 7) is True
+    assert calls == [("done", "p7")]
+    assert personal._TODOS["U_test"] == []
+    assert personal.complete_todo("U_test", 7) is False

@@ -173,6 +173,7 @@ _SCHEMAS = {
                         ("📌 其他", "gray")),
         "輸入者": {"rich_text": {}},
         "幫誰記": {"rich_text": {}},
+        "完成時間": {"date": {}},
     },
     "Reminders": {
         "Name": {"title": {}},                                  # 提醒內容
@@ -1500,6 +1501,28 @@ def todos_update_fields(page_id, start=None, end=None, priority=None):
         return True
     except Exception as e:
         print(f"[notion] todos_update_fields 失敗：{e}")
+        return False
+
+
+def todos_mark_done(page_id, now=None):
+    """打勾並記下完成時間，留在表裡給儀表板的「已完成」看。回 True/False。
+
+    以前完成 = 封存，完成紀錄一筆都沒留下。完成時間用台北時間寫：
+    Railway 跑在 UTC，不帶時區的話晚上完成的會記成隔天。
+    """
+    client = _get_client()
+    if not client:
+        return False
+    from datetime import timedelta, timezone
+    now = now or datetime.now(timezone(timedelta(hours=8)))
+    try:
+        client.pages.update(page_id=page_id, properties={
+            "Done": {"checkbox": True},
+            "完成時間": {"date": {"start": now.isoformat(timespec="seconds")}},
+        })
+        return True
+    except Exception as e:
+        print(f"[notion] todos_mark_done 失敗：{e}")
         return False
 
 
