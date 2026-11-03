@@ -28,7 +28,6 @@ FAIL_ALERT = 3
 LOTTERY_SITES = {"jmlnt", "kgonline", "onestop_paiyun"}  # 抽籤前的「剩餘」只是還沒分配
 MIN_AHEAD, LOTTERY_MAX_AHEAD, MAX_AHEAD = 5, 30, 61
 MISSING = "本次沒查到（電腦沒開）"
-WEEKEND = hut_notion.WEEKEND
 _NOTION_BUSY = threading.Lock()  # 上一次同步還沒寫完（第一次約 2 分鐘）就跳過這次
 
 _LOCK = threading.Lock()
@@ -194,8 +193,8 @@ def run_check(send_events_today=False, now=None, fetch=None, send=None, notify=N
         slots = slots + in_slots
         errors = {**errors, **in_errors}
         ok_sites = {s.site for s in slots}
-        # 平日的增加只記 Notion 不寄信；快照照樣更新，下次不會重報
-        changes = [c for c in _diff(slots, today) if c.slot.day.weekday() in WEEKEND]
+        # 平日不在 watchable 裡，只記 Notion 不寄信
+        changes = _diff(slots, today)
         for s in slots:
             _snapshot[s.key()] = s.remaining
         cutoff = today.isoformat()

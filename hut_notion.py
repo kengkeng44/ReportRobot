@@ -11,12 +11,12 @@ import time
 
 import hut_info
 import notion_db
-from hut_calendar import WEEKDAY, fmt_day
+from hut_calendar import WEEKDAY, WEEKEND_NIGHTS, fmt_day
 
 SLOTS_DB = "山屋空位"
 LOG_DB = "山屋變化紀錄"
 STATUS = "站況"
-WEEKEND = frozenset({4, 5, 6})  # 週五、六、日的 weekday()
+WEEKEND = frozenset(WEEKEND_NIGHTS)  # 週五、六、日晚上，跟寄信的範圍同一份定義
 KIND = {"bed": "床位", "tent": "營地"}
 WRITE_GAP = 0.35  # 秒；Notion 寫入上限約每秒 3 筆
 
