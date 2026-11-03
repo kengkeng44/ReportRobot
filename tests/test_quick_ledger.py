@@ -1023,3 +1023,18 @@ def test_todo_type_guess_and_grouping():
     ], db_url="https://www.notion.so/x"))
     assert card.index("🛒 採購") < card.index("買衛生紙") < card.index("🧹 家務") < card.index("洗衣服")
     assert "https://www.notion.so/x" in card
+
+
+def test_todo_type_guess_new_types():
+    import todo_parse
+    assert todo_parse.guess_type("回淡水拿毛巾跟橄欖油") == "🏡 回家"
+    assert todo_parse.guess_type("帶胃藥回家") == "🏡 回家"
+    assert todo_parse.guess_type("全聯載具歸戶") == "📋 手續"
+    assert todo_parse.guess_type("練習多益題目") == "📚 學習"
+    assert todo_parse.guess_type("Ig 收藏機器人") == "🛠 專案"
+    # 單字「學」「考」不算：參考資料、學校接送不是學習
+    assert todo_parse.guess_type("參考資料") == "📌 其他"
+    # 新類型都在 Notion 選項裡，否則寫入會被拒
+    import notion_db
+    opts = {o["name"] for o in notion_db._SCHEMAS["Todos"]["類型"]["select"]["options"]}
+    assert set(todo_parse.TODO_TYPES) <= opts
