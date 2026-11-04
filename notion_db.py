@@ -1281,15 +1281,26 @@ def _migrate_legacy_todos(owner_id, db_id):
     """分表以前大家的待辦都在 Todos。第一次載入某個主人的新表時，把他留在
     Todos 的未完成待辦搬過去：先在新表建好，建成功才封存舊的，中途失敗
     頂多留一份在舊表，不會弄丟。"""
+    _move_todos("Todos", owner_id, db_id)
+
+
+def _move_todos(src_name, src_user, db_id, new_user=None, next_local_id=None, by=None):
+    """把 src_name 表裡 src_user 的未完成待辦搬到 db_id，回搬了幾筆。
+
+    new_user：搬過去改掛在誰名下（合併清單時改成群組 ID）。
+    next_local_id：從這個編號往上重編，避免跟目的表撞號。
+    by：舊列沒有「輸入者」就補這個名字，合併後才分得出是誰的事。
+    先在新表建好，建成功才封存舊的，中途失敗頂多留一份在舊表，不會弄丟。
+    """
     client = _get_client()
-    legacy = get_or_create_db("Todos")
+    legacy = get_or_create_db(src_name)
     if not client or not legacy or legacy == db_id:
-        return
+        return 0
     try:
         res = client.databases.query(
             database_id=legacy,
             filter={"and": [
-                {"property": "UserId", "rich_text": {"equals": owner_id}},
+                {"property": "UserId", "rich_text": {"equals": src_user}},
                 {"property": "Done", "checkbox": {"equals": False}},
             ]},
             page_size=100,
@@ -1321,6 +1332,13 @@ def _migrate_legacy_todos(owner_id, db_id):
             import todo_parse
             name = "".join(b["text"]["content"] for b in props.get("Name", {}).get("title", []))
             props["類型"] = {"select": {"name": todo_parse.guess_type(name)}}
+        if new_user:
+            props["UserId"] = {"rich_text": [{"text": {"content": new_user}}]}
+        if next_local_id is not None:
+            props["LocalId"] = {"number": int(next_local_id) + moved}
+        if by and not "".join(b["text"]["content"]
+                              for b in props.get("輸入者", {}).get("rich_text", [])):
+            props["輸入者"] = {"rich_text": [{"text": {"content": by}}]}
         try:
             client.pages.create(parent={"database_id": db_id}, properties=props)
             client.pages.update(page_id=r["id"], archived=True)
@@ -1329,7 +1347,35 @@ def _migrate_legacy_todos(owner_id, db_id):
             print(f"[notion] 搬待辦失敗（舊的留著）：{e}")
     if moved:
         from security_utils import mask
-        print(f"[notion] 待辦搬到新表 {moved} 筆：{mask(owner_id)}")
+        print(f"[notion] 待辦從 {src_name} 搬 {moved} 筆：{mask(src_user)}")
+    return moved
+
+
+def _merge_into_shared(group_id, db_id, next_local_id):
+    """你（Todos）和小螢（小螢待辦）的未完成待辦搬進「共同待辦」，改掛群組 ID。
+
+    合併成一份清單後，舊表只剩已完成的歷史。每次開機載入都會掃一次，
+    搬完之後舊表查不到未完成的，等於空轉一次查詢。回搬了幾筆。
+    """
+    try:
+        import personal
+    except Exception:
+        return 0
+    moved = 0
+    sources = []
+    admin = os.environ.get("ADMIN_LINE_USER_ID", "").strip()
+    if admin:
+        sources.append(("Todos", admin))
+    partner = partner_line_id()
+    if partner:
+        sources.append(("小螢待辦", partner))
+    for src_name, uid in sources:
+        if personal.canonical_owner(uid) != group_id:
+            continue
+        moved += _move_todos(src_name, uid, db_id, new_user=group_id,
+                             next_local_id=next_local_id + moved,
+                             by=personal.member_name(uid))
+    return moved
 
 
 def todos_load_for_user(user_id):
@@ -1341,6 +1387,15 @@ def todos_load_for_user(user_id):
         return []
     if _todos_db_name(user_id) != "Todos":
         _migrate_legacy_todos(user_id, db_id)
+    rows = _query_open_todos(client, db_id, user_id)
+    if user_id and user_id == os.environ.get("COUPLE_GROUP_ID", "").strip():
+        start = max((r["local_id"] for r in rows or []), default=0) + 1
+        if _merge_into_shared(user_id, db_id, start):
+            rows = _query_open_todos(client, db_id, user_id)
+    return rows or []
+
+
+def _query_open_todos(client, db_id, user_id):
     try:
         # 篩 user + done=False
         res = client.databases.query(

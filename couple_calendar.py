@@ -260,6 +260,9 @@ def _people():
 
     out = []
     for uid in (os.environ.get("ADMIN_LINE_USER_ID", "").strip(), notion_db.partner_line_id()):
+        # 已併進共同清單的人不另外私訊：群組那則已經帶到同一批事，再推就重複
+        if uid and personal.canonical_owner(uid) != uid:
+            continue
         if uid and uid not in out:
             out.append(uid)
     return out

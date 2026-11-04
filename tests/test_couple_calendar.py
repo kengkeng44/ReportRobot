@@ -88,30 +88,31 @@ def test_morning_pushes_today_and_overdue(monkeypatch):
     group_text = dict(sent)[GROUP]
     assert "繳電費（今天）　👤 小螢" in group_text
     assert "退貨（⚠️ 逾期 3 天）" in group_text and "明天的" not in group_text
-    assert "交報告" in dict(sent)["Uadmin"] and "交報告" not in group_text
+    # 你私訊加的也在同一份清單，跟著群組那則推，不再另外私訊你一次
+    assert "交報告" in group_text and "Uadmin" not in dict(sent)
     again = []
     couple_calendar.run_morning_todos(push_func=lambda to, m: again.append(m), today=TODAY)
     assert again == []
 
 
-def test_partner_gets_own_reminders(monkeypatch):
-    """小螢私人清單的事私訊給小螢；推她失敗不擋你那則。"""
+def test_everyones_todos_are_one_list(monkeypatch):
+    """你、小螢私訊加的跟群組的是同一份：哪裡看都一樣，提醒只推群組一次。"""
     monkeypatch.setenv("ADMIN_LINE_USER_ID", "Uadmin")
     monkeypatch.setenv("PARTNER_LINE_USER_ID", "Upartner")
     personal.add_todo("Upartner", "還書", start=TODAY)
     personal.add_todo("Upartner", "剪頭髮", start=TOMORROW)
     personal.add_todo("Uadmin", "交報告", start=TOMORROW)
+    texts = lambda who: [t["text"] for t in personal.list_todos(who)]
+    assert texts(GROUP) == texts("Uadmin") == texts("Upartner") == ["還書", "剪頭髮", "交報告"]
+    # 編號共用：小螢在私訊按完成，群組那份也消失
+    assert personal.complete_todo("Upartner", 3)
+    assert "交報告" not in texts(GROUP)
+
     sent = []
     couple_calendar.run_morning_todos(push_func=lambda to, m: sent.append((to, m)), today=TODAY)
-    assert "還書" in dict(sent)["Upartner"] and "Uadmin" not in dict(sent)
-
-    def push(to, m):
-        if to == "Upartner":
-            raise RuntimeError("not a friend")
-        got.append((to, m))
-    got = []
-    assert couple_calendar.run_evening_personal(push_func=push, today=TODAY) == 1
-    assert got and got[0][0] == "Uadmin" and "交報告" in got[0][1]
+    assert list(dict(sent)) == [GROUP] and "還書" in dict(sent)[GROUP]
+    assert couple_calendar.run_evening_personal(
+        push_func=lambda to, m: pytest.fail("不該另外私訊"), today=TODAY) == 0
 
 
 def test_due_todos_ride_along_with_event(monkeypatch):

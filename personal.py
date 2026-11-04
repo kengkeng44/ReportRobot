@@ -41,6 +41,43 @@ _PENDING_TODO = {}
 PENDING_TODO_TIMEOUT_MINUTES = 10
 
 
+# ────────────────────────────────────────
+# 一份清單：你、小螢、記帳群組共用「共同待辦」
+#
+# 以前一個主人一張表、彼此看不到；現在三個人（含群組）全部歸到群組 ID
+# 那一份 —— 在哪裡加、在哪裡按完成，看到的都是同一份。是誰的事看
+# 「輸入者」「幫誰記」欄。其他陌生人照舊各自一份。
+# ────────────────────────────────────────
+
+def canonical_owner(user_id):
+    """這個 ID 的待辦實際存在哪一份清單。沒設 COUPLE_GROUP_ID 就不合併。"""
+    import os
+    group = os.environ.get("COUPLE_GROUP_ID", "").strip()
+    if not group or not user_id or user_id == group:
+        return user_id
+    if user_id == os.environ.get("ADMIN_LINE_USER_ID", "").strip():
+        return group
+    try:
+        import notion_db
+        if user_id == notion_db.partner_line_id():
+            return group
+    except Exception as e:
+        print(f"[personal/todos] 判斷小螢 ID 失敗（非致命）：{e}")
+    return user_id
+
+
+def member_name(user_id):
+    """記帳成員名單裡的名字（有快取，不打 LINE）。查不到回空字串。"""
+    try:
+        import couple_members
+        for m in couple_members.load():
+            if m.get("user_id") == user_id:
+                return m.get("name") or ""
+    except Exception as e:
+        print(f"[personal/todos] 查成員名字失敗（非致命）：{e}")
+    return ""
+
+
 def _notion_enabled():
     try:
         import notion_db
@@ -128,6 +165,11 @@ def add_todo(user_id, text, start=None, end=None, priority=None, by=None, for_=N
     if not todo_type:
         import todo_parse
         todo_type = todo_parse.guess_type(text)
+    owner = canonical_owner(user_id)
+    if owner != user_id and not by:
+        # 合併成一份之後，私訊加的要留名字，不然分不出是誰的事
+        by = member_name(user_id)
+    user_id = owner
     _ensure_todos_loaded(user_id)
     with _LOCK:
         next_id = _TODO_NEXT_ID.get(user_id, 0) + 1
@@ -163,6 +205,7 @@ def set_todo_due(user_id, todo_id, start, end=None):
     記憶體先更新再打 Notion —— 跟 add_todo 同一套：Notion 掛掉時
     使用者這一輪看到的東西仍然是對的。
     """
+    user_id = canonical_owner(user_id)
     _ensure_todos_loaded(user_id)
     page_id = None
     with _LOCK:
@@ -183,6 +226,7 @@ def set_todo_due(user_id, todo_id, start, end=None):
 
 
 def list_todos(user_id):
+    user_id = canonical_owner(user_id)
     _ensure_todos_loaded(user_id)
     with _LOCK:
         return list(_TODOS.get(user_id, []))
@@ -191,6 +235,7 @@ def list_todos(user_id):
 def complete_todo(user_id, todo_id):
     """完成：從 LINE 清單拿掉，但 Notion 那頁只打勾、記完成時間，不封存。
     儀表板的「已完成」靠這些列，封存就看不到了。"""
+    user_id = canonical_owner(user_id)
     _ensure_todos_loaded(user_id)
     page_id = None
     with _LOCK:
@@ -212,6 +257,7 @@ def complete_todo(user_id, todo_id):
 
 
 def delete_todo(user_id, todo_id):
+    user_id = canonical_owner(user_id)
     _ensure_todos_loaded(user_id)
     page_id = None
     with _LOCK:
@@ -233,6 +279,7 @@ def delete_todo(user_id, todo_id):
 
 
 def clear_done(user_id):
+    user_id = canonical_owner(user_id)
     _ensure_todos_loaded(user_id)
     with _LOCK:
         items = _TODOS.get(user_id, [])
