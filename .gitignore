@@ -27,7 +27,8 @@ venv/
 *.egg-info/
 
 # 編輯器與工具
-.claude/
+.claude/*
+!.claude/settings.json
 .vscode/
 .idea/
 .DS_Store
