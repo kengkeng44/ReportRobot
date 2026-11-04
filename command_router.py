@@ -1045,7 +1045,7 @@ def _record_spoken_todo(user_id, text, by=None):
         by=by,
     )
 
-    lines = [f"✅ 已記下：{content}"]
+    lines = [f"✅ 已加到待辦清單：{content}"]
     if parsed["start"]:
         tail = f"📅 {_format_due(parsed['start'], parsed['end'])}"
         if parsed["priority"]:

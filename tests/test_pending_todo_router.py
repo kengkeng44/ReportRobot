@@ -46,7 +46,7 @@ def test_unknown_text_becomes_a_todo():
     reply = cr.handle("交社宅資料", PERSONAL_CTX)
 
     assert personal.list_todos("U1")[0]["text"] == "交社宅資料"
-    assert "已記下" in _text(reply)
+    assert "已加到待辦清單" in _text(reply)
 
 
 def test_recording_ends_the_pending_state():
@@ -91,7 +91,7 @@ def test_not_pending_means_normal_handling():
     reply = cr.handle("交社宅資料", PERSONAL_CTX)
 
     assert personal.list_todos("U1") == []
-    assert reply is None or "已記下" not in _text(reply)
+    assert reply is None or "已加到待辦清單" not in _text(reply)
 
 
 def test_group_chat_never_records():

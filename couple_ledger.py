@@ -1152,7 +1152,7 @@ def _todo(body, ctx):
             # 一次很多件就不逐件問截止日，不然一張清單換來六張按鈕卡
             for ln in lines:
                 personal.add_todo(key, ln, by=by)
-            return [f"✅ 已記下 {len(lines)} 件待辦" + (f"（{by}）" if by else ""),
+            return [f"✅ 已加 {len(lines)} 件到待辦清單" + (f"（{by}）" if by else ""),
                     _todo_card(key)]
         return command_router._handle_todo_subcmd(key, lines[0] if lines else body, by=by)
     except Exception as e:

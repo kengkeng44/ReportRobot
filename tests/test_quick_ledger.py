@@ -1075,7 +1075,9 @@ def test_jot_without_amount_becomes_group_todo(env, monkeypatch):
                         lambda key, content, **kw: added.append((key, content, kw)) or 7)
     monkeypatch.setattr(notion_db, "couple_add",
                         lambda r: pytest.fail("沒金額不該記成一筆帳"))
-    cr.handle("記 今天晚上要預約各個銀行辦信用卡跟調整額度", ctx=_group(user=GF))
+    reply = cr.handle("記 今天晚上要預約各個銀行辦信用卡跟調整額度", ctx=_group(user=GF))
+    first = reply[0] if isinstance(reply, list) else reply
+    assert "已加到待辦清單" in (first if isinstance(first, str) else first.get("text", ""))
     assert added and added[0][0] == GROUP
     assert "預約各個銀行辦信用卡跟調整額度" in added[0][1]
     assert added[0][2].get("by") == "小美"
