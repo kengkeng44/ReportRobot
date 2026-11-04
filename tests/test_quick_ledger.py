@@ -1041,7 +1041,7 @@ def test_todo_type_guess_new_types():
     assert todo_parse.guess_type("帶胃藥回家") == "🏡 回家"
     assert todo_parse.guess_type("全聯載具歸戶") == "📋 手續"
     assert todo_parse.guess_type("練習多益題目") == "📚 學習"
-    assert todo_parse.guess_type("Ig 收藏機器人") == "🛠 專案"
+    assert todo_parse.guess_type("Ig 收藏機器人") == "🤖 自動化"
     # 單字「學」「考」不算：參考資料、學校接送不是學習
     assert todo_parse.guess_type("參考資料") == "📌 其他"
     # 新類型都在 Notion 選項裡，否則寫入會被拒

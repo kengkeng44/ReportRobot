@@ -181,7 +181,8 @@ _SCHEMAS = {
         "類型": _select(("🛒 採購", "green"), ("🧹 家務", "brown"), ("💳 繳費", "red"),
                         ("📅 預約", "blue"), ("💼 工作", "purple"), ("🏡 回家", "orange"),
                         ("📋 手續", "yellow"), ("📚 學習", "pink"), ("🛠 專案", "default"),
-                        ("📌 其他", "gray")),
+                        ("💰 理財", "green"), ("👥 找人", "pink"), ("🤖 自動化", "blue"),
+                        ("💻 電腦設定", "purple"), ("📌 其他", "gray")),
         "輸入者": {"rich_text": {}},
         "幫誰記": {"rich_text": {}},
         "完成時間": {"date": {}},
@@ -1351,6 +1352,10 @@ def _move_todos(src_name, src_user, db_id, new_user=None, next_local_id=None, by
     return moved
 
 
+# 每個程序只搬一次：清單現在會定時重讀，不要每次重讀都去掃舊表
+_MERGED = set()
+
+
 def _merge_into_shared(group_id, db_id, next_local_id):
     """你（Todos）和小螢（小螢待辦）的未完成待辦搬進「共同待辦」，改掛群組 ID。
 
@@ -1388,7 +1393,9 @@ def todos_load_for_user(user_id):
     if _todos_db_name(user_id) != "Todos":
         _migrate_legacy_todos(user_id, db_id)
     rows = _query_open_todos(client, db_id, user_id)
-    if user_id and user_id == os.environ.get("COUPLE_GROUP_ID", "").strip():
+    if (user_id and user_id == os.environ.get("COUPLE_GROUP_ID", "").strip()
+            and user_id not in _MERGED):
+        _MERGED.add(user_id)
         start = max((r["local_id"] for r in rows or []), default=0) + 1
         if _merge_into_shared(user_id, db_id, start):
             rows = _query_open_todos(client, db_id, user_id)

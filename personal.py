@@ -22,6 +22,11 @@ _LOCK = threading.Lock()
 _TODOS = {}
 _TODO_NEXT_ID = {}
 _TODOS_LOADED_USERS = set()  # 已從 Notion load 過的 user_id
+_TODOS_LOADED_AT = {}        # user_id → 上次從 Notion 讀的 monotonic 時間
+
+# 網頁儀表板、Notion 手動加的待辦，喵管家要看得到，編號也不能撞：
+# 清單放超過這麼久就重讀一次 Notion
+TODOS_REFRESH_SECONDS = 60
 
 # user_id → list of {id, text, fire_at}
 _REMINDERS = {}
@@ -87,8 +92,15 @@ def _notion_enabled():
 
 
 def _ensure_todos_loaded(user_id):
-    """從 Notion load 該 user 未完成待辦到 in-memory cache。每 user 只 load 一次。"""
-    if user_id in _TODOS_LOADED_USERS:
+    """從 Notion load 該 user 未完成待辦到 in-memory cache。
+
+    放超過 TODOS_REFRESH_SECONDS 就重讀：別的地方（網頁、Notion）加的才看得到。
+    沒開 Notion 時只有記憶體這份，不重讀。
+    """
+    import time
+    if user_id in _TODOS_LOADED_USERS and (
+            not _notion_enabled()
+            or time.monotonic() - _TODOS_LOADED_AT.get(user_id, 0) < TODOS_REFRESH_SECONDS):
         return
     if not _notion_enabled():
         _TODOS_LOADED_USERS.add(user_id)
@@ -97,8 +109,10 @@ def _ensure_todos_loaded(user_id):
         import notion_db
         rows = notion_db.todos_load_for_user(user_id)
         with _LOCK:
+            # Notion 沒寫成功的（沒有 page_id）只活在記憶體，重讀時不能丟
+            unsynced = [t for t in _TODOS.get(user_id, []) if not t.get("page_id")]
             _TODOS[user_id] = []
-            max_local_id = 0
+            max_local_id = _TODO_NEXT_ID.get(user_id, 0) if unsynced else 0
             for r in rows:
                 _TODOS[user_id].append({
                     "id": r["local_id"],
@@ -114,13 +128,17 @@ def _ensure_todos_loaded(user_id):
                     "type": r.get("type") or "",
                 })
                 max_local_id = max(max_local_id, r["local_id"])
+            _TODOS[user_id].extend(unsynced)
             _TODO_NEXT_ID[user_id] = max_local_id
             _TODOS_LOADED_USERS.add(user_id)
+            _TODOS_LOADED_AT[user_id] = time.monotonic()
         if rows:
             print(f"[personal/todos] 從 Notion load {len(rows)} 筆給 {mask(user_id)}")
     except Exception as e:
         print(f"[personal/todos] load Notion 失敗：{e}")
+        # 失敗時保留手上那份，等下一輪再試；第一次就失敗的話先當空清單
         _TODOS_LOADED_USERS.add(user_id)
+        _TODOS_LOADED_AT[user_id] = time.monotonic()
 
 
 # ════════════════════════════════════════
