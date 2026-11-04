@@ -68,3 +68,35 @@ def test_list_rereads_notion_so_web_added_todos_show_up(monkeypatch):
 def test_personal_types(text, kind):
     import todo_parse
     assert todo_parse.guess_type(text) == kind
+
+
+def test_owner_and_project_written(monkeypatch):
+    """私訊記的歸自己、群組記的歸共同、幫小螢記的歸小螢；「#專案」拆成專案欄。"""
+    monkeypatch.setenv("COUPLE_GROUP_ID", GROUP)
+    monkeypatch.setenv("ADMIN_LINE_USER_ID", "Uadmin")
+    monkeypatch.setenv("PARTNER_LINE_USER_ID", "Upartner")
+    monkeypatch.setattr(personal, "member_name", {"Uadmin": "鄭仁和", "Upartner": "C"}.get)
+    monkeypatch.setattr(personal, "_notion_enabled", lambda: True)
+    monkeypatch.setattr(notion_db, "todos_load_for_user", lambda uid: [])
+    sent = []
+    monkeypatch.setattr(notion_db, "todos_create",
+                        lambda uid, text, lid, **kw: sent.append((text, kw)) or f"p{lid}")
+    for d in (personal._TODOS, personal._TODO_NEXT_ID, personal._TODOS_LOADED_AT):
+        d.clear()
+    personal._TODOS_LOADED_USERS.clear()
+
+    personal.add_todo("Uadmin", "修 Wi-Fi #電腦環境")
+    personal.add_todo("Upartner", "還書")
+    personal.add_todo(GROUP, "買衛生紙")
+    personal.add_todo(GROUP, "要買麵包", for_="小螢")
+
+    assert [(t, kw["owner_label"], kw["project"]) for t, kw in sent] == [
+        ("修 Wi-Fi", "仁和", "電腦環境"),
+        ("還書", "小螢", None),
+        ("買衛生紙", "共同", None),
+        ("要買麵包", "小螢", None),
+    ]
+
+
+def test_hash_inside_word_is_not_a_project():
+    assert personal.split_project("C#練習") == ("C#練習", None)

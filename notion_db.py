@@ -186,6 +186,10 @@ _SCHEMAS = {
         "輸入者": {"rich_text": {}},
         "幫誰記": {"rich_text": {}},
         "完成時間": {"date": {}},
+        # 這件事是誰的：儀表板切使用者就看這欄（personal.owner_label 決定）
+        "歸屬": _select(("仁和", "blue"), ("小螢", "pink"), ("共同", "green")),
+        # 專案：LINE 打「#專案名」或在儀表板指定。選項隨用隨長
+        "專案": {"select": {}},
     },
     "Reminders": {
         "Name": {"title": {}},                                  # 提醒內容
@@ -1389,7 +1393,7 @@ def _read_date_range(props, name):
 
 def todos_create(user_id, text, local_id, category=None,
                  start=None, end=None, priority=None, by=None, for_=None,
-                 todo_type=None):
+                 todo_type=None, owner_label=None, project=None):
     """建立一筆待辦。回 page_id 或 None。
 
     category 未指定時歸到「生活」—— 寧可分錯也不要留空，
@@ -1424,17 +1428,21 @@ def todos_create(user_id, text, local_id, category=None,
         props["類型"] = {"select": {"name": todo_type}}
     if for_:
         props["幫誰記"] = {"rich_text": [{"text": {"content": for_}}]}
+    if owner_label:
+        props["歸屬"] = {"select": {"name": owner_label}}
+    if project:
+        props["專案"] = {"select": {"name": project[:100]}}
 
     try:
         page = client.pages.create(parent={"database_id": db_id}, properties=props)
         return page["id"]
     except Exception as e:
-        if "輸入者" in props or "幫誰記" in props or "類型" in props:
-            # 舊的 Todos 表沒有這兩欄：少一個名字總比整件事沒記到好
+        extra = ("輸入者", "幫誰記", "類型", "歸屬", "專案")
+        if any(k in props for k in extra):
+            # 表還沒長出這些欄：少一個欄位總比整件事沒記到好
             print(f"[notion] todos_create 帶輸入者失敗，改不帶重試：{e}")
-            props.pop("輸入者", None)
-            props.pop("幫誰記", None)
-            props.pop("類型", None)
+            for k in extra:
+                props.pop(k, None)
             try:
                 return client.pages.create(parent={"database_id": db_id},
                                            properties=props)["id"]

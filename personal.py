@@ -71,6 +71,54 @@ def canonical_owner(user_id):
     return user_id
 
 
+# 儀表板「切換使用者」用的歸屬名。用固定的短名而不是 LINE 暱稱：
+# 小螢的 LINE 暱稱是「C」，幫她記時大家打的卻是「小螢」，要對得起來
+OWNER_ADMIN, OWNER_PARTNER, OWNER_SHARED = "仁和", "小螢", "共同"
+_PARTNER_ALIASES = ("小螢", "螢", "虹螢")
+_ADMIN_ALIASES = ("仁和", "小和")
+
+
+def owner_label(user_id, for_=None):
+    """這件事歸誰：幫某人記 → 那個人；私訊記 → 自己；群組記 → 共同。
+
+    不是你們兩個的（陌生人自己的清單）回 None，不寫這欄。
+    """
+    import os
+    admin = os.environ.get("ADMIN_LINE_USER_ID", "").strip()
+    group = os.environ.get("COUPLE_GROUP_ID", "").strip()
+    partner = ""
+    try:
+        import notion_db
+        partner = notion_db.partner_line_id()
+    except Exception:
+        pass
+    if for_:
+        names = {OWNER_ADMIN: _ADMIN_ALIASES + ((member_name(admin),) if admin else ()),
+                 OWNER_PARTNER: _PARTNER_ALIASES + ((member_name(partner),) if partner else ())}
+        for label, aliases in names.items():
+            if any(a and a in for_ for a in aliases):
+                return label
+    if user_id and user_id == admin:
+        return OWNER_ADMIN
+    if user_id and partner and user_id == partner:
+        return OWNER_PARTNER
+    if user_id and user_id == group:
+        return OWNER_SHARED
+    return None
+
+
+_PROJECT_TAG = re.compile(r"(?:^|\s)#(\S+)")
+
+
+def split_project(text):
+    """「修 Wi-Fi #電腦環境」→ ("修 Wi-Fi", "電腦環境")。沒標就回 (原文, None)。"""
+    m = _PROJECT_TAG.search(text or "")
+    if not m:
+        return text, None
+    rest = (text[:m.start()] + text[m.end():]).strip()
+    return (rest or text), m.group(1)
+
+
 def member_name(user_id):
     """記帳成員名單裡的名字（有快取，不打 LINE）。查不到回空字串。"""
     try:
@@ -180,9 +228,11 @@ def add_todo(user_id, text, start=None, end=None, priority=None, by=None, for_=N
     類型（todo_type）相反：沒給就照內容猜一個 —— 清單要按類型分組，
     猜不到也有「📌 其他」，不會有沒類型的待辦。
     """
+    text, project = split_project(text)
     if not todo_type:
         import todo_parse
         todo_type = todo_parse.guess_type(text)
+    label = owner_label(user_id, for_)
     owner = canonical_owner(user_id)
     if owner != user_id and not by:
         # 合併成一份之後，私訊加的要留名字，不然分不出是誰的事
@@ -198,6 +248,7 @@ def add_todo(user_id, text, start=None, end=None, priority=None, by=None, for_=N
             "page_id": None,
             "start": start, "end": end, "priority": priority,
             "by": by or "", "for": for_ or "", "type": todo_type,
+            "owner": label or "", "project": project or "",
         }
         _TODOS.setdefault(user_id, []).append(item)
     # Notion 寫在 lock 外（避免持鎖打網路 IO）
@@ -207,7 +258,7 @@ def add_todo(user_id, text, start=None, end=None, priority=None, by=None, for_=N
             page_id = notion_db.todos_create(
                 user_id, text, next_id,
                 start=start, end=end, priority=priority, by=by, for_=for_,
-                todo_type=todo_type,
+                todo_type=todo_type, owner_label=label, project=project,
             )
             if page_id:
                 with _LOCK:
