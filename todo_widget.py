@@ -4,7 +4,7 @@ iPhone 的 Scriptable 小工具打 GET /widget/todos 拿這份 JSON 自己畫
 （腳本在 docs/widget/todo_widget.js）。小工具不能跑網頁，所以不能直接
 用儀表板，只能給它一份整理好的資料。
 
-「緊急」＝ 優先度 P0／P1，或今天到期、已經逾期。
+「緊急」＝ 優先度 P0，或今天到期、已經逾期（P1 不算）。
 build() 是純函式：輸入沒做完的待辦和已完成的 (專案, 歸屬)，輸出 dict，
 不碰 Notion 也就能直接測。
 """
@@ -17,7 +17,7 @@ from tz_utils import now_tpe, today_tpe
 _DONE_CACHE = {"at": 0.0, "rows": None}
 _DONE_TTL = 600
 
-URGENT_PRIORITIES = ("P0", "P1")
+URGENT_PRIORITIES = ("P0",)
 
 
 def _deadline(t):

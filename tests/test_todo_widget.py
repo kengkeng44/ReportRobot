@@ -32,17 +32,22 @@ def test_urgent_is_overdue_then_today_then_priority():
         ("逾期的事", "逾期 3 天"),
         ("預約銀行", "今天"),
         ("還書", "P0"),
-        ("修 Wi-Fi", "P1"),
-        ("Remote Control", "P1"),
     ]
-    assert out["urgent_count"] == 5 and out["open"] == 7
+    assert out["urgent_count"] == 3 and out["open"] == 7
+
+
+def test_p1_is_not_urgent():
+    out = todo_widget.build([_t(14, "修 Wi-Fi", priority="P1")], [], TODAY)
+    assert out["urgent"] == [] and out["urgent_count"] == 0
 
 
 def test_projects_progress_and_urgent_first():
     out = todo_widget.build(OPEN, DONE, TODAY)
     first = out["projects"][0]
-    assert first["name"] == "💻 電腦環境"
-    assert (first["open"], first["done"], first["urgent"], first["progress"]) == (2, 2, 2, 0.5)
+    assert first["name"] == "💳 辦卡與歸戶"       # 今天到期那件讓它排第一
+    assert first["urgent"] == 1
+    pc = next(p for p in out["projects"] if p["name"] == "💻 電腦環境")
+    assert (pc["open"], pc["done"], pc["urgent"], pc["progress"]) == (2, 2, 0, 0.5)
     names = [p["name"] for p in out["projects"]]
     assert "🏡 回淡水" in names and "🏠 新家佈置" in names
 

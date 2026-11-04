@@ -1,5 +1,5 @@
 // 待辦小工具（iPhone 桌面，Scriptable）
-// 顯示：還沒做完的緊急事（逾期、今天到期、P0/P1）＋ 各專案進度。點一下打開待辦儀表板。
+// 顯示：還沒做完的緊急事（逾期、今天到期、P0；P1 不算）＋ 各專案進度。點一下打開待辦儀表板。
 //
 // 設定方式見 docs/widget/README.md。只要改下面兩行：
 const TOKEN = "貼上 Railway 的 WIDGET_TOKEN";
