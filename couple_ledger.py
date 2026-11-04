@@ -41,6 +41,8 @@ _CHART_PREFIX_RE = re.compile(r"^(.+?)\s*的?(?:圖表|圓餅圖|圓餅|統計)$
 _TODO_FOR_RE = re.compile(r"^幫\s*@?(\S{1,12}?)\s*記\s*[：:]?\s*(.+)$", re.S)
 # re.S：「待辦」換行接一串清單也要認得，不然整段掉到私訊指令那邊
 _TODO_RE = re.compile(r"^(?:待辦|todo)(?:\s+(.*))?$", re.IGNORECASE | re.S)
+# 「記 今天晚上要預約銀行」：「記」後面一定要空白或冒號，才不會吃到「記一筆」「記帳」
+_JOT_RE = re.compile(r"^記(?:\s+|\s*[：:]\s*)(.+)$", re.S)
 
 HELP_TEXT = (
     "💑 共同記帳怎麼用\n\n"
@@ -60,6 +62,7 @@ HELP_TEXT = (
     "　選單　　　← 叫出按鈕卡，長按設成公告就會釘在最上面\n\n"
     "兩人共用的待辦：\n"
     "　待辦 買衛生紙　← 新增（換行打很多行＝一次加很多件）\n"
+    "　記 今晚預約銀行　← 一樣是新增待辦（有金額的「記 午餐 120」照樣記帳）\n"
     "　幫小螢記 要買麵包 11/2　← 記一件小螢的事，日期一起記\n"
     "　待辦　　　　　← 看清單，按「完成」就劃掉\n\n"
     "沒指定的話，誰打的字就算誰付的錢。私訊或表單記成「共同」的、" + chr(10) +
@@ -1016,6 +1019,15 @@ def handle(text, ctx):
     m = _TODO_RE.match(t)
     if m:
         return _todo((m.group(1) or "").strip(), ctx)
+
+    # 「記 今天晚上要預約銀行」＝待辦；「記 午餐 120」有金額就拿掉「記」照常記帳
+    m = _JOT_RE.match(t)
+    if m:
+        body = m.group(1).strip()
+        if parse_entry(_without_dates(body)):
+            t = body
+        else:
+            return _todo(body, ctx)
 
     # 有金額的「幫小螢記 午餐 120」仍是記帳（往下走），沒金額的才是待辦
     # 先把日期拿掉再判斷：「要買麵包 11/2」的 2 會被當成金額

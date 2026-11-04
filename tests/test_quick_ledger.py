@@ -1064,3 +1064,47 @@ def test_complete_todo_marks_done_instead_of_archiving(monkeypatch):
     assert calls == [("done", "p7")]
     assert personal._TODOS["U_test"] == []
     assert personal.complete_todo("U_test", 7) is False
+
+
+# ── 「記 …」：沒金額是待辦，有金額照樣記帳 ─────────────────
+
+def test_jot_without_amount_becomes_group_todo(env, monkeypatch):
+    import personal
+    added = []
+    monkeypatch.setattr(personal, "add_todo",
+                        lambda key, content, **kw: added.append((key, content, kw)) or 7)
+    monkeypatch.setattr(notion_db, "couple_add",
+                        lambda r: pytest.fail("沒金額不該記成一筆帳"))
+    cr.handle("記 今天晚上要預約各個銀行辦信用卡跟調整額度", ctx=_group(user=GF))
+    assert added and added[0][0] == GROUP
+    assert "預約各個銀行辦信用卡跟調整額度" in added[0][1]
+    assert added[0][2].get("by") == "小美"
+
+
+def test_jot_with_date_only_is_still_todo(env, monkeypatch):
+    import personal
+    added = []
+    monkeypatch.setattr(personal, "add_todo",
+                        lambda key, content, **kw: added.append(content) or 1)
+    monkeypatch.setattr(notion_db, "couple_add",
+                        lambda r: pytest.fail("11/2 的 2 不是金額"))
+    cl.handle("記：要買麵包 11/2", _group())
+    assert added and "麵包" in added[0]
+
+
+def test_jot_with_amount_is_still_an_entry(env, monkeypatch):
+    rows = []
+    monkeypatch.setattr(notion_db, "couple_add", lambda r: rows.append(r) or "pid")
+    import personal
+    monkeypatch.setattr(personal, "add_todo", lambda *a, **kw: pytest.fail("有金額是記帳"))
+    cl.handle("記 午餐 120", _group())
+    assert rows and rows[0]["item"] == "午餐" and rows[0]["total"] == 120
+
+
+@pytest.mark.parametrize("text", ["記一筆", "記帳"])
+def test_jot_needs_a_space_so_menu_words_still_work(env, monkeypatch, text):
+    import personal
+    monkeypatch.setattr(personal, "add_todo", lambda *a, **kw: pytest.fail(text))
+    monkeypatch.setattr(notion_db, "transactions_load", lambda **kw: [])
+    monkeypatch.setattr(notion_db, "couple_load", lambda **kw: [])
+    cl.handle(text, _group())
