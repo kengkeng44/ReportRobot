@@ -328,6 +328,9 @@ def parse(text):
     # 最前面就被接走了；走到這裡的是家人按到 —— 回一句說明，不能掉進付費 AI 問答
     if cleaned in _PRIVATE_SHORTCUTS:
         return ("private_shortcut", cleaned)
+    import hut_captcha
+    if hut_captcha.is_reply(cleaned):   # 別人打「驗證碼 1234」→ 上鎖訊息，不丟給 AI
+        return ("private_shortcut", cleaned)
 
     if cleaned in _COST_KEYWORDS:
         return ("cost", None)
@@ -1150,6 +1153,10 @@ def handle(text, ctx=None):
     import hut_monitor
     if (text or "").strip().lstrip("/") in hut_monitor.KEYWORDS and _is_admin(ctx):
         return hut_monitor.line_reply()
+    # 私訊「驗證碼 1234」：山屋申請腳本在等的驗證碼（只限本人；回覆＝同意送出那一筆）
+    import hut_captcha
+    if hut_captcha.is_reply(text) and _is_admin(ctx):
+        return hut_captcha.answer_from_line(text)
     reply = couple_ledger.setup_reply(text, ctx)
     if reply is None and couple_ledger.is_couple_chat(ctx):
         reply = couple_ledger.handle(text, ctx)

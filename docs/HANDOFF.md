@@ -573,6 +573,7 @@ ReportRobot（根頁,NOTION_PARENT_PAGE_ID）
 | `TW_HOLDINGS` | 台股起始庫存**備援** `代號:股數@均價`,逗號分隔 | 無 —— 正常走 Notion「起始庫存」表,這個只在 Notion 讀不到時生效 |
 | `TW_HOLDINGS_ASOF` | 上面那份備援庫存的基準日 `YYYY-MM-DD` | 無 —— **沒設則整份 TW_HOLDINGS 失效** |
 | `HUT_FOREST_ON_SERVER` | 山屋監控:林業署三站由 Railway 抓(`1`);Railway 被擋時設 `0`,改由本機 `hut_browser.py --forest` 送 | `1` |
+| `HUT_FOREST_ACCOUNT` / `HUT_FOREST_PASSWORD` / `HUT_TEAM_JSON` | 山屋自動申請（本機 `tools/hut_apply.py`，`infisical run` 注入；Railway 不需要）。見 `docs/superpowers/specs/2026-11-04-hut-apply-design.md` | 無 |
 | `PERSONAL_USER_ID` | 個人版每日信要放誰的待辦 / 提醒(LINE user id) | **退回 `ADMIN_LINE_USER_ID`**(同一個人);兩個都沒設才跳過這兩個區塊,其他照寄 |
 
 > ⚠️ `TW_HOLDINGS_ASOF` 是必填不是選填。`build_portfolio` 會跳過基準日以前的成交

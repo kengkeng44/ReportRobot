@@ -812,6 +812,94 @@ async def hut_run(request: Request):
     return await asyncio.to_thread(hut_monitor.run_check, True)
 
 
+def _b64_image(body, key="image_b64", required=True):
+    raw = body.get(key)
+    if not raw:
+        if required:
+            raise HTTPException(status_code=400, detail=f"缺 {key}")
+        return None
+    try:
+        return base64.b64decode(raw, validate=True)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail=f"{key} 不是 base64")
+
+
+async def _json_object(request):
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="body 要是 JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="body 要是 JSON 物件")
+    return body
+
+
+@app.post("/admin/hut-captcha")
+async def hut_captcha_open(request: Request):
+    """本機 tools/hut_apply.py 送驗證碼截圖＋摘要 → LINE 推給本人（docs/superpowers/specs/2026-11-04-hut-apply-design.md）。"""
+    _check_admin(request)
+    import hut_captcha
+    body = await _json_object(request)
+    image = _b64_image(body)
+    try:
+        return await asyncio.to_thread(hut_captcha.open_challenge, image,
+                                       body.get("summary"), body.get("step", "apply"))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)[:200])
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)[:200])
+
+
+@app.get("/admin/hut-captcha/{cid}")
+def hut_captcha_poll(cid: str, request: Request):
+    """本機輪詢本人回的驗證碼。"""
+    _check_admin(request)
+    import hut_captcha
+    return hut_captcha.poll(cid)
+
+
+@app.post("/admin/hut-captcha/{cid}/result")
+async def hut_captcha_result(cid: str, request: Request):
+    """本機回報送出結果（文字＋可選截圖）→ LINE 推給本人。"""
+    _check_admin(request)
+    import hut_captcha
+    body = await _json_object(request)
+    image = _b64_image(body, required=False)
+    try:
+        return await asyncio.to_thread(hut_captcha.report_result, cid, body.get("text"), image)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)[:200])
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)[:200])
+
+
+@app.post("/admin/hut-notify")
+async def hut_notify(request: Request):
+    """本機申請腳本要告訴本人的事（登入失敗、網站改版…），文字＋可選截圖。"""
+    _check_admin(request)
+    import hut_captcha
+    body = await _json_object(request)
+    image = _b64_image(body, required=False)
+    try:
+        return await asyncio.to_thread(hut_captcha.notify, body.get("text"), image)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)[:200])
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)[:200])
+
+
+@app.get("/hut-img/{name}")
+def hut_img(name: str):
+    """驗證碼／結果截圖（LINE 圖片訊息只收網址）。token 隨機，過期 404。"""
+    from fastapi.responses import Response
+
+    import hut_captcha
+    got = hut_captcha.get_image(name)
+    if not got:
+        raise HTTPException(status_code=404, detail="expired")
+    return Response(got[0], media_type=got[1], headers={"Cache-Control": "private, max-age=300"})
+
+
 @app.post("/admin/run-personal")
 async def trigger_personal(request: Request):
     """只寄個人信，不推群組。

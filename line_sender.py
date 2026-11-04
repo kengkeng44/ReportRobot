@@ -179,6 +179,19 @@ def push_to_user_sync(user_id, response):
         _push_one(user_id, msg)
 
 
+def push_batch_to_user_sync(user_id, response):
+    """多則訊息（最多 5 則）打包成一次 push：配額只算 1 次。成功回 True。"""
+    if not (LINE_CHANNEL_TOKEN and user_id):
+        return False
+    messages = _to_messages(response)
+    if not messages:
+        return False
+    if _post(PUSH_URL, {"to": user_id, "messages": messages}):
+        _bump_quota()
+        return True
+    return False
+
+
 async def reply_message(reply_token, response):
     """回覆使用者訊息（webhook 互動用）。reply_token 只能用 1 次、有效 30 秒。
     一次 reply 可塞最多 5 則訊息，全打包同一 request。"""
