@@ -100,3 +100,17 @@ def test_owner_and_project_written(monkeypatch):
 
 def test_hash_inside_word_is_not_a_project():
     assert personal.split_project("C#練習") == ("C#練習", None)
+
+
+def test_next_id_skips_numbers_used_by_done_todos(monkeypatch):
+    """已完成的佔了 39–41，下一件要是 42，不能再發 39。"""
+    monkeypatch.delenv("COUPLE_GROUP_ID", raising=False)
+    monkeypatch.setattr(personal, "_notion_enabled", lambda: True)
+    monkeypatch.setattr(notion_db, "todos_load_for_user",
+                        lambda uid: [{"page_id": "a", "local_id": 38, "text": "抽社宅"}])
+    monkeypatch.setattr(notion_db, "todos_max_local_id", lambda uid: 41)
+    monkeypatch.setattr(notion_db, "todos_create", lambda *a, **kw: "new")
+    for d in (personal._TODOS, personal._TODO_NEXT_ID, personal._TODOS_LOADED_AT):
+        d.clear()
+    personal._TODOS_LOADED_USERS.clear()
+    assert personal.add_todo("U9", "新的一件") == 42

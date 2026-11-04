@@ -156,6 +156,7 @@ def _ensure_todos_loaded(user_id):
     try:
         import notion_db
         rows = notion_db.todos_load_for_user(user_id)
+        used = notion_db.todos_max_local_id(user_id)
         with _LOCK:
             # Notion 沒寫成功的（沒有 page_id）只活在記憶體，重讀時不能丟
             unsynced = [t for t in _TODOS.get(user_id, []) if not t.get("page_id")]
@@ -177,7 +178,7 @@ def _ensure_todos_loaded(user_id):
                 })
                 max_local_id = max(max_local_id, r["local_id"])
             _TODOS[user_id].extend(unsynced)
-            _TODO_NEXT_ID[user_id] = max_local_id
+            _TODO_NEXT_ID[user_id] = max(max_local_id, used)
             _TODOS_LOADED_USERS.add(user_id)
             _TODOS_LOADED_AT[user_id] = time.monotonic()
         if rows:

@@ -1291,6 +1291,32 @@ def todos_load_for_user(user_id):
     return _query_open_todos(client, db_id, user_id) or []
 
 
+def todos_max_local_id(user_id):
+    """這份清單用過的最大編號，連已完成的一起算。失敗回 0。
+
+    下一個編號要接在這後面：只看沒做完的話，會撞到已完成那幾件的號碼，
+    儀表板「已完成」裡就出現兩個一樣的編號。
+    """
+    db_id = todos_db_id(user_id)
+    client = _get_client()
+    if not db_id or not client:
+        return 0
+    try:
+        res = client.databases.query(
+            database_id=db_id,
+            filter={"property": "UserId", "rich_text": {"equals": user_id}},
+            sorts=[{"property": "LocalId", "direction": "descending"}],
+            page_size=1,
+        )
+        rows = res.get("results", [])
+        if not rows:
+            return 0
+        return int(((rows[0].get("properties") or {}).get("LocalId") or {}).get("number") or 0)
+    except Exception as e:
+        print(f"[notion] todos_max_local_id 失敗：{e}")
+        return 0
+
+
 def _query_open_todos(client, db_id, user_id):
     try:
         # 篩 user + done=False
