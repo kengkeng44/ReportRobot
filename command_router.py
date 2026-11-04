@@ -839,8 +839,7 @@ def warm_caches():
     except Exception as e:
         print(f"共同帳本快取預熱失敗（非致命）：{e}")
     try:
-        # 順便載入共同待辦：舊 Todos、小螢待辦裡沒做完的會在這一步搬進來，
-        # 不用等到有人打「待辦」才搬
+        # 順便載入共同待辦，第一個打「待辦」的人不用等
         import os
         import personal
         gid = os.environ.get("COUPLE_GROUP_ID", "").strip()

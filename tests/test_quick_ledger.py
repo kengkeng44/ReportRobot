@@ -1000,24 +1000,22 @@ def test_partner_sync_error_does_not_break_my_sync(env, monkeypatch):
     assert cl.sync_checked() == 0
 
 
-def test_todo_db_split_by_owner(monkeypatch):
-    """你、記帳群組、其他人各一張待辦表。"""
-    monkeypatch.setenv("ADMIN_LINE_USER_ID", "Uadmin")
-    monkeypatch.setenv("COUPLE_GROUP_ID", "Cgroup")
-    assert notion_db._todos_db_name("Uadmin") == "Todos"
-    assert notion_db._todos_db_name("Cgroup") == "共同待辦"
-    other = notion_db._todos_db_name("Uother123456")
-    assert other == "待辦｜123456" and notion_db._DB_SECTION[other] == "待辦"
-    assert notion_db._DB_SECTION["共同待辦"] == "共同記帳"
-
-
-def test_partner_todos_go_to_shared_page(monkeypatch):
-    """小螢私訊記的待辦放「共同記帳」頁的小螢待辦，她的網頁才讀得到。"""
+def test_todo_db_one_shared_table(monkeypatch):
+    """你、小螢、記帳群組同一張「共同待辦」；其他人各一張。舊表不再用到。"""
     monkeypatch.setenv("ADMIN_LINE_USER_ID", "Uadmin")
     monkeypatch.setenv("COUPLE_GROUP_ID", "Cgroup")
     monkeypatch.setenv("PARTNER_LINE_USER_ID", "Upartner")
-    assert notion_db._todos_db_name("Upartner") == "小螢待辦"
-    assert notion_db._DB_SECTION["小螢待辦"] == "共同記帳"
+    for who in ("Uadmin", "Upartner", "Cgroup"):
+        assert notion_db._todos_db_name(who) == "共同待辦"
+    other = notion_db._todos_db_name("Uother123456")
+    assert other == "待辦｜123456" and notion_db._DB_SECTION[other] == "待辦"
+    assert notion_db._DB_SECTION["共同待辦"] == "共同記帳"
+    assert "小螢待辦" not in notion_db._SCHEMAS
+
+
+def test_admin_uses_todos_only_without_group(monkeypatch):
+    monkeypatch.setenv("ADMIN_LINE_USER_ID", "Uadmin")
+    monkeypatch.delenv("COUPLE_GROUP_ID", raising=False)
     assert notion_db._todos_db_name("Uadmin") == "Todos"
 
 

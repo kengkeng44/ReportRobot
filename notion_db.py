@@ -53,7 +53,7 @@ _SECTIONS = {
     # 分享出去就連同信用卡明細、淨值一起被看到。
     "共同記帳": {
         "icon": "💑",
-        "dbs": ("共同帳本", "共同帳本紀錄", "記帳成員", "共同待辦", "小螢待辦"),
+        "dbs": ("共同帳本", "共同帳本紀錄", "記帳成員", "共同待辦"),
     },
     # 其他人（不是你、也不是記帳群組）的私人待辦，一人一張表。
     # 獨立一頁、不分享：每張表只有那個人的事，連結外流也看不到別人的。
@@ -524,12 +524,9 @@ _SCHEMAS = {
         "變化時間": {"date": {}},
     },
 }
-# 記帳群組的待辦另開一張表放在「共同記帳」頁（那頁會分享給女友）：
-# 跟你私人的 Todos 分開，給她連結也看不到你的事。欄位同 Todos。
+# 你、小螢、記帳群組共用的一份待辦，放「共同記帳」頁。欄位同 Todos
+# （Todos 只剩欄位定義；沒設 COUPLE_GROUP_ID 時才會真的用到那張表）。
 _SCHEMAS["共同待辦"] = _SCHEMAS["Todos"]
-# 小螢私訊記的待辦也放「共同記帳」頁：她用自己的 Notion 開待辦網頁，
-# 讀得到這頁、讀不到你的 Todos。
-_SCHEMAS["小螢待辦"] = _SCHEMAS["Todos"]
 
 
 # relation 必須等目標 DB 存在才能建，所以獨立成第二階段（見 spec 3.1）。
@@ -1233,18 +1230,19 @@ def quote_mark_seen(page_id, today):
 # ─────────────────────────────────────────────────────────
 
 def _todos_db_name(owner_id):
-    """這份待辦清單放哪張表。一個主人一張，彼此看不到。
+    """這份待辦清單放哪張表。
 
-    - 你（ADMIN_LINE_USER_ID）：沿用原本的 Todos，每日信件照讀
-    - 記帳群組：「共同待辦」，在會分享給女友的「共同記帳」頁
+    - 你、小螢、記帳群組：同一份「共同待辦」，在「共同記帳」頁
+      （舊的 Todos、小螢待辦已併進來並刪除）
     - 其他人：「待辦｜ID 末 6 碼」，收在不分享的「待辦」頁
+    - 沒設 COUPLE_GROUP_ID 時你的待辦才放 Todos
     """
-    if owner_id and owner_id == os.environ.get("ADMIN_LINE_USER_ID", "").strip():
-        return "Todos"
+    import personal
+    owner_id = personal.canonical_owner(owner_id)
     if owner_id and owner_id == os.environ.get("COUPLE_GROUP_ID", "").strip():
         return "共同待辦"
-    if owner_id and owner_id == partner_line_id():
-        return "小螢待辦"
+    if owner_id and owner_id == os.environ.get("ADMIN_LINE_USER_ID", "").strip():
+        return "Todos"
     if not owner_id:
         return "Todos"
     name = f"待辦｜{owner_id[-6:]}"
@@ -1278,111 +1276,6 @@ def todos_db_url(owner_id):
     return f"https://www.notion.so/{db_id.replace('-', '')}" if db_id else ""
 
 
-def _migrate_legacy_todos(owner_id, db_id):
-    """分表以前大家的待辦都在 Todos。第一次載入某個主人的新表時，把他留在
-    Todos 的未完成待辦搬過去：先在新表建好，建成功才封存舊的，中途失敗
-    頂多留一份在舊表，不會弄丟。"""
-    _move_todos("Todos", owner_id, db_id)
-
-
-def _move_todos(src_name, src_user, db_id, new_user=None, next_local_id=None, by=None):
-    """把 src_name 表裡 src_user 的未完成待辦搬到 db_id，回搬了幾筆。
-
-    new_user：搬過去改掛在誰名下（合併清單時改成群組 ID）。
-    next_local_id：從這個編號往上重編，避免跟目的表撞號。
-    by：舊列沒有「輸入者」就補這個名字，合併後才分得出是誰的事。
-    先在新表建好，建成功才封存舊的，中途失敗頂多留一份在舊表，不會弄丟。
-    """
-    client = _get_client()
-    legacy = get_or_create_db(src_name)
-    if not client or not legacy or legacy == db_id:
-        return 0
-    try:
-        res = client.databases.query(
-            database_id=legacy,
-            filter={"and": [
-                {"property": "UserId", "rich_text": {"equals": src_user}},
-                {"property": "Done", "checkbox": {"equals": False}},
-            ]},
-            page_size=100,
-        )
-    except Exception as e:
-        print(f"[notion] 舊待辦讀取失敗：{e}")
-        return
-    keep = ("Name", "UserId", "Done", "LocalId", "分類", "期間", "優先度", "類型", "輸入者", "幫誰記")
-    moved = 0
-    for r in res.get("results", []):
-        props = {}
-        for k, v in (r.get("properties") or {}).items():
-            if k not in keep or not isinstance(v, dict):
-                continue
-            t = v.get("type")
-            val = v.get(t)
-            if t in ("title", "rich_text"):
-                props[k] = {t: [{"text": {"content": b.get("plain_text", "")}} for b in val or []]}
-            elif t == "select":
-                if val:
-                    props[k] = {"select": {"name": val["name"]}}
-            elif t == "date":
-                if val:
-                    props[k] = {"date": {"start": val["start"], "end": val.get("end")}}
-            elif t in ("checkbox", "number"):
-                props[k] = {t: val}
-        if "類型" not in props:
-            # 舊待辦沒有類型，搬家順便補，清單才分得了組
-            import todo_parse
-            name = "".join(b["text"]["content"] for b in props.get("Name", {}).get("title", []))
-            props["類型"] = {"select": {"name": todo_parse.guess_type(name)}}
-        if new_user:
-            props["UserId"] = {"rich_text": [{"text": {"content": new_user}}]}
-        if next_local_id is not None:
-            props["LocalId"] = {"number": int(next_local_id) + moved}
-        if by and not "".join(b["text"]["content"]
-                              for b in props.get("輸入者", {}).get("rich_text", [])):
-            props["輸入者"] = {"rich_text": [{"text": {"content": by}}]}
-        try:
-            client.pages.create(parent={"database_id": db_id}, properties=props)
-            client.pages.update(page_id=r["id"], archived=True)
-            moved += 1
-        except Exception as e:
-            print(f"[notion] 搬待辦失敗（舊的留著）：{e}")
-    if moved:
-        from security_utils import mask
-        print(f"[notion] 待辦從 {src_name} 搬 {moved} 筆：{mask(src_user)}")
-    return moved
-
-
-# 每個程序只搬一次：清單現在會定時重讀，不要每次重讀都去掃舊表
-_MERGED = set()
-
-
-def _merge_into_shared(group_id, db_id, next_local_id):
-    """你（Todos）和小螢（小螢待辦）的未完成待辦搬進「共同待辦」，改掛群組 ID。
-
-    合併成一份清單後，舊表只剩已完成的歷史。每次開機載入都會掃一次，
-    搬完之後舊表查不到未完成的，等於空轉一次查詢。回搬了幾筆。
-    """
-    try:
-        import personal
-    except Exception:
-        return 0
-    moved = 0
-    sources = []
-    admin = os.environ.get("ADMIN_LINE_USER_ID", "").strip()
-    if admin:
-        sources.append(("Todos", admin))
-    partner = partner_line_id()
-    if partner:
-        sources.append(("小螢待辦", partner))
-    for src_name, uid in sources:
-        if personal.canonical_owner(uid) != group_id:
-            continue
-        moved += _move_todos(src_name, uid, db_id, new_user=group_id,
-                             next_local_id=next_local_id + moved,
-                             by=personal.member_name(uid))
-    return moved
-
-
 def todos_load_for_user(user_id):
     """載入該 user 所有未完成待辦，回 list of dict
     {page_id, local_id, text, done}。失敗回 []。"""
@@ -1390,16 +1283,7 @@ def todos_load_for_user(user_id):
     client = _get_client()
     if not db_id or not client:
         return []
-    if _todos_db_name(user_id) != "Todos":
-        _migrate_legacy_todos(user_id, db_id)
-    rows = _query_open_todos(client, db_id, user_id)
-    if (user_id and user_id == os.environ.get("COUPLE_GROUP_ID", "").strip()
-            and user_id not in _MERGED):
-        _MERGED.add(user_id)
-        start = max((r["local_id"] for r in rows or []), default=0) + 1
-        if _merge_into_shared(user_id, db_id, start):
-            rows = _query_open_todos(client, db_id, user_id)
-    return rows or []
+    return _query_open_todos(client, db_id, user_id) or []
 
 
 def _query_open_todos(client, db_id, user_id):
@@ -1441,46 +1325,6 @@ def _query_open_todos(client, db_id, user_id):
     except Exception as e:
         print(f"[notion] todos_load_for_user 失敗：{e}")
         return []
-
-
-def todos_load_all_users():
-    """載入所有 user 的未完成待辦（給排程提醒掃描用）。
-    回 dict {user_id: [todo dict, ...]}。"""
-    db_id = get_or_create_db("Todos")
-    client = _get_client()
-    if not db_id or not client:
-        return {}
-    try:
-        res = client.databases.query(
-            database_id=db_id,
-            filter={"property": "Done", "checkbox": {"equals": False}},
-            page_size=100,
-        )
-        out = {}
-        for r in res.get("results", []):
-            props = r.get("properties", {}) or {}
-            uid_blocks = (props.get("UserId", {}) or {}).get("rich_text", []) or []
-            user_id = "".join(b.get("plain_text", "") for b in uid_blocks)
-            if not user_id:
-                continue
-            name_blocks = (props.get("Name", {}) or {}).get("title", []) or []
-            text = "".join(b.get("plain_text", "") for b in name_blocks)
-            local_id = (props.get("LocalId", {}) or {}).get("number") or 0
-            start, end = _read_date_range(props, "期間")
-            out.setdefault(user_id, []).append({
-                "page_id": r["id"],
-                "local_id": int(local_id),
-                "text": text,
-                "done": False,
-                "category": _read_select(props, "分類"),
-                "start": start,
-                "end": end,
-                "priority": _read_select(props, "優先度") or None,
-            })
-        return out
-    except Exception as e:
-        print(f"[notion] todos_load_all_users 失敗：{e}")
-        return {}
 
 
 TODO_CATEGORIES = ("工作", "生活", "我的專案")
