@@ -188,8 +188,9 @@ _SCHEMAS = {
         "完成時間": {"date": {}},
         # 這件事是誰的：儀表板切使用者就看這欄（personal.owner_label 決定）
         "歸屬": _select(("仁和", "blue"), ("小螢", "pink"), ("共同", "green")),
-        # 專案：LINE 打「#專案名」或在儀表板指定。選項隨用隨長
-        "專案": {"select": {}},
+        # 專案：LINE 打「#專案名」或在儀表板指定。用文字欄不用選單：
+        # 選單要先在 Notion 加選項才能寫，儀表板沒權限改欄位設定
+        "專案": {"rich_text": {}},
     },
     "Reminders": {
         "Name": {"title": {}},                                  # 提醒內容
@@ -1431,7 +1432,7 @@ def todos_create(user_id, text, local_id, category=None,
     if owner_label:
         props["歸屬"] = {"select": {"name": owner_label}}
     if project:
-        props["專案"] = {"select": {"name": project[:100]}}
+        props["專案"] = {"rich_text": [{"text": {"content": project[:100]}}]}
 
     try:
         page = client.pages.create(parent={"database_id": db_id}, properties=props)
