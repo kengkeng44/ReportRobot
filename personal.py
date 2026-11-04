@@ -175,6 +175,8 @@ def _ensure_todos_loaded(user_id):
                     "by": r.get("by") or "",
                     "for": r.get("for") or "",
                     "type": r.get("type") or "",
+                    "owner": r.get("owner") or "",
+                    "project": r.get("project") or "",
                 })
                 max_local_id = max(max_local_id, r["local_id"])
             _TODOS[user_id].extend(unsynced)

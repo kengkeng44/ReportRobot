@@ -618,6 +618,7 @@ async def env_check(request: Request):
         # 第二個信箱（郵局通知寄到那個）的 readonly token，setup_post_token.py 產生
         "POST_TOKEN_PICKLE_B64",
         "ANTHROPIC_API_KEY",
+        "WIDGET_TOKEN",
         "CWA_API_KEY",
         "OWM_API_KEY",
         "PDF_PASSWORD_PREFIX",
@@ -963,6 +964,23 @@ def chart_png(token: str):
         raise HTTPException(status_code=404, detail="chart expired")
     return Response(png, media_type="image/png",
                     headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/widget/todos")
+def widget_todos(request: Request, who: str = ""):
+    """手機桌面小工具（Scriptable）讀的資料：緊急待辦、專案進度。
+
+    要 X-Widget-Token header。用獨立的 WIDGET_TOKEN 而不是 ADMIN_TOKEN：
+    這把會放在手機的腳本裡，外流的話也只看得到待辦，碰不到 /admin。
+    """
+    token = os.environ.get("WIDGET_TOKEN", "")
+    if not token:
+        raise HTTPException(status_code=503, detail="Widget disabled")
+    got = request.headers.get("X-Widget-Token", "")
+    if not hmac.compare_digest(got.encode(), token.encode()):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    import todo_widget
+    return todo_widget.payload(who or None)
 
 
 @app.post("/admin/couple-backfill")

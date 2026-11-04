@@ -1291,6 +1291,35 @@ def todos_load_for_user(user_id):
     return _query_open_todos(client, db_id, user_id) or []
 
 
+def todos_done_counts(user_id, limit=500):
+    """已完成待辦的 (專案, 歸屬) 清單，給小工具算專案進度。失敗回 []。"""
+    db_id = todos_db_id(user_id)
+    client = _get_client()
+    if not db_id or not client:
+        return []
+    out, cursor = [], None
+    try:
+        while len(out) < limit:
+            kw = {"database_id": db_id, "page_size": 100,
+                  "filter": {"and": [
+                      {"property": "UserId", "rich_text": {"equals": user_id}},
+                      {"property": "Done", "checkbox": {"equals": True}},
+                  ]}}
+            if cursor:
+                kw["start_cursor"] = cursor
+            res = client.databases.query(**kw)
+            for r in res.get("results", []):
+                props = r.get("properties", {}) or {}
+                out.append((_read_rich_text(props, "專案"), _read_select(props, "歸屬") or ""))
+            if not res.get("has_more"):
+                break
+            cursor = res.get("next_cursor")
+        return out
+    except Exception as e:
+        print(f"[notion] todos_done_counts 失敗：{e}")
+        return out
+
+
 def todos_max_local_id(user_id):
     """這份清單用過的最大編號，連已完成的一起算。失敗回 0。
 
@@ -1351,6 +1380,8 @@ def _query_open_todos(client, db_id, user_id):
                 "by": _read_rich_text(props, "輸入者"),
                 "for": _read_rich_text(props, "幫誰記"),
                 "type": _read_select(props, "類型") or "",
+                "owner": _read_select(props, "歸屬") or "",
+                "project": _read_rich_text(props, "專案"),
             })
         return out
     except Exception as e:
