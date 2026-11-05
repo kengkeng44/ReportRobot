@@ -116,15 +116,21 @@ tr:last-child td{border-bottom:0}
 
 /* mobile card list */
 .list{display:grid}
-.card{display:grid;gap:6px;padding:10px 12px;border:0;border-top:1px solid var(--line);background:none;text-align:left;cursor:pointer;width:100%}
+.card{border-top:1px solid var(--line)}
 .card:first-child{border-top:0}
-.card:hover{background:var(--chip)}
+.card .hd{display:grid;gap:2px;padding:10px 12px;border:0;background:none;text-align:left;cursor:pointer;width:100%}
+.card .hd:hover{background:var(--chip)}
 .card .r1{display:flex;align-items:baseline;gap:6px;min-width:0}
-.card .r1 .nm{overflow:hidden;text-overflow:ellipsis}
+.card .r1 .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .card .p{margin-left:auto;font-family:var(--f-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
 .card .p .c{font-size:12px;margin-left:4px}
 .card .badge{font-family:var(--f-mono);font-size:12px;font-weight:600;min-width:28px;text-align:center;border-radius:4px;padding:0 5px;background:var(--chip);color:var(--muted)}
 .card .badge.ok{background:var(--accent);color:var(--paper)}
+.card .key{font-size:12px;color:var(--muted)}
+.card .key .v{font-size:12px}
+.card .dot{margin:0 6px;color:var(--line)}
+.card .more{padding:0 12px 10px;display:grid;gap:8px}
+.card .detail{justify-self:end;border:1px solid var(--line);background:var(--bg);border-radius:5px;padding:2px 10px;font-size:12.5px;color:var(--accent);cursor:pointer}
 .mets{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
 .met{display:grid;justify-items:center;line-height:1.2}
 .met small{font-size:10px;color:var(--muted)}
@@ -366,8 +372,11 @@ function num(d,k){
 function cmp(a,b){var x=num(a,sortKey),y=num(b,sortKey);if(x==null&&y==null)return b.score-a.score;if(x==null)return 1;if(y==null)return -1;return (x-y)*sortDir||b.score-a.score||(b.rs||0)-(a.rs||0)}
 function row(d){
   var p=d.px==null?'<span class="v na">—</span>':d.px.toLocaleString(undefined,{maximumFractionDigits:2})+(d.chg==null?'':'<span class="c '+(d.chg>0?'up':d.chg<0?'down':'')+'">'+f1(d.chg,1)+'%</span>');
-  return '<button class="card" data-c="'+d.c+'"><span class="r1">'+mk(d.m)+'<span class="nm">'+d.n+'</span><span class="cd">'+d.c+'</span><span class="p">'+p+'</span><span class="badge'+(d.ok?' ok':'')+'" title="分數 / 14">'+d.score+'</span></span>'+
-    '<span class="mets">'+IND.map(function(i){return '<span class="met"><small>'+i.n+'</small>'+val(i,d)+'</span>'}).join('')+'</span></button>';
+  var key=IND.filter(function(i){return i.k==='rev'||i.k==='rs'}).map(function(i){return i.n+' '+val(i,d)}).join('<span class="dot">·</span>');
+  return '<div class="card"><button class="hd" aria-expanded="false"><span class="r1">'+mk(d.m)+'<span class="nm">'+d.n+'</span><span class="p">'+p+'</span><span class="badge'+(d.ok?' ok':'')+'" title="分數 / 14">'+d.score+'</span></span>'+
+    '<span class="key">'+key+'</span></button>'+
+    '<div class="more" hidden><span class="mets">'+IND.map(function(i){return '<span class="met"><small>'+i.n+'</small>'+val(i,d)+'</span>'}).join('')+'</span>'+
+    '<button class="detail" data-c="'+d.c+'">細節與連結 ›</button></div></div>';
 }
 function rankKey(a,b){return b.score-a.score||(b.rs||0)-(a.rs||0)}
 function render(){
@@ -428,6 +437,7 @@ function close(){sheet.hidden=true;scrim.hidden=true;if(lastFocus)lastFocus.focu
 scrim.addEventListener('click',close);
 document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!sheet.hidden)close();if(e.key==='Enter'){var r=e.target.closest&&e.target.closest('tr[data-c]');if(r)open(r.dataset.c)}});
 document.addEventListener('click',function(e){if(e.target.closest('th'))return;var r=e.target.closest('[data-c]');if(r&&!sheet.contains(r))open(r.dataset.c)});
+document.addEventListener('click',function(e){var hd=e.target.closest('.card .hd');if(!hd)return;var m=hd.nextElementSibling,o=m.hidden;m.hidden=!o;hd.setAttribute('aria-expanded',o?'true':'false')});
 
 /* tabs */
 var tabs=[].slice.call(document.querySelectorAll('.tabs button')),names=tabs.map(function(b){return b.dataset.tab});
