@@ -291,6 +291,33 @@ async def lifespan(app: FastAPI):
         id="sources_backfill_boot",
         replace_existing=True,
     )
+    def _radar_refresh():
+        try:
+            import radar
+            radar.refresh()
+        except Exception as e:
+            print(f"[radar] 排程更新失敗（非致命）：{e}")
+
+    def _radar_boot():
+        import radar
+        if radar.snapshot() is None:
+            _radar_refresh()
+
+    scheduler.add_job(
+        _radar_boot,
+        DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(seconds=30)),
+        id="radar_boot",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        _radar_refresh,
+        CronTrigger(hour=14, minute=45, timezone="Asia/Taipei"),
+        id="radar_daily",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
+        replace_existing=True,
+    )
     scheduler.add_job(
         _run_sources_backfill,
         CronTrigger(hour=16, minute=5, timezone="Asia/Taipei"),
@@ -983,19 +1010,31 @@ def widget_todos(request: Request, who: str = ""):
     return todo_widget.payload(who or None)
 
 
-@app.get("/radar")
-def radar_page(k: str = "", refresh: str = ""):
-    """全球股市雷達（機器人賽道）：每次打開即時抓價，10 分鐘快取；?refresh=1 強制重抓。
-
-    只有公開行情、沒有個人資料。設了 RADAR_TOKEN 就要帶 ?k=，避免被當免費 API 狂刷。
-    """
-    from fastapi.responses import HTMLResponse
+def _radar_auth(k):
     token = os.environ.get("RADAR_TOKEN", "")
     if token and not hmac.compare_digest(k.encode(), token.encode()):
         raise HTTPException(status_code=403, detail="Forbidden")
+
+
+@app.get("/radar")
+def radar_page(k: str = ""):
+    """全球股市雷達（機器人賽道）。只讀快照，秒開；快照每天 14:45 更新，或按頁面上的更新鈕。
+
+    只有公開行情、沒有個人資料。設了 RADAR_TOKEN 就要帶 ?k=。
+    """
+    from fastapi.responses import HTMLResponse
+    _radar_auth(k)
     import radar
-    return HTMLResponse(radar.render(radar.data(force=refresh == "1")),
-                        headers={"Cache-Control": "no-store"})
+    return HTMLResponse(radar.render(radar.snapshot()), headers={"Cache-Control": "no-store"})
+
+
+@app.post("/radar/refresh")
+def radar_refresh(k: str = ""):
+    """頁面上的更新鈕：重抓一次（約 10–20 秒），回新的更新時間。"""
+    _radar_auth(k)
+    import radar
+    d = radar.refresh()
+    return {"ok": bool(d), "at": (d or {}).get("at"), "missing": len((d or {}).get("missing", []))}
 
 
 @app.get("/radar/icon.png")

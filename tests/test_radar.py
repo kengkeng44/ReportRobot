@@ -77,3 +77,23 @@ def test_render_escapes_script_close():
     html = radar.render({"at": "x", "regime": {}, "missing": [],
                          "stocks": [{"c": "</script>"}]})
     assert "</script>\"" not in html
+
+
+def test_refresh_saves_snapshot_and_keeps_old_on_total_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(radar, "SNAPSHOT_PATH", str(tmp_path / "snap.json"))
+    monkeypatch.setattr(radar, "_snap", {"data": None})
+    good = ({"2049": ("2049.TW", _rising(), [1000] * 260)}, {}, {})
+    monkeypatch.setattr(radar, "collect", lambda: good)
+    d = radar.refresh()
+    assert d["stocks"][0]["px"] is not None
+    # 行程重啟：記憶體清掉，從磁碟讀回來
+    monkeypatch.setattr(radar, "_snap", {"data": None})
+    assert radar.snapshot()["at"] == d["at"]
+    # 一檔都沒抓到：保留舊的
+    monkeypatch.setattr(radar, "collect", lambda: ({}, {}, {}))
+    assert radar.refresh()["at"] == d["at"]
+
+
+def test_render_without_snapshot():
+    html = radar.render(None)
+    assert "var RADAR=null;" in html

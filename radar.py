@@ -1,6 +1,6 @@
 """全球股市雷達：機器人賽道的即時動能榜。
 
-GET /radar 每次打開就重抓（10 分鐘快取），流程拆成三段：
+GET /radar 只讀快照（秒開）；快照每天 14:45 排程更新，或按頁面上的更新鈕。流程拆成三段：
 - collect  打 Yahoo（日線一年）與證交所／櫃買 OpenAPI（月營收），唯一碰網路的部分
 - compute  純函式：收盤價序列 → 均線、52 週位置、相對強度、量比
 - render   把結果塞進 static/radar.html 的 window.RADAR
@@ -19,8 +19,6 @@ from datetime import datetime, timedelta, timezone
 import http_utils
 
 TPE = timezone(timedelta(hours=8))
-PRICE_TTL = 600          # 價格快取 10 分鐘
-REVENUE_TTL = 6 * 3600   # 月營收一個月才變一次，6 小時夠了
 UA = {"User-Agent": "Mozilla/5.0"}
 
 TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -211,10 +209,11 @@ def assemble(prices, revenue, bench):
 
 def _links(code, mkt, sym):
     if mkt == "tw":
+        s = sym or f"{code}.TW"
         return [
-            {"t": "Yahoo 股市", "u": f"https://tw.stock.yahoo.com/quote/{code}"},
-            {"t": "月營收", "u": f"https://tw.stock.yahoo.com/quote/{code}/revenue"},
-            {"t": "新聞", "u": f"https://news.cnyes.com/search?keyword={code}"},
+            {"t": "Yahoo 股市", "u": f"https://tw.stock.yahoo.com/quote/{s}"},
+            {"t": "月營收", "u": f"https://tw.stock.yahoo.com/quote/{s}/revenue"},
+            {"t": "新聞", "u": f"https://tw.stock.yahoo.com/quote/{s}/news"},
         ]
     s = sym or code
     return [
@@ -226,8 +225,10 @@ def _links(code, mkt, sym):
 # ── collect（碰網路）──────────────────────────────────────
 
 def _chart(sym):
-    r = http_utils.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}",
-                       params={"interval": "1d", "range": "1y"}, headers=UA, timeout=12)
+    # 不走 http_utils 的重試：一檔掛掉就算了，不能讓整頁等 2+4+8 秒
+    import requests
+    r = requests.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}",
+                     params={"interval": "1d", "range": "1y"}, headers=UA, timeout=8)
     if r.status_code != 200:
         return None
     res = (r.json().get("chart") or {}).get("result") or []
@@ -242,8 +243,15 @@ def _chart(sym):
     return [c for c, _ in pairs], [v for _, v in pairs]
 
 
+_suffix = {}  # 台股代號 → 上次成功的 .TW / .TWO，下次直接打對的那個
+
+
 def _fetch_one(code, mkt):
-    syms = [f"{code}.TW", f"{code}.TWO"] if mkt == "tw" else [code]
+    if mkt == "tw":
+        first = _suffix.get(code, ".TW")
+        syms = [code + first, code + (".TWO" if first == ".TW" else ".TW")]
+    else:
+        syms = [code]
     for s in syms:
         try:
             got = _chart(s)
@@ -251,6 +259,8 @@ def _fetch_one(code, mkt):
             print(f"[radar] {s} 抓取失敗：{e}")
             got = None
         if got:
+            if mkt == "tw":
+                _suffix[code] = s[len(code):]
             return code, (s, got[0], got[1])
     return code, None
 
@@ -259,39 +269,67 @@ _REV_URLS = [
     "https://openapi.twse.com.tw/v1/opendata/t187ap05_L",
     "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O",
 ]
-_lock = threading.Lock()
-_cache = {"data": None, "ts": 0, "rev": None, "rev_ts": 0}
 
 
 def _revenue():
-    if _cache["rev"] is not None and time.time() - _cache["rev_ts"] < REVENUE_TTL:
-        return _cache["rev"]
     out = {}
     for u in _REV_URLS:
         try:
             out.update(parse_revenue(http_utils.get(u, headers=UA, timeout=20).json()))
         except Exception as e:
             print(f"[radar] 月營收抓取失敗 {u[:50]}：{e}")
-    if out:
-        _cache["rev"], _cache["rev_ts"] = out, time.time()
     return out
 
 
 def collect():
-    with ThreadPoolExecutor(max_workers=8) as ex:
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        rev = ex.submit(_revenue)
         got = list(ex.map(lambda u: _fetch_one(u[0], u[2]), UNIVERSE))
         bench = list(ex.map(lambda kv: (kv[0], _chart(kv[1])), BENCH.items()))
+        revenue = rev.result()
     prices = {c: v for c, v in got if v}
-    return prices, _revenue(), {k: (v[0] if v else []) for k, v in bench}
+    return prices, revenue, {k: (v[0] if v else []) for k, v in bench}
 
 
-def data(force=False):
-    with _lock:
-        if not force and _cache["data"] and time.time() - _cache["ts"] < PRICE_TTL:
-            return _cache["data"]
+# ── 快照：每天排程更新一次，或按頁面上的更新鈕；打開頁面只讀快照，不連外 ──
+SNAPSHOT_PATH = os.environ.get("RADAR_SNAPSHOT", "/tmp/radar_snapshot.json")
+_lock = threading.Lock()
+_snap = {"data": None}
+
+
+def snapshot():
+    """目前的快照；記憶體沒有就讀磁碟（行程重啟後）。都沒有回 None。"""
+    if _snap["data"] is None and os.path.exists(SNAPSHOT_PATH):
+        try:
+            with open(SNAPSHOT_PATH, encoding="utf-8") as f:
+                _snap["data"] = json.load(f)
+        except Exception as e:
+            print(f"[radar] 讀快照失敗：{e}")
+    return _snap["data"]
+
+
+def refresh():
+    """重抓一次並存成快照。同時只跑一個；已在跑的話等它跑完直接用它的結果。"""
+    if not _lock.acquire(blocking=False):
+        with _lock:
+            return _snap["data"]
+    try:
+        t0 = time.time()
         d = assemble(*collect())
-        _cache["data"], _cache["ts"] = d, time.time()
+        d["secs"] = round(time.time() - t0, 1)
+        if len(d["missing"]) == len(d["stocks"]) and _snap["data"]:
+            print("[radar] 這次一檔都沒抓到，保留舊快照")
+            return _snap["data"]
+        _snap["data"] = d
+        try:
+            with open(SNAPSHOT_PATH, "w", encoding="utf-8") as f:
+                json.dump(d, f, ensure_ascii=False)
+        except Exception as e:
+            print(f"[radar] 寫快照失敗：{e}")
+        print(f"[radar] 更新完成 {d['secs']}s，缺 {len(d['missing'])} 檔")
         return d
+    finally:
+        _lock.release()
 
 
 def render(payload):
@@ -303,4 +341,4 @@ def render(payload):
 
 if __name__ == "__main__":
     # 本機預覽：python radar.py > radar_preview.html
-    print(render(data(force=True)))
+    print(render(refresh()))
