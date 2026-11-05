@@ -998,6 +998,14 @@ def radar_page(k: str = "", refresh: str = ""):
                         headers={"Cache-Control": "no-store"})
 
 
+@app.get("/radar/icon.png")
+def radar_icon():
+    """雷達的手機桌面圖示（加入主畫面時 iOS／Android 會抓這張）。"""
+    from fastapi.responses import FileResponse
+    return FileResponse(os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "radar-icon.png"),
+                        media_type="image/png", headers={"Cache-Control": "public, max-age=604800"})
+
+
 @app.post("/admin/couple-backfill")
 def couple_backfill(request: Request):
     """把交易明細既有的共同消費補進共同帳本（一次性；重跑安全，有去重）。"""
