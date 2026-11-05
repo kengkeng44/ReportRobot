@@ -25,10 +25,10 @@
 html{padding-top:env(safe-area-inset-top,0px)}
 body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.55;margin:0;padding-bottom:48px}
 .gut{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
-.wrap{max-width:1000px;margin:0 auto}
+.wrap{max-width:620px;margin:0 auto}
 a{color:var(--accent)}
 h1,h2,h3{text-wrap:balance;line-height:1.3;margin:0}
-h1{font-size:19px;font-weight:900}
+h1{font-size:17px;font-weight:900}
 h2{font-size:18px;font-weight:900}
 h3{font-size:15px;font-weight:700}
 p{margin:0}
@@ -52,20 +52,23 @@ button{font:inherit;color:inherit}
 /* header */
 .top{position:sticky;top:0;z-index:5;background:var(--paper);border-bottom:1px solid var(--line)}
 .top .wrap{display:grid;gap:8px;padding-top:10px}
-.title-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.stamp{font-size:12px;color:var(--muted)}
-.refresh{margin-left:auto;border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:3px 10px;font-size:13px;cursor:pointer;text-decoration:none;color:var(--ink)}
-.regime{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);align-items:baseline}
+.title-row{display:flex;align-items:center;gap:8px}
+.title-row h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.stamp{font-size:12px;color:var(--muted);white-space:nowrap}
+.refresh{margin-left:auto;flex:none;white-space:nowrap;border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:3px 10px;font-size:13px;cursor:pointer;text-decoration:none;color:var(--ink)}
+.regime{display:flex;gap:12px;overflow-x:auto;scrollbar-width:none;font-size:12.5px;color:var(--muted);align-items:baseline}
 .regime span{white-space:nowrap}
-.regime b{color:var(--ink)}
+.regime b{color:var(--ink);flex:none}
+.regime>span{flex:none}
+.regime::-webkit-scrollbar{display:none}
 .tabs{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;margin:0 -4px;padding:0 4px 8px}
 .tabs::-webkit-scrollbar{display:none}
 .tabs button{flex:none;font-size:14px;font-weight:500;border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:999px;padding:5px 14px;cursor:pointer}
 .tabs button[aria-selected="true"]{background:var(--ink);border-color:var(--ink);color:var(--paper);font-weight:700}
 .tabs .c{font-family:var(--f-mono);font-size:11px;margin-left:4px;opacity:.75}
 
-main .wrap{padding-top:18px}
-.panel{display:grid;gap:12px}
+main .wrap{padding-top:12px}
+.panel{display:grid;gap:10px}
 .panel>*,.segs>*{min-width:0}
 details{background:var(--paper);border:1px solid var(--line);border-radius:6px}
 summary{cursor:pointer;list-style:none;padding:10px 14px;font-weight:700;display:flex;align-items:center;gap:10px}
@@ -111,9 +114,29 @@ tr:last-child td{border-bottom:0}
 .cmd{font-family:var(--f-mono);background:var(--chip);border-radius:4px;padding:1px 7px;font-size:13px}
 .warn{font-size:12.5px;color:var(--mid)}
 
+/* mobile card list */
+.list{display:grid}
+.card{display:grid;gap:6px;padding:10px 12px;border:0;border-top:1px solid var(--line);background:none;text-align:left;cursor:pointer;width:100%}
+.card:first-child{border-top:0}
+.card:hover{background:var(--chip)}
+.card .r1{display:flex;align-items:baseline;gap:6px;min-width:0}
+.card .r1 .nm{overflow:hidden;text-overflow:ellipsis}
+.card .p{margin-left:auto;font-family:var(--f-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.card .p .c{font-size:12px;margin-left:4px}
+.card .badge{font-family:var(--f-mono);font-size:12px;font-weight:600;min-width:28px;text-align:center;border-radius:4px;padding:0 5px;background:var(--chip);color:var(--muted)}
+.card .badge.ok{background:var(--accent);color:var(--paper)}
+.mets{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.met{display:grid;justify-items:center;line-height:1.2}
+.met small{font-size:10px;color:var(--muted)}
+.met .v{font-size:12px}
+.sortchips{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none}
+.sortchips::-webkit-scrollbar{display:none}
+.sortchips button{flex:none;border:1px solid var(--line);background:var(--paper);border-radius:999px;padding:2px 10px;font-size:12.5px;color:var(--muted);cursor:pointer}
+.sortchips button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);font-weight:700}
+
 /* supply chain */
-.chainfig{display:grid;grid-template-columns:200px 1fr;gap:16px;align-items:start}
-@media (max-width:680px){.chainfig{grid-template-columns:1fr}.chainfig svg{max-width:170px;margin:0 auto}}
+.chainfig{display:grid;grid-template-columns:120px 1fr;gap:16px;align-items:start}
+@media (max-width:680px){.chainfig{grid-template-columns:84px 1fr;gap:10px}.chainfig svg{position:sticky;top:130px}}
 .chainfig svg{width:100%;height:auto;display:block}
 .bodyshape{fill:var(--body)}
 .limb{stroke:var(--body);stroke-width:16;stroke-linecap:round;fill:none}
@@ -154,7 +177,7 @@ ul.plain{margin:0;padding-left:1.2em}
 <header class="top gut">
   <div class="wrap">
     <div class="title-row">
-      <h1>全球股市雷達 · 機器人</h1>
+      <h1>股市雷達 · 機器人</h1>
       <span class="stamp" id="stamp"></span>
       <a class="refresh" href="?refresh=1" id="refresh">重新整理</a>
     </div>
@@ -197,19 +220,19 @@ ul.plain{margin:0;padding-left:1.2em}
     </div>
     <span class="count" id="count"></span>
   </div>
+  <div class="sortchips" role="group" aria-label="排序" id="sortchips"></div>
   <p class="warn" id="missing" hidden></p>
 
   <details open>
     <summary>達標榜 <span class="cnt" id="topCnt"></span></summary>
-    <div id="boardEmpty" class="in" hidden><p class="note">目前沒有股票同時通過所有標準。下面候選池依分數排序。</p></div>
-    <div class="board" id="boardWrap" style="border:0;border-top:1px solid var(--line);border-radius:0"><table><thead class="bh"></thead><tbody id="boardBody"></tbody></table></div>
+    <p id="boardEmpty" class="note" style="padding:0 14px 12px" hidden>目前沒有股票通過全部標準。</p>
+    <div class="list" id="boardBody"></div>
   </details>
 
-  <details open>
+  <details id="poolDet">
     <summary>候選池 <span class="cnt" id="poolCnt"></span></summary>
-    <div class="board" style="border:0;border-top:1px solid var(--line);border-radius:0"><table><thead class="bh"></thead><tbody id="poolBody"></tbody></table></div>
+    <div class="list" id="poolBody"></div>
   </details>
-  <p class="note">點欄位標題排序，點任一列看個股細節與連結。股價<span class="up">紅漲</span><span class="down">綠跌</span>。</p>
 </section>
 
 <section class="panel" id="p-mine" role="tabpanel" hidden>
@@ -238,7 +261,7 @@ ul.plain{margin:0;padding-left:1.2em}
     </svg>
     <div class="segs" id="segs"></div>
   </div>
-  <p class="note"><i class="mk tw">台</i>台廠 <i class="mk gl">外</i>外廠 · 紅格＝台廠切入程度 · 右側數字是股價日漲跌與分數</p>
+  <p class="note">紅格＝台廠切入程度</p>
 </section>
 
 <section class="panel" id="p-risk" role="tabpanel" hidden>
@@ -298,13 +321,13 @@ var IND=[
    show:function(d){return d.vol==null?'—':d.vol.toFixed(2)}}
 ];
 var REG=[
-  {k:'tw',n:'台股加權',s:'> 200 日線且線向上',m:'> 200 日線',w:'< 200 日線'},
-  {k:'us',n:'S&P 500',s:'> 200 日線且線向上',m:'> 200 日線',w:'< 200 日線'},
+  {k:'tw',n:'台股',s:'> 200 日線且線向上',m:'> 200 日線',w:'< 200 日線'},
+  {k:'us',n:'美股',s:'> 200 日線且線向上',m:'> 200 日線',w:'< 200 日線'},
   {k:'vix',n:'VIX',s:'< 18',m:'18 ~ 25',w:'> 25'}
 ];
 var SCORE={s:2,m:1,w:0};
-var SEG={vision:{no:1,n:'視覺、感測',tw:1},brain:{no:2,n:'AI 晶片、控制器',tw:1},reducer:{no:3,n:'關節減速機',tw:2},
-  motor:{no:4,n:'馬達、驅動、氣動',tw:2},screw:{no:5,n:'螺桿、滑軌',tw:3},integ:{no:6,n:'整機（人形、協作、工業）',tw:1}};
+var SEG={vision:{no:1,n:'視覺感測',tw:1},brain:{no:2,n:'AI 晶片',tw:1},reducer:{no:3,n:'減速機',tw:2},
+  motor:{no:4,n:'馬達驅動',tw:2},screw:{no:5,n:'螺桿滑軌',tw:3},integ:{no:6,n:'整機',tw:1}};
 var S=RADAR.stocks;
 
 S.forEach(function(d){
@@ -319,10 +342,10 @@ function chg(d){if(d.chg==null)return '';return '<span class="pxc '+(d.chg>0?'up
 function pxs(d){return d.px==null?'<span class="v na">—</span>':'<span class="mono">'+d.px.toLocaleString(undefined,{maximumFractionDigits:2})+'</span>'+chg(d)}
 
 /* header */
-document.getElementById('stamp').textContent='更新 '+RADAR.at;
+var st=document.getElementById('stamp');st.textContent=RADAR.at.slice(5);st.title='更新 '+RADAR.at;
 function regLv(k,r){if(!r||r.px==null)return null;if(k==='vix')return r.px<18?'s':r.px<=25?'m':'w';if(r.ma200==null)return null;return r.px>r.ma200&&r.ma200up?'s':r.px>r.ma200?'m':'w'}
-document.getElementById('regime').innerHTML='<b>大環境</b>'+REG.map(function(g){var r=(RADAR.regime||{})[g.k],l=regLv(g.k,r);
-  var t=!r||r.px==null?'—':g.k==='vix'?r.px.toFixed(1):(r.ma200?f1((r.px/r.ma200-1)*100,1)+'% vs 200日':r.px.toLocaleString());
+document.getElementById('regime').innerHTML='<b title="指數相對 200 日線">大環境</b>'+REG.map(function(g){var r=(RADAR.regime||{})[g.k],l=regLv(g.k,r);
+  var t=!r||r.px==null?'—':g.k==='vix'?r.px.toFixed(1):(r.ma200?f1((r.px/r.ma200-1)*100,1)+'%':r.px.toLocaleString());
   return '<span>'+g.n+' <span class="v '+(l||'na')+'">'+t+'</span></span>'}).join('');
 document.getElementById('stdRows').innerHTML=IND.map(function(i){return '<tr><td>'+i.n+'<span class="why">'+i.why+'</span></td><td>'+i.s+'</td><td>'+i.m+'</td><td>'+i.w+'</td></tr>'}).join('');
 document.getElementById('regRows').innerHTML=REG.map(function(r){return '<tr><td>'+r.n+'</td><td>'+r.s+'</td><td>'+r.m+'</td><td>'+r.w+'</td></tr>'}).join('');
@@ -330,19 +353,21 @@ if(RADAR.missing&&RADAR.missing.length){var mm=document.getElementById('missing'
 
 /* board */
 var mkt='all',sortKey='score',sortDir=-1;
-var COLS=[{k:'score',n:'分數'}].concat(IND.map(function(i){return {k:i.k,n:i.n}}));
-function head(){return '<tr><th>#</th><th>股票</th><th class="n sortable" data-k="px">股價</th>'+IND.map(function(i){return '<th class="n sortable" data-k="'+i.k+'" title="'+i.why+'"'+(sortKey===i.k?' aria-sort="'+(sortDir<0?'descending':'ascending')+'"':'')+'>'+i.n+'</th>'}).join('')+
-  '<th class="sortable" data-k="score"'+(sortKey==='score'?' aria-sort="descending"':'')+'>分數</th><th>狀態</th></tr>'}
+var SORTS=[{k:'score',n:'分數'},{k:'rs',n:'RS'},{k:'rev',n:'營收'},{k:'px',n:'漲跌'},{k:'trend',n:'趨勢'},{k:'vol',n:'量比'}];
+var sc=document.getElementById('sortchips');
+sc.innerHTML='<span class="note" style="align-self:center">排序</span>'+SORTS.map(function(s){return '<button data-k="'+s.k+'" aria-pressed="'+(s.k===sortKey)+'">'+s.n+'</button>'}).join('');
+sc.addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;sortKey=b.dataset.k;
+  sc.querySelectorAll('button').forEach(function(x){x.setAttribute('aria-pressed',x===b?'true':'false')});render()});
 function num(d,k){
   if(k==='score')return d.score;if(k==='px')return d.chg;
   if(k==='rev')return d.rev;if(k==='eps')return d.loss?-999:d.eps;if(k==='est')return d.est==='up'?10:d.est==='down'?-10:d.est;
   if(k==='trend')return d.ma200?d.px/d.ma200:null;if(k==='pos')return d.hi52?d.px/d.hi52:null;return d[k];
 }
 function cmp(a,b){var x=num(a,sortKey),y=num(b,sortKey);if(x==null&&y==null)return b.score-a.score;if(x==null)return 1;if(y==null)return -1;return (x-y)*sortDir||b.score-a.score||(b.rs||0)-(a.rs||0)}
-function row(d,idx){
-  return '<tr data-c="'+d.c+'" tabindex="0"><td class="mono note">'+idx+'</td><td><div>'+mk(d.m)+'<span class="nm">'+d.n+'</span><span class="cd">'+d.c+'</span></div><div class="sg">'+SEG[d.g].n+'</div></td><td class="n">'+pxs(d)+'</td>'+
-    IND.map(function(i){return '<td class="n">'+val(i,d)+'</td>'}).join('')+
-    '<td class="sc">'+d.score+'</td><td>'+(d.ok?'<span class="pass">達標</span>':'<span class="pend">'+(d.complete?'未達':'資料不全')+'</span>')+'</td></tr>';
+function row(d){
+  var p=d.px==null?'<span class="v na">—</span>':d.px.toLocaleString(undefined,{maximumFractionDigits:2})+(d.chg==null?'':'<span class="c '+(d.chg>0?'up':d.chg<0?'down':'')+'">'+f1(d.chg,1)+'%</span>');
+  return '<button class="card" data-c="'+d.c+'"><span class="r1">'+mk(d.m)+'<span class="nm">'+d.n+'</span><span class="cd">'+d.c+'</span><span class="p">'+p+'</span><span class="badge'+(d.ok?' ok':'')+'" title="分數 / 14">'+d.score+'</span></span>'+
+    '<span class="mets">'+IND.map(function(i){return '<span class="met"><small>'+i.n+'</small>'+val(i,d)+'</span>'}).join('')+'</span></button>';
 }
 function rankKey(a,b){return b.score-a.score||(b.rs||0)-(a.rs||0)}
 function render(){
@@ -351,20 +376,17 @@ function render(){
   var topAll=tw.concat(gl);
   var top=topAll.filter(function(d){return mkt==='all'||d.m===mkt}).sort(cmp);
   var pool=S.filter(function(d){return topAll.indexOf(d)<0&&(mkt==='all'||d.m===mkt)}).sort(cmp);
-  document.querySelectorAll('.bh').forEach(function(h){h.innerHTML=head()});
   document.getElementById('c-board').textContent=topAll.length;
   document.getElementById('topCnt').textContent=top.length+' / 20';
   document.getElementById('boardEmpty').hidden=top.length>0;
-  document.getElementById('boardWrap').hidden=top.length===0;
-  document.getElementById('boardBody').innerHTML=top.map(function(d,i){return row(d,i+1)}).join('');
-  document.getElementById('poolBody').innerHTML=pool.map(function(d,i){return row(d,i+1)}).join('');
+  document.getElementById('boardBody').innerHTML=top.map(row).join('');
+  document.getElementById('poolBody').innerHTML=pool.map(row).join('');
+  if(!topAll.length)document.getElementById('poolDet').open=true;
   document.getElementById('poolCnt').textContent=pool.length+' 檔';
   document.getElementById('count').textContent='達標 '+topAll.length+' · 候選 '+S.length;
 }
 document.querySelectorAll('.seg button').forEach(function(b){b.addEventListener('click',function(){
   mkt=b.dataset.mkt;document.querySelectorAll('.seg button').forEach(function(x){x.setAttribute('aria-pressed',x===b?'true':'false')});render()})});
-document.addEventListener('click',function(e){var th=e.target.closest('th.sortable');if(!th)return;var k=th.dataset.k;
-  if(sortKey===k)sortDir=-sortDir;else{sortKey=k;sortDir=(k==='pos')?-1:-1}render()});
 render();
 
 /* supply chain */
