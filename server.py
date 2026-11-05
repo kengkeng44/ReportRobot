@@ -983,6 +983,21 @@ def widget_todos(request: Request, who: str = ""):
     return todo_widget.payload(who or None)
 
 
+@app.get("/radar")
+def radar_page(k: str = "", refresh: str = ""):
+    """全球股市雷達（機器人賽道）：每次打開即時抓價，10 分鐘快取；?refresh=1 強制重抓。
+
+    只有公開行情、沒有個人資料。設了 RADAR_TOKEN 就要帶 ?k=，避免被當免費 API 狂刷。
+    """
+    from fastapi.responses import HTMLResponse
+    token = os.environ.get("RADAR_TOKEN", "")
+    if token and not hmac.compare_digest(k.encode(), token.encode()):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    import radar
+    return HTMLResponse(radar.render(radar.data(force=refresh == "1")),
+                        headers={"Cache-Control": "no-store"})
+
+
 @app.post("/admin/couple-backfill")
 def couple_backfill(request: Request):
     """把交易明細既有的共同消費補進共同帳本（一次性；重跑安全，有去重）。"""

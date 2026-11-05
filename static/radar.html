@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>全球股市雷達</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Noto+Sans+TC:wght@400;500;700;900&display=swap">
+<style>
+/* Layout: sticky header (大環境 + tabs) → one panel at a time; stock detail in a side sheet. Numbers colored by level. */
+:root{
+  --bg:#f3f5f6; --paper:#ffffff; --ink:#15212b; --muted:#5b6973; --line:#d9e0e4;
+  --accent:#0f6e7a; --accent-soft:#e1f0f1; --body:#c9d3d9;
+  --up:#c8372d; --down:#1d8a4e; --mid:#a8700a; --weak:#8a979f; --chip:#eef2f4; --scrim:rgba(10,20,28,.35);
+  --f-body:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#0f161b; --paper:#162129; --ink:#e4ebef; --muted:#93a3ad; --line:#2a3943;
+  --accent:#4fb8c3; --accent-soft:#17343a; --body:#2c3d48; --up:#f0695e; --down:#4cc184; --mid:#e2a948; --weak:#6f7f89; --chip:#1d2b34; --scrim:rgba(0,0,0,.55); color-scheme:dark}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{padding-top:env(safe-area-inset-top,0px)}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.55;margin:0;padding-bottom:48px}
+.gut{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1000px;margin:0 auto}
+a{color:var(--accent)}
+h1,h2,h3{text-wrap:balance;line-height:1.3;margin:0}
+h1{font-size:19px;font-weight:900}
+h2{font-size:18px;font-weight:900}
+h3{font-size:15px;font-weight:700}
+p{margin:0}
+.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.note{font-size:12.5px;color:var(--muted)}
+button{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.up{color:var(--up)}.down{color:var(--down)}
+
+/* level-colored numbers */
+.v{font-family:var(--f-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.v.s{color:var(--accent);font-weight:600}
+.v.m{color:var(--mid)}
+.v.w{color:var(--weak)}
+.v.na{color:var(--line)}
+.lv{display:inline-block;font-size:11px;padding:0 6px;border-radius:3px;font-weight:700}
+.lv.s{background:var(--accent-soft);color:var(--accent)}
+.lv.m{background:color-mix(in srgb,var(--mid) 16%,transparent);color:var(--mid)}
+.lv.w{background:var(--chip);color:var(--weak)}
+
+/* header */
+.top{position:sticky;top:0;z-index:5;background:var(--paper);border-bottom:1px solid var(--line)}
+.top .wrap{display:grid;gap:8px;padding-top:10px}
+.title-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.stamp{font-size:12px;color:var(--muted)}
+.refresh{margin-left:auto;border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:3px 10px;font-size:13px;cursor:pointer;text-decoration:none;color:var(--ink)}
+.regime{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);align-items:baseline}
+.regime span{white-space:nowrap}
+.regime b{color:var(--ink)}
+.tabs{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;margin:0 -4px;padding:0 4px 8px}
+.tabs::-webkit-scrollbar{display:none}
+.tabs button{flex:none;font-size:14px;font-weight:500;border:1px solid var(--line);background:var(--bg);color:var(--muted);border-radius:999px;padding:5px 14px;cursor:pointer}
+.tabs button[aria-selected="true"]{background:var(--ink);border-color:var(--ink);color:var(--paper);font-weight:700}
+.tabs .c{font-family:var(--f-mono);font-size:11px;margin-left:4px;opacity:.75}
+
+main .wrap{padding-top:18px}
+.panel{display:grid;gap:12px}
+.panel>*,.segs>*{min-width:0}
+details{background:var(--paper);border:1px solid var(--line);border-radius:6px}
+summary{cursor:pointer;list-style:none;padding:10px 14px;font-weight:700;display:flex;align-items:center;gap:10px}
+summary::-webkit-details-marker{display:none}
+summary .cnt{font-family:var(--f-mono);font-size:12px;color:var(--muted);font-weight:400}
+summary::after{content:"+";margin-left:auto;font-family:var(--f-mono);color:var(--accent)}
+details[open]>summary::after{content:"−"}
+details>.in{padding:0 14px 14px;display:grid;gap:10px}
+
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+th{font-size:12px;color:var(--muted);font-weight:500;background:var(--chip);white-space:nowrap}
+tr:last-child td{border-bottom:0}
+.std td:first-child{white-space:nowrap;font-weight:700}
+.std .why{display:block;font-weight:400;font-size:12px;color:var(--muted)}
+.rule{background:var(--accent-soft);border-radius:5px;padding:10px 12px;font-size:14px;display:grid;gap:4px}
+
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--paper)}
+.seg button{border:0;background:none;padding:4px 12px;font-size:13px;color:var(--muted);cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent);font-weight:700}
+.count{margin-left:auto;font-size:12.5px;color:var(--muted)}
+.board{background:var(--paper);border:1px solid var(--line);border-radius:6px;overflow-x:auto}
+.board table{min-width:820px}
+.board th.n,.board td.n{text-align:right}
+.board td.sc{font-family:var(--f-mono);font-weight:600;text-align:center}
+.board tbody tr{cursor:pointer}
+.board tbody tr:hover{background:var(--chip)}
+.board th.sortable{cursor:pointer}
+.board th.sortable[aria-sort]{color:var(--accent);font-weight:700}
+.nm{font-weight:700;white-space:nowrap}
+.cd{font-family:var(--f-mono);font-size:12px;color:var(--muted);margin-left:6px}
+.sg{font-size:11.5px;color:var(--muted)}
+.mk{font-family:var(--f-mono);font-size:10.5px;padding:0 4px;border-radius:2px;margin-right:4px;font-style:normal}
+.mk.tw{background:color-mix(in srgb,var(--up) 14%,transparent);color:var(--up)}
+.mk.gl{background:var(--chip);color:var(--muted)}
+.pass{font-size:12px;font-weight:700;color:var(--accent);white-space:nowrap}
+.pend{font-size:12px;color:var(--muted);white-space:nowrap}
+.pxc{display:block;font-size:11.5px}
+.empty{border:1.5px dashed var(--line);border-radius:8px;padding:22px 16px;display:grid;gap:8px;justify-items:center;text-align:center;background:var(--paper)}
+.empty .big{font-weight:900}
+.cmd{font-family:var(--f-mono);background:var(--chip);border-radius:4px;padding:1px 7px;font-size:13px}
+.warn{font-size:12.5px;color:var(--mid)}
+
+/* supply chain */
+.chainfig{display:grid;grid-template-columns:200px 1fr;gap:16px;align-items:start}
+@media (max-width:680px){.chainfig{grid-template-columns:1fr}.chainfig svg{max-width:170px;margin:0 auto}}
+.chainfig svg{width:100%;height:auto;display:block}
+.bodyshape{fill:var(--body)}
+.limb{stroke:var(--body);stroke-width:16;stroke-linecap:round;fill:none}
+.part{cursor:pointer}
+.part circle{fill:var(--paper);stroke:var(--accent);stroke-width:2}
+.part text{fill:var(--accent);font-family:var(--f-mono);font-size:12px;font-weight:600;text-anchor:middle;dominant-baseline:central}
+.part.on circle{fill:var(--accent)} .part.on text{fill:var(--paper)}
+.segs{display:grid;gap:6px;min-width:0}
+.segs details.on{border-color:var(--accent)}
+.segs summary .no{font-family:var(--f-mono);font-size:11px;width:18px;height:18px;border-radius:50%;border:1.5px solid var(--accent);color:var(--accent);display:grid;place-items:center;flex:none}
+.segs details.on summary .no{background:var(--accent);color:var(--paper)}
+.meter{display:flex;gap:2px;align-items:center;font-size:11px;color:var(--muted);font-weight:400;white-space:nowrap}
+.meter i{width:9px;height:6px;border-radius:1px;background:var(--line)}
+.meter i.f{background:var(--up)}
+.srow{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;padding:7px 8px;border-radius:5px;border:0;background:none;text-align:left;cursor:pointer;width:100%}
+.srow:hover{background:var(--chip)}
+.srow .r{text-align:right;font-size:12.5px}
+
+/* sheet */
+.scrim{position:fixed;inset:0;background:var(--scrim);z-index:20}
+.sheet{position:fixed;z-index:21;background:var(--paper);border-left:1px solid var(--line);top:0;right:0;bottom:0;width:min(460px,100%);overflow-y:auto;
+  padding:calc(16px + env(safe-area-inset-top,0px)) max(18px,env(safe-area-inset-right,0px)) calc(24px + env(safe-area-inset-bottom,0px)) 18px;display:grid;gap:14px;align-content:start}
+@media (max-width:560px){.sheet{top:auto;left:0;width:100%;max-height:88vh;border-left:0;border-top:1px solid var(--line);border-radius:12px 12px 0 0;padding-left:max(18px,env(safe-area-inset-left,0px))}}
+.sheet .hd{display:flex;align-items:flex-start;gap:10px}
+.sheet .x{margin-left:auto;border:1px solid var(--line);background:var(--bg);border-radius:6px;width:32px;height:32px;cursor:pointer;font-size:16px;flex:none}
+.sheet .big{font-family:var(--f-mono);font-size:26px;font-weight:600}
+.sheet ul{margin:0;padding-left:1.2em}
+.sheet li{margin:3px 0}
+.linkrow{display:flex;gap:6px;flex-wrap:wrap}
+.linkrow a{font-size:13px;border:1px solid var(--line);border-radius:5px;padding:3px 10px;text-decoration:none}
+.src{font-size:12.5px;columns:2 260px;column-gap:24px;margin:0;padding-left:1.2em}
+.src li{break-inside:avoid}
+ul.plain{margin:0;padding-left:1.2em}
+</style>
+</head>
+<body>
+
+<header class="top gut">
+  <div class="wrap">
+    <div class="title-row">
+      <h1>全球股市雷達 · 機器人</h1>
+      <span class="stamp" id="stamp"></span>
+      <a class="refresh" href="?refresh=1" id="refresh">重新整理</a>
+    </div>
+    <div class="regime" id="regime"></div>
+    <nav class="tabs" role="tablist" aria-label="切換區塊">
+      <button role="tab" data-tab="board" aria-selected="true">推薦榜<span class="c" id="c-board">0</span></button>
+      <button role="tab" data-tab="mine" aria-selected="false">我的追蹤<span class="c">0</span></button>
+      <button role="tab" data-tab="chain" aria-selected="false">供應鏈</button>
+      <button role="tab" data-tab="risk" aria-selected="false">ETF・風險</button>
+    </nav>
+  </div>
+</header>
+
+<main class="gut"><div class="wrap">
+
+<section class="panel" id="p-board" role="tabpanel">
+  <details>
+    <summary>指標標準 <span class="cnt">7 個個股指標 · 3 個大環境</span></summary>
+    <div class="in">
+      <div class="note">數字顏色：<span class="v s">青＝強 2 分</span>　<span class="v m">黃＝中 1 分</span>　<span class="v w">灰＝弱 0 分</span>　<span class="v na">—＝無資料</span></div>
+      <div class="tbl"><table class="std"><thead><tr><th>指標</th><th>強</th><th>中</th><th>弱</th></tr></thead><tbody id="stdRows"></tbody></table></div>
+      <div class="rule">
+        <span><b>達標：</b>趨勢強、位置不弱、營收或獲利至少一個強，總分 ≥ 9（滿分 14）。</span>
+        <span><b>上榜：</b>依總分、再依 RS 排序，取前 20：台股 12、外股 8。</span>
+      </div>
+      <div class="tbl"><table class="std"><thead><tr><th>大環境</th><th>強</th><th>中</th><th>弱</th></tr></thead><tbody id="regRows"></tbody></table></div>
+      <ul class="src">
+        <li><a href="https://www.chartmill.com/documentation/stock-screener/technical-analysis-trading-strategies/496-Mark-Minervini-Trend-Template-A-Step-by-Step-Guide-for-Beginners">Minervini 趨勢模板</a></li>
+        <li><a href="https://therighttrader.com/learn/trading-strategies/canslim">CANSLIM</a></li>
+        <li><a href="https://joim.com/?p=4794">JOIM：大漲後的上修與動能</a></li>
+        <li><a href="https://www.heygotrade.com/en/blog/earnings-revisions-explained">EPS 上修領先股價</a></li>
+        <li><a href="https://money.udn.com/money/story/5607/8939969">經濟日報：三優強勢股</a></li>
+      </ul>
+    </div>
+  </details>
+
+  <div class="toolbar">
+    <div class="seg" role="group" aria-label="市場">
+      <button data-mkt="all" aria-pressed="true">全部</button><button data-mkt="tw" aria-pressed="false">台股</button><button data-mkt="gl" aria-pressed="false">外股</button>
+    </div>
+    <span class="count" id="count"></span>
+  </div>
+  <p class="warn" id="missing" hidden></p>
+
+  <details open>
+    <summary>達標榜 <span class="cnt" id="topCnt"></span></summary>
+    <div id="boardEmpty" class="in" hidden><p class="note">目前沒有股票同時通過所有標準。下面候選池依分數排序。</p></div>
+    <div class="board" id="boardWrap" style="border:0;border-top:1px solid var(--line);border-radius:0"><table><thead class="bh"></thead><tbody id="boardBody"></tbody></table></div>
+  </details>
+
+  <details open>
+    <summary>候選池 <span class="cnt" id="poolCnt"></span></summary>
+    <div class="board" style="border:0;border-top:1px solid var(--line);border-radius:0"><table><thead class="bh"></thead><tbody id="poolBody"></tbody></table></div>
+  </details>
+  <p class="note">點欄位標題排序，點任一列看個股細節與連結。股價<span class="up">紅漲</span><span class="down">綠跌</span>。</p>
+</section>
+
+<section class="panel" id="p-mine" role="tabpanel" hidden>
+  <div class="empty">
+    <span class="big">還沒有追蹤的個股</span>
+    <p class="note">跟 Claude 說 <span class="cmd">追蹤 上銀</span> 就會加進來，依供應鏈類型分組，指標跟推薦榜同一套。</p>
+  </div>
+</section>
+
+<section class="panel" id="p-chain" role="tabpanel" hidden>
+  <div class="chainfig">
+    <svg viewBox="0 0 240 400" role="img" aria-label="人形機器人零組件位置圖">
+      <circle class="bodyshape" cx="120" cy="52" r="30"/>
+      <rect class="bodyshape" x="112" y="80" width="16" height="16"/>
+      <rect class="bodyshape" x="82" y="94" width="76" height="120" rx="12"/>
+      <path class="limb" d="M88 108 L58 168 L50 220"/>
+      <path class="limb" d="M152 108 L182 168 L190 220"/>
+      <path class="limb" d="M104 212 L98 300 L96 380"/>
+      <path class="limb" d="M136 212 L142 300 L144 380"/>
+      <g class="part" data-p="vision" tabindex="0"><circle cx="120" cy="48" r="11"/><text x="120" y="48">1</text></g>
+      <g class="part" data-p="brain" tabindex="0"><circle cx="120" cy="140" r="11"/><text x="120" y="140">2</text></g>
+      <g class="part" data-p="reducer" tabindex="0"><circle cx="58" cy="168" r="11"/><text x="58" y="168">3</text></g>
+      <g class="part" data-p="motor" tabindex="0"><circle cx="142" cy="300" r="11"/><text x="142" y="300">4</text></g>
+      <g class="part" data-p="screw" tabindex="0"><circle cx="98" cy="300" r="11"/><text x="98" y="300">5</text></g>
+      <g class="part" data-p="integ" tabindex="0"><circle cx="190" cy="226" r="11"/><text x="190" y="226">6</text></g>
+    </svg>
+    <div class="segs" id="segs"></div>
+  </div>
+  <p class="note"><i class="mk tw">台</i>台廠 <i class="mk gl">外</i>外廠 · 紅格＝台廠切入程度 · 右側數字是股價日漲跌與分數</p>
+</section>
+
+<section class="panel" id="p-risk" role="tabpanel" hidden>
+  <details open>
+    <summary>機器人 ETF</summary>
+    <div class="in">
+      <ul class="plain">
+        <li>ROBO（分散型）、BOTZ（集中型）、KOID（人形）。2026-10-26 年初至今：ROBO +8.9%、KOID +6.2%、BOTZ −8.7%。<a href="https://www.etfcentral.com/compare-etfs/ROBO-vs-BOTZ">ETF Central</a></li>
+      </ul>
+    </div>
+  </details>
+  <details open>
+    <summary>賽道風險 <span class="cnt">3</span></summary>
+    <div class="in"><ul class="plain">
+      <li>整機廠多虧損，估值靠預期。<a href="https://www.cnbc.com/2026/08/19/china-backflipping-robot-maker-unitree-jumps-shanghai-ipo.html">宇樹上市首日 +460%</a></li>
+      <li>Optimus 時程一再延後。<a href="https://www.basenor.com/blogs/news/tesla-optimus-production-ramp-6-details-that-matter">產能細節</a></li>
+      <li>中國零件便宜 30–40%，壓縮毛利。<a href="https://jpstock-reports.pages.dev/reports/robotics_humanoid_bom_dd_2026-05-16">BOM 分析</a></li>
+    </ul></div>
+  </details>
+  <p class="note">非投資建議。</p>
+</section>
+
+</div></main>
+
+<div class="scrim" id="scrim" hidden></div>
+<aside class="sheet" id="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="shName"></aside>
+
+<script>
+var RADAR=/*__RADAR_DATA__*/null;
+</script>
+<script>
+(function(){
+if(!RADAR){document.querySelector('main .wrap').innerHTML='<div class="empty"><span class="big">資料載入失敗</span><p class="note">請按右上「重新整理」。</p></div>';return}
+function f1(x,sign){if(x==null)return '—';var s=(Math.round(x*10)/10).toFixed(1);return (sign&&x>0?'+':'')+s}
+/* ===== 指標：門檻只寫在這裡 ===== */
+var IND=[
+  {k:'rev',n:'營收',why:'月營收年增率',s:'≥ 20%',m:'0 ~ 20%',w:'< 0%',
+   lv:function(d){var v=d.rev;if(v==null)return null;return v>=20?'s':v>=0?'m':'w'},
+   show:function(d){return d.rev==null?'—':f1(d.rev,1)+'%'}},
+  {k:'eps',n:'獲利',why:'近四季 EPS 年增',s:'≥ 25%',m:'0 ~ 25%',w:'衰退或虧損',
+   lv:function(d){if(d.loss)return 'w';var v=d.eps;if(v==null)return null;return v>=25?'s':v>=0?'m':'w'},
+   show:function(d){return d.loss?'虧損':d.eps==null?'—':f1(d.eps,1)+'%'}},
+  {k:'est',n:'上修',why:'法人 EPS 預估',s:'上修 ≥ 5%',m:'±5% 內',w:'下修 ≥ 5%',
+   lv:function(d){var v=d.est;if(v==null)return null;if(v==='up')return 's';if(v==='down')return 'w';return v>=5?'s':v>-5?'m':'w'},
+   show:function(d){return d.est==='up'?'上修':d.est==='down'?'下修':d.est==null?'—':f1(d.est,1)+'%'}},
+  {k:'trend',n:'趨勢',why:'股價相對 200 日線',s:'價>50日>150日>200日，200日線向上',m:'價 > 200 日線',w:'價 < 200 日線',
+   lv:function(d){if(d.px==null||d.ma200==null)return null;if(d.px>d.ma50&&d.ma50>d.ma150&&d.ma150>d.ma200&&d.ma200up)return 's';return d.px>d.ma200?'m':'w'},
+   show:function(d){return d.px==null||d.ma200==null?'—':f1((d.px/d.ma200-1)*100,1)+'%'}},
+  {k:'pos',n:'距高',why:'距 52 週高點',s:'≤ 10%，且比低點高 ≥ 30%',m:'10 ~ 25%',w:'> 25%',
+   lv:function(d){if(d.px==null||d.hi52==null)return null;var off=(1-d.px/d.hi52)*100,up=(d.px/d.lo52-1)*100;if(off<=10&&up>=30)return 's';return off<=25?'m':'w'},
+   show:function(d){return d.px==null||d.hi52==null?'—':'−'+f1((1-d.px/d.hi52)*100)+'%'}},
+  {k:'rs',n:'RS',why:'候選池相對強度（1–99）',s:'≥ 80',m:'60 ~ 80',w:'< 60',
+   lv:function(d){var v=d.rs;if(v==null)return null;return v>=80?'s':v>=60?'m':'w'},
+   show:function(d){return d.rs==null?'—':String(d.rs)}},
+  {k:'vol',n:'量比',why:'20 日均量 ÷ 60 日均量',s:'≥ 1.2',m:'1.0 ~ 1.2',w:'< 1.0',
+   lv:function(d){var v=d.vol;if(v==null)return null;return v>=1.2?'s':v>=1?'m':'w'},
+   show:function(d){return d.vol==null?'—':d.vol.toFixed(2)}}
+];
+var REG=[
+  {k:'tw',n:'台股加權',s:'> 200 日線且線向上',m:'> 200 日線',w:'< 200 日線'},
+  {k:'us',n:'S&P 500',s:'> 200 日線且線向上',m:'> 200 日線',w:'< 200 日線'},
+  {k:'vix',n:'VIX',s:'< 18',m:'18 ~ 25',w:'> 25'}
+];
+var SCORE={s:2,m:1,w:0};
+var SEG={vision:{no:1,n:'視覺、感測',tw:1},brain:{no:2,n:'AI 晶片、控制器',tw:1},reducer:{no:3,n:'關節減速機',tw:2},
+  motor:{no:4,n:'馬達、驅動、氣動',tw:2},screw:{no:5,n:'螺桿、滑軌',tw:3},integ:{no:6,n:'整機（人形、協作、工業）',tw:1}};
+var S=RADAR.stocks;
+
+S.forEach(function(d){
+  d.L={};var sc=0,known=0;
+  IND.forEach(function(i){var l=i.lv(d);d.L[i.k]=l;if(l){sc+=SCORE[l];known++}});
+  d.score=sc;d.complete=known===IND.length;
+  d.ok=d.L.trend==='s'&&d.L.pos&&d.L.pos!=='w'&&(d.L.rev==='s'||d.L.eps==='s')&&sc>=9;
+});
+function val(i,d){var l=d.L[i.k];return '<span class="v '+(l||'na')+'">'+i.show(d)+'</span>'}
+function mk(m){return '<i class="mk '+m+'">'+(m==='tw'?'台':'外')+'</i>'}
+function chg(d){if(d.chg==null)return '';return '<span class="pxc '+(d.chg>0?'up':d.chg<0?'down':'')+'">'+f1(d.chg,1)+'%</span>'}
+function pxs(d){return d.px==null?'<span class="v na">—</span>':'<span class="mono">'+d.px.toLocaleString(undefined,{maximumFractionDigits:2})+'</span>'+chg(d)}
+
+/* header */
+document.getElementById('stamp').textContent='更新 '+RADAR.at;
+function regLv(k,r){if(!r||r.px==null)return null;if(k==='vix')return r.px<18?'s':r.px<=25?'m':'w';if(r.ma200==null)return null;return r.px>r.ma200&&r.ma200up?'s':r.px>r.ma200?'m':'w'}
+document.getElementById('regime').innerHTML='<b>大環境</b>'+REG.map(function(g){var r=(RADAR.regime||{})[g.k],l=regLv(g.k,r);
+  var t=!r||r.px==null?'—':g.k==='vix'?r.px.toFixed(1):(r.ma200?f1((r.px/r.ma200-1)*100,1)+'% vs 200日':r.px.toLocaleString());
+  return '<span>'+g.n+' <span class="v '+(l||'na')+'">'+t+'</span></span>'}).join('');
+document.getElementById('stdRows').innerHTML=IND.map(function(i){return '<tr><td>'+i.n+'<span class="why">'+i.why+'</span></td><td>'+i.s+'</td><td>'+i.m+'</td><td>'+i.w+'</td></tr>'}).join('');
+document.getElementById('regRows').innerHTML=REG.map(function(r){return '<tr><td>'+r.n+'</td><td>'+r.s+'</td><td>'+r.m+'</td><td>'+r.w+'</td></tr>'}).join('');
+if(RADAR.missing&&RADAR.missing.length){var mm=document.getElementById('missing');mm.hidden=false;mm.textContent='這次沒抓到股價：'+RADAR.missing.join('、')+'（稍後重新整理）'}
+
+/* board */
+var mkt='all',sortKey='score',sortDir=-1;
+var COLS=[{k:'score',n:'分數'}].concat(IND.map(function(i){return {k:i.k,n:i.n}}));
+function head(){return '<tr><th>#</th><th>股票</th><th class="n sortable" data-k="px">股價</th>'+IND.map(function(i){return '<th class="n sortable" data-k="'+i.k+'" title="'+i.why+'"'+(sortKey===i.k?' aria-sort="'+(sortDir<0?'descending':'ascending')+'"':'')+'>'+i.n+'</th>'}).join('')+
+  '<th class="sortable" data-k="score"'+(sortKey==='score'?' aria-sort="descending"':'')+'>分數</th><th>狀態</th></tr>'}
+function num(d,k){
+  if(k==='score')return d.score;if(k==='px')return d.chg;
+  if(k==='rev')return d.rev;if(k==='eps')return d.loss?-999:d.eps;if(k==='est')return d.est==='up'?10:d.est==='down'?-10:d.est;
+  if(k==='trend')return d.ma200?d.px/d.ma200:null;if(k==='pos')return d.hi52?d.px/d.hi52:null;return d[k];
+}
+function cmp(a,b){var x=num(a,sortKey),y=num(b,sortKey);if(x==null&&y==null)return b.score-a.score;if(x==null)return 1;if(y==null)return -1;return (x-y)*sortDir||b.score-a.score||(b.rs||0)-(a.rs||0)}
+function row(d,idx){
+  return '<tr data-c="'+d.c+'" tabindex="0"><td class="mono note">'+idx+'</td><td><div>'+mk(d.m)+'<span class="nm">'+d.n+'</span><span class="cd">'+d.c+'</span></div><div class="sg">'+SEG[d.g].n+'</div></td><td class="n">'+pxs(d)+'</td>'+
+    IND.map(function(i){return '<td class="n">'+val(i,d)+'</td>'}).join('')+
+    '<td class="sc">'+d.score+'</td><td>'+(d.ok?'<span class="pass">達標</span>':'<span class="pend">'+(d.complete?'未達':'資料不全')+'</span>')+'</td></tr>';
+}
+function rankKey(a,b){return b.score-a.score||(b.rs||0)-(a.rs||0)}
+function render(){
+  var ok=S.filter(function(d){return d.ok}).sort(rankKey);
+  var tw=ok.filter(function(d){return d.m==='tw'}).slice(0,12),gl=ok.filter(function(d){return d.m==='gl'}).slice(0,8);
+  var topAll=tw.concat(gl);
+  var top=topAll.filter(function(d){return mkt==='all'||d.m===mkt}).sort(cmp);
+  var pool=S.filter(function(d){return topAll.indexOf(d)<0&&(mkt==='all'||d.m===mkt)}).sort(cmp);
+  document.querySelectorAll('.bh').forEach(function(h){h.innerHTML=head()});
+  document.getElementById('c-board').textContent=topAll.length;
+  document.getElementById('topCnt').textContent=top.length+' / 20';
+  document.getElementById('boardEmpty').hidden=top.length>0;
+  document.getElementById('boardWrap').hidden=top.length===0;
+  document.getElementById('boardBody').innerHTML=top.map(function(d,i){return row(d,i+1)}).join('');
+  document.getElementById('poolBody').innerHTML=pool.map(function(d,i){return row(d,i+1)}).join('');
+  document.getElementById('poolCnt').textContent=pool.length+' 檔';
+  document.getElementById('count').textContent='達標 '+topAll.length+' · 候選 '+S.length;
+}
+document.querySelectorAll('.seg button').forEach(function(b){b.addEventListener('click',function(){
+  mkt=b.dataset.mkt;document.querySelectorAll('.seg button').forEach(function(x){x.setAttribute('aria-pressed',x===b?'true':'false')});render()})});
+document.addEventListener('click',function(e){var th=e.target.closest('th.sortable');if(!th)return;var k=th.dataset.k;
+  if(sortKey===k)sortDir=-sortDir;else{sortKey=k;sortDir=(k==='pos')?-1:-1}render()});
+render();
+
+/* supply chain */
+var segs=document.getElementById('segs');
+segs.innerHTML=Object.keys(SEG).map(function(k){
+  var g=SEG[k],items=S.filter(function(d){return d.g===k}).sort(function(a,b){return (a.m==='tw'?0:1)-(b.m==='tw'?0:1)||b.score-a.score});
+  var meter='<span class="meter">台廠'+[1,2,3].map(function(n){return '<i class="'+(n<=g.tw?'f':'')+'"></i>'}).join('')+'</span>';
+  return '<details data-p="'+k+'"><summary><span class="no">'+g.no+'</span>'+g.n+' <span class="cnt">'+items.length+'</span>'+meter+'</summary><div class="in" style="gap:2px">'+
+    items.map(function(d){return '<button class="srow" data-c="'+d.c+'"><span>'+mk(d.m)+'<span class="nm">'+d.n+'</span><span class="cd">'+d.c+'</span><br><span class="sg">'+d.role+'</span></span><span class="r">'+pxs(d)+'<span class="note">分數 '+d.score+(d.ok?' · <span class="pass">達標</span>':'')+'</span></span></button>'}).join('')+
+    '</div></details>';
+}).join('');
+function pickSeg(k,open){
+  document.querySelectorAll('.part').forEach(function(p){p.classList.toggle('on',p.dataset.p===k)});
+  segs.querySelectorAll('details').forEach(function(d){var on=d.dataset.p===k;d.classList.toggle('on',on);if(on&&open){d.open=true;d.scrollIntoView({block:'nearest',behavior:'smooth'})}});
+}
+document.querySelectorAll('.part').forEach(function(p){
+  p.addEventListener('click',function(){pickSeg(p.dataset.p,true)});
+  p.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();pickSeg(p.dataset.p,true)}});
+});
+segs.querySelectorAll('details').forEach(function(d){d.addEventListener('toggle',function(){if(d.open)pickSeg(d.dataset.p,false)})});
+pickSeg('screw',true);
+
+/* detail sheet */
+var sheet=document.getElementById('sheet'),scrim=document.getElementById('scrim'),lastFocus=null;
+function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function open(c){
+  var d=S.filter(function(x){return x.c===c})[0];if(!d)return;lastFocus=document.activeElement;
+  var extra=d.ma200==null?'':'<p class="note mono">50日 '+(d.ma50||'—')+' · 150日 '+(d.ma150||'—')+' · 200日 '+d.ma200+(d.ma200up?' ↑':' ↓')+' · 52週 '+d.lo52+' – '+d.hi52+(d.r3m!=null?' · 3個月 '+f1(d.r3m,1)+'%':'')+'</p>';
+  sheet.innerHTML='<div class="hd"><div><div>'+mk(d.m)+'<span class="cd" style="margin:0">'+esc(d.sym||d.c)+'</span></div><h2 id="shName">'+esc(d.n)+'</h2><div class="sg">'+SEG[d.g].no+' · '+SEG[d.g].n+' · '+esc(d.role)+'</div></div><button class="x" aria-label="關閉">×</button></div>'+
+    '<div style="display:flex;gap:14px;align-items:baseline;flex-wrap:wrap"><span class="big">'+(d.px==null?'—':d.px.toLocaleString(undefined,{maximumFractionDigits:2}))+'</span>'+chg(d).replace('pxc','')+'<span style="margin-left:auto">分數 <b class="mono">'+d.score+'</b> / 14 · '+(d.ok?'<span class="pass">達標</span>':'<span class="pend">'+(d.complete?'未達':'資料不全')+'</span>')+'</span></div>'+
+    '<div class="tbl" style="border:1px solid var(--line);border-radius:6px"><table><thead><tr><th>指標</th><th>目前</th><th>等級</th><th>強的標準</th></tr></thead><tbody>'+
+    IND.map(function(i){var l=d.L[i.k];return '<tr><td><b>'+i.n+'</b><div class="note">'+i.why+'</div></td><td>'+val(i,d)+(i.k==='rev'&&d.revAt?'<div class="note">'+d.revAt+'</div>':'')+'</td><td>'+(l?'<span class="lv '+l+'">'+{s:'強',m:'中',w:'弱'}[l]+'</span>':'<span class="note">—</span>')+'</td><td class="note">'+i.s+'</td></tr>'}).join('')+'</tbody></table></div>'+extra+
+    (d.why&&d.why.length?'<div><h3>重點</h3><ul>'+d.why.map(function(w){return '<li>'+esc(w.t)+(w.u?' <a href="'+esc(w.u)+'" target="_blank" rel="noopener">來源</a>':'')+'</li>'}).join('')+'</ul></div>':'')+
+    '<div class="linkrow">'+(d.links||[]).map(function(l){return '<a href="'+esc(l.u)+'" target="_blank" rel="noopener">'+esc(l.t)+' ↗</a>'}).join('')+'</div>'+
+    '<p class="note">想長期追蹤，跟 Claude 說 <span class="cmd">追蹤 '+esc(d.n)+'</span>。</p>';
+  sheet.hidden=false;scrim.hidden=false;sheet.querySelector('.x').addEventListener('click',close);sheet.querySelector('.x').focus();
+}
+function close(){sheet.hidden=true;scrim.hidden=true;if(lastFocus)lastFocus.focus()}
+scrim.addEventListener('click',close);
+document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!sheet.hidden)close();if(e.key==='Enter'){var r=e.target.closest&&e.target.closest('tr[data-c]');if(r)open(r.dataset.c)}});
+document.addEventListener('click',function(e){if(e.target.closest('th'))return;var r=e.target.closest('[data-c]');if(r&&!sheet.contains(r))open(r.dataset.c)});
+
+/* tabs */
+var tabs=[].slice.call(document.querySelectorAll('.tabs button')),names=tabs.map(function(b){return b.dataset.tab});
+function show(name){if(names.indexOf(name)<0)name='board';
+  tabs.forEach(function(b){var on=b.dataset.tab===name;b.setAttribute('aria-selected',on?'true':'false');b.tabIndex=on?0:-1;document.getElementById('p-'+b.dataset.tab).hidden=!on});window.scrollTo(0,0)}
+tabs.forEach(function(b,i){
+  b.addEventListener('click',function(){if(location.hash!=='#'+b.dataset.tab)location.hash=b.dataset.tab;else show(b.dataset.tab)});
+  b.addEventListener('keydown',function(e){var dd=e.key==='ArrowRight'?1:e.key==='ArrowLeft'?-1:0;if(!dd)return;var n=tabs[(i+dd+tabs.length)%tabs.length];n.focus();n.click()});
+});
+window.addEventListener('hashchange',function(){show(location.hash.slice(1))});
+show(location.hash.slice(1));
+var rf=document.getElementById('refresh');rf.href='?refresh=1'+(new URLSearchParams(location.search).get('k')?'&k='+encodeURIComponent(new URLSearchParams(location.search).get('k')):'');
+})();
+</script>
+</body>
+</html>
