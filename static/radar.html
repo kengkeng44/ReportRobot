@@ -161,7 +161,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
     <div class="ticker" id="ticker"></div>
     <nav class="tabs" role="tablist" aria-label="切換區塊">
       <button role="tab" data-tab="board" aria-selected="true">推薦<span class="n" id="c-board"></span></button>
-      <button role="tab" data-tab="mine" aria-selected="false">追蹤</button>
+      <button role="tab" data-tab="mine" aria-selected="false">追蹤<span class="n" id="c-mine"></span></button>
       <button role="tab" data-tab="chain" aria-selected="false">供應鏈</button>
     </nav>
   </div>
@@ -191,10 +191,12 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 </section>
 
 <section id="p-mine" role="tabpanel" hidden>
-  <div class="empty" style="padding-top:56px">
+  <div id="mineBody"></div>
+  <div class="empty" id="mineEmpty" style="padding-top:56px" hidden>
     <b style="color:var(--ink)">還沒有追蹤的個股</b>
     <span>跟 Claude 說「追蹤 上銀」就會加進來</span>
   </div>
+  <p class="foot">燈號跟推薦同一套；RS 是拿去跟候選池比。ETF 沒有營收、獲利、上修三燈，圓圈滿分是 8。要再加，跟 Claude 說「追蹤 上銀」。</p>
 </section>
 
 <section id="p-chain" role="tabpanel" hidden>
@@ -261,13 +263,16 @@ var REG=[{k:'tw',n:'台股'},{k:'us',n:'美股'},{k:'vix',n:'VIX'}];
 var SCORE={s:2,m:1,w:0},LVN={s:'強',m:'中',w:'弱'};
 var SEG={vision:{no:1,n:'視覺感測',tw:1},brain:{no:2,n:'AI 晶片',tw:1},reducer:{no:3,n:'減速機',tw:2},
   motor:{no:4,n:'馬達驅動',tw:2},screw:{no:5,n:'螺桿滑軌',tw:3},integ:{no:6,n:'整機',tw:1}};
-var S=RADAR.stocks;
-S.forEach(function(d){
-  d.L={};var sc=0,known=0;
-  IND.forEach(function(i){var l=i.lv(d);d.L[i.k]=l;if(l){sc+=SCORE[l];known++}});
-  d.score=sc;d.complete=known===IND.length;
-  d.ok=d.L.trend==='s'&&d.L.pos&&d.L.pos!=='w'&&(d.L.rev==='s'||d.L.eps==='s')&&sc>=9;
+var S=RADAR.stocks,W=RADAR.watch||[],ALL=S.concat(W),NA_ETF=['rev','eps','est'];
+ALL.forEach(function(d){
+  d.L={};var sc=0,known=0,app=0;
+  IND.forEach(function(i){
+    if(d.etf&&NA_ETF.indexOf(i.k)>=0){d.L[i.k]='x';return}
+    app++;var l=i.lv(d);d.L[i.k]=l;if(l){sc+=SCORE[l];known++}});
+  d.score=sc;d.max=app*2;d.complete=known===app;
+  d.ok=d.L.trend==='s'&&d.L.pos&&d.L.pos!=='w'&&(d.etf||d.L.rev==='s'||d.L.eps==='s')&&sc/d.max>=9/14;
 });
+function grp(d){return d.g?SEG[d.g].n:(d.etf?'ETF':'個股')}
 
 /* header */
 document.getElementById('stamp').textContent=RADAR.at.slice(5)+' 更新';
@@ -289,13 +294,13 @@ function spark(xs,w,h,cls){
   return '<svg class="'+cls+'" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true">'+area+'<path d="'+d+'" stroke="'+c+'" fill="none" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>';
 }
 function ring(d){
-  var r=15.5,c=2*Math.PI*r,p=Math.min(1,d.score/14);
-  return '<span class="ring'+(d.ok?' ok':'')+'" title="分數 '+d.score+' / 14"><svg viewBox="0 0 36 36"><circle class="bgc" cx="18" cy="18" r="'+r+'"/><circle class="fg" cx="18" cy="18" r="'+r+'" stroke-dasharray="'+(c*p).toFixed(1)+' '+c.toFixed(1)+'"/></svg><span>'+d.score+'</span></span>';
+  var r=15.5,c=2*Math.PI*r,p=Math.min(1,d.score/(d.max||14));
+  return '<span class="ring'+(d.ok?' ok':'')+'" title="分數 '+d.score+' / '+(d.max||14)+'"><svg viewBox="0 0 36 36"><circle class="bgc" cx="18" cy="18" r="'+r+'"/><circle class="fg" cx="18" cy="18" r="'+r+'" stroke-dasharray="'+(c*p).toFixed(1)+' '+c.toFixed(1)+'"/></svg><span>'+d.score+'</span></span>';
 }
 function pill(d){return d.chg==null?'<span class="pill flat">—</span>':'<span class="pill '+dir(d.chg)+'">'+f1(d.chg,1)+'%</span>'}
 function row(d,inSeg){
   return '<button class="row" data-c="'+esc(d.c)+'">'+ring(d)+
-    '<span class="name"><span class="n1">'+esc(d.n)+'</span><span class="n2"><span class="flag">'+(d.m==='tw'?'台':'外')+'</span>'+esc(d.c)+' · '+(inSeg===true?esc(d.role):SEG[d.g].n)+'</span></span>'+
+    '<span class="name"><span class="n1">'+esc(d.n)+'</span><span class="n2"><span class="flag">'+(d.m==='tw'?'台':'外')+'</span>'+esc(d.c)+' · '+(inSeg===true||!d.g?esc(d.role):SEG[d.g].n)+'</span></span>'+
     spark(d.spark,64,28,'spark')+
     '<span class="px"><span class="p">'+money(d.px)+'</span>'+pill(d)+'</span></button>';
 }
@@ -331,6 +336,17 @@ secPool.addEventListener('click',function(){toggle(secPool,document.getElementBy
 render();
 if(!document.getElementById('boardBody').children.length)toggle(secPool,document.getElementById('poolBody'),true);
 
+/* 我的追蹤 */
+(function(){
+  var mine=(RADAR.mine||[]).map(function(c){return ALL.filter(function(d){return d.c===c})[0]}).filter(Boolean);
+  document.getElementById('c-mine').textContent=mine.length||'';
+  document.getElementById('mineEmpty').hidden=mine.length>0;
+  var stocks=mine.filter(function(d){return !d.etf}),etfs=mine.filter(function(d){return d.etf});
+  document.getElementById('mineBody').innerHTML=[['個股',stocks],['ETF',etfs]].filter(function(g){return g[1].length}).map(function(g){
+    return '<div class="sec" style="cursor:default"><span class="chev" style="visibility:hidden">▾</span>'+g[0]+'<span class="cnt">'+g[1].length+'</span></div><div class="rows">'+g[1].map(row).join('')+'</div>';
+  }).join('');
+})();
+
 /* supply chain */
 var segs=document.getElementById('segs');
 segs.innerHTML=Object.keys(SEG).map(function(k){
@@ -355,17 +371,17 @@ function hideSheet(){sheet.hidden=true;scrim.hidden=true;document.body.style.ove
 function closeSheet(){if(sheet.hidden)return;if(history.state&&history.state.sheet)history.back();else hideSheet()}
 window.addEventListener('popstate',function(){if(!sheet.hidden)hideSheet()});
 function open(c){
-  var d=S.filter(function(x){return x.c===c})[0];if(!d)return;
+  var d=ALL.filter(function(x){return x.c===c})[0];if(!d)return;
   var tech=d.ma200==null?'':'<div class="sh-sec">技術數據</div><div class="kv">'+
     [['50 日線',money(d.ma50)],['150 日線',money(d.ma150)],['200 日線',money(d.ma200)+(d.ma200up?' ↑':' ↓')],['52 週高',money(d.hi52)],['52 週低',money(d.lo52)],['3 個月報酬',d.r3m==null?'—':'<span class="'+dir(d.r3m)+'">'+f1(d.r3m,1)+'%</span>']]
     .map(function(p){return '<div class="kr"><span class="k">'+p[0]+'</span><span class="v">'+p[1]+'</span></div>'}).join('')+'</div>';
   showSheet(
-    '<div class="sh-hd"><div><h2 id="shName">'+esc(d.n)+'</h2><div class="sub">'+esc(d.sym||d.c)+' · '+SEG[d.g].n+' · '+esc(d.role)+'</div></div>'+X+'</div>'+
+    '<div class="sh-hd"><div><h2 id="shName">'+esc(d.n)+'</h2><div class="sub">'+esc(d.sym||d.c)+' · '+grp(d)+' · '+esc(d.role)+'</div></div>'+X+'</div>'+
     '<div class="quote"><span class="big">'+money(d.px)+'</span><span class="chg '+dir(d.chg)+'">'+(d.chg==null?'':f1(d.chg,1)+'%')+'</span>'+
-      '<span class="sc">分數 <b>'+d.score+'</b> / 14'+(d.ok?'<span class="badge-ok">達標</span>':'')+'</span></div>'+
+      '<span class="sc">分數 <b>'+d.score+'</b> / '+d.max+(d.ok?'<span class="badge-ok">達標</span>':'')+'</span></div>'+
     spark(d.spark,300,64,'bigspark')+'<div class="muted" style="font-size:11.5px">近 3 個月</div>'+
     '<div class="sh-sec">指標</div><div class="ind">'+
-    IND.map(function(i){var l=d.L[i.k];return '<div class="ir"><span class="k">'+i.n+'<small>'+i.why+'</small></span><span class="v '+(l||'na')+'">'+i.show(d)+(i.k==='rev'&&d.revAt?'<small class="muted" style="display:block;font-weight:400;font-size:11px">'+d.revAt+'</small>':'')+'</span><span class="lv '+(l||'na')+'">'+(l?LVN[l]:'—')+'</span></div>'}).join('')+'</div>'+
+    IND.map(function(i){var l=d.L[i.k];if(l==='x')return '<div class="ir"><span class="k">'+i.n+'<small>'+i.why+'</small></span><span class="v na">ETF 不適用</span><span class="lv na">—</span></div>';return '<div class="ir"><span class="k">'+i.n+'<small>'+i.why+'</small></span><span class="v '+(l||'na')+'">'+i.show(d)+(i.k==='rev'&&d.revAt?'<small class="muted" style="display:block;font-weight:400;font-size:11px">'+d.revAt+'</small>':'')+'</span><span class="lv '+(l||'na')+'">'+(l?LVN[l]:'—')+'</span></div>'}).join('')+'</div>'+
     tech+
     (d.why&&d.why.length?'<div class="sh-sec">重點</div><ul class="why">'+d.why.map(function(w){return '<li>'+esc(w.t)+(w.u?' <a href="'+esc(w.u)+'" target="_blank" rel="noopener">來源 ↗</a>':'')+'</li>'}).join('')+'</ul>':'')+
     '<div class="links">'+(d.links||[]).map(function(l){return '<a href="'+esc(l.u)+'" target="_blank" rel="noopener">'+esc(l.t)+' ↗</a>'}).join('')+'</div>');

@@ -62,6 +62,19 @@ UNIVERSE = [
     ("ABBN.SW", "ABB", "gl", "integ", "工業機器人"),
 ]
 
+# ── 我的追蹤 ──────────────────────────────────────────────
+# MINE 是「追蹤」分頁的順序。候選池裡已有的（例如 NVDA）直接寫代號；
+# 不在池裡的放進 WATCH，跟候選池同一次抓價，但不參加推薦榜和 RS 排名。
+# kind: stock / etf（ETF 沒有營收、獲利、上修三燈）
+MINE = ["SPCX", "GOOGL", "AAPL", "NVDA", "2330", "0050"]
+WATCH = [
+    ("SPCX", "SpaceX", "gl", "stock", "火箭發射、Starlink 衛星網路"),
+    ("GOOGL", "Google", "gl", "stock", "Alphabet：搜尋、YouTube、雲端、AI"),
+    ("AAPL", "Apple", "gl", "stock", "iPhone、Mac、服務"),
+    ("2330", "台積電", "tw", "stock", "晶圓代工"),
+    ("0050", "元大台灣50", "tw", "etf", "台灣市值前 50 大"),
+]
+
 BENCH = {"tw": "^TWII", "us": "^GSPC", "vix": "^VIX"}
 
 # 人工整理的基本面（抓不到 API 的部分）。每條重點都附來源連結。
@@ -81,6 +94,8 @@ NOTES = {
     "9880.HK": {"loss": True, "why": [("Airbus 下單；目標 2026 年產 1 萬台",
                                        "https://www.marketscreener.com/news/shares-of-china-s-ubtech-jump-after-airbus-buys-its-humanoid-robots-ce7e58dfd18bf622")]},
     "454910.KS": {"loss": True, "why": [("2026 Q1 營業虧損 120 億韓元", "https://v.daum.net/v/20260303101555582")]},
+    "SPCX": {"why": [("2026/6/12 在 Nasdaq 上市；不滿一年，150、200 日線和 52 週高低點要到 2027 年 3、4 月才算得出來",
+                      "https://builtin.com/articles/spacex-ipo-valuation-20260612")]},
     "6324.T": {"why": [("市占約 35%，中國廠低價 30–40% 追趕",
                         "https://jpstock-reports.pages.dev/reports/robotics_humanoid_bom_dd_2026-05-16")]},
 }
@@ -145,6 +160,14 @@ def rank_rs(rows):
         r.setdefault("rs", None)
 
 
+def rs_vs_pool(pool_raw, raw):
+    """不在候選池的股票，用它的 rsraw 對照候選池算 1–99 百分位，不改動池內排名。"""
+    if raw is None or not pool_raw:
+        return None
+    below = sum(1 for x in pool_raw if x <= raw)
+    return max(1, min(99, round(below / len(pool_raw) * 99)))
+
+
 def regime(index_closes):
     """指數收盤 → 大環境：價、200 日線、是否在線上、200 日線是否向上。"""
     if not index_closes:
@@ -178,14 +201,19 @@ def parse_revenue(rows):
     return out
 
 
+def _row(code, name, mkt, seg, role, prices, revenue):
+    sym, closes, vols = prices.get(code, (None, [], []))
+    r = {"c": code, "n": name, "m": mkt, "g": seg, "role": role, "sym": sym}
+    r.update(price_metrics(closes, vols))
+    r["spark"] = [round(c, 2) for c in closes[-60:][::2]]  # 近 3 個月走勢小圖，30 點
+    return r
+
+
 def assemble(prices, revenue, bench):
     """各來源 → 給頁面的資料包。prices: {代號: (symbol, closes, volumes)}。"""
     rows = []
     for code, name, mkt, seg, role in UNIVERSE:
-        sym, closes, vols = prices.get(code, (None, [], []))
-        r = {"c": code, "n": name, "m": mkt, "g": seg, "role": role, "sym": sym}
-        r.update(price_metrics(closes, vols))
-        r["spark"] = [round(c, 2) for c in closes[-60:][::2]]  # 近 3 個月走勢小圖，30 點
+        r = _row(code, name, mkt, seg, role, prices, revenue)
         if mkt == "tw" and code in revenue:
             r["rev"], r["revAt"] = revenue[code]
         note = NOTES.get(code, {})
@@ -194,16 +222,31 @@ def assemble(prices, revenue, bench):
         if note.get("est"):
             r["est"] = note["est"]
         r["why"] = [{"t": t, "u": u} for t, u in note.get("why", [])]
-        r["links"] = _links(code, mkt, sym)
+        r["links"] = _links(code, mkt, r["sym"])
         rows.append(r)
     rank_rs(rows)
-    for r in rows:
+    pool_raw = [r["rsraw"] for r in rows if r.get("rsraw") is not None]
+    watch = []
+    for code, name, mkt, kind, role in WATCH:
+        r = _row(code, name, mkt, None, role, prices, revenue)
+        if kind == "etf":
+            r["etf"] = True
+        elif mkt == "tw" and code in revenue:
+            r["rev"], r["revAt"] = revenue[code]
+        note = NOTES.get(code, {})
+        r["why"] = [{"t": t, "u": u} for t, u in note.get("why", [])]
+        r["links"] = _links(code, mkt, r["sym"])
+        r["rs"] = rs_vs_pool(pool_raw, r.get("rsraw"))
+        watch.append(r)
+    for r in rows + watch:
         r.pop("rsraw", None)
     return {
         "at": datetime.now(TPE).strftime("%Y-%m-%d %H:%M"),
         "regime": {k: regime(v) for k, v in bench.items()},
         "stocks": rows,
-        "missing": [r["c"] for r in rows if r.get("px") is None],
+        "watch": watch,
+        "mine": MINE,
+        "missing": [r["c"] for r in rows + watch if r.get("px") is None],
     }
 
 
@@ -284,7 +327,7 @@ def _revenue():
 def collect():
     with ThreadPoolExecutor(max_workers=12) as ex:
         rev = ex.submit(_revenue)
-        got = list(ex.map(lambda u: _fetch_one(u[0], u[2]), UNIVERSE))
+        got = list(ex.map(lambda u: _fetch_one(u[0], u[2]), UNIVERSE + WATCH))
         bench = list(ex.map(lambda kv: (kv[0], _chart(kv[1])), BENCH.items()))
         revenue = rev.result()
     prices = {c: v for c, v in got if v}
