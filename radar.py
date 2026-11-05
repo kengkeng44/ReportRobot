@@ -187,6 +187,7 @@ def assemble(prices, revenue, bench):
         sym, closes, vols = prices.get(code, (None, [], []))
         r = {"c": code, "n": name, "m": mkt, "g": seg, "role": role, "sym": sym}
         r.update(price_metrics(closes, vols))
+        r["spark"] = [round(c, 2) for c in closes[-60:][::2]]  # 近 3 個月走勢小圖，30 點
         if mkt == "tw" and code in revenue:
             r["rev"], r["revAt"] = revenue[code]
         note = NOTES.get(code, {})
