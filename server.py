@@ -842,6 +842,26 @@ async def timetree_probe(request: Request):
     return timetree_client.probe()
 
 
+@app.post("/admin/timetree-import")
+async def timetree_import_run(request: Request):
+    """Claude 從使用者已登入的 TimeTree 分頁抓下 rows，送來這裡寫進 Notion（背景跑）。"""
+    _check_admin(request)
+    import timetree_import
+    rows = await request.json()
+    if not isinstance(rows, list):
+        raise HTTPException(status_code=400, detail="body 要是 rows 陣列")
+    if not timetree_import.start(rows):
+        raise HTTPException(status_code=409, detail="上一批還在跑")
+    return {"ok": True, "total": len(rows)}
+
+
+@app.get("/admin/timetree-import")
+async def timetree_import_status(request: Request):
+    _check_admin(request)
+    import timetree_import
+    return timetree_import.status()
+
+
 @app.post("/admin/hut-probe")
 async def hut_probe(request: Request):
     """從 Railway 對林業署三站首頁各 GET 一次，看國外 IP 會不會被擋。"""
