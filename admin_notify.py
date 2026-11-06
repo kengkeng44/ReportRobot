@@ -3,7 +3,8 @@
 關鍵異常即時 push 到 ADMIN_LINE_USER_ID（通常是專案維運者本人的 LINE userId）。
 
 設計重點：
-- 同錯誤類型 5 分鐘內只通知一次（throttle，避免某 API 持續掛掉時被淹沒）
+- 同錯誤類型 30 分鐘內只通知一次（throttle）；背景輪詢要 1 小時內失敗 3 次才通知
+- 訊息裡網址參數的金鑰（Authorization=、token= 等）一律遮成 ***
 - notify 自身失敗不能讓主程式炸：所有錯誤往 stderr，最差也只是少一則通知
 - 訊息含時間戳（台北時間）、模組、錯誤類型、訊息前 200 字（不含 stack trace）
 
@@ -12,20 +13,25 @@
 """
 
 import os
+import re
 import sys
 import threading
 from datetime import datetime, timedelta, timezone
 
 
-# 第一次失敗後多久內再失敗，才算「真的壞了」而不是網路抖一下。
-# alerts_loop 每 5 分鐘跑一次，所以這個窗口至少要容得下 2-3 輪。
-_CONFIRM_WINDOW = timedelta(minutes=15)
+# 這段時間內失敗滿 _CONFIRM_COUNT 次，才算「真的壞了」而不是網路抖一下。
+# 原本是 15 分鐘內 2 次：alerts_loop 每 5 分鐘打一次 CWA、一天 288 次，
+# Railway 從海外連 CWA 偶爾連續逾時兩輪，結果幾乎天天跳通知。
+# 真的掛掉時一小時會失敗 12 次，3 次的門檻照樣抓得到。
+_CONFIRM_WINDOW = timedelta(minutes=60)
+_CONFIRM_COUNT = 3
 # 通知過之後安靜多久。務必 > 呼叫端的輪詢間隔，否則等於沒有節流 ——
 # 原本這裡是 5 分鐘、alerts_loop 也是 5 分鐘，CWA 掛一小時就推了 12 則。
 _SILENCE_WINDOW = timedelta(minutes=30)
 
 _LOCK = threading.Lock()
-# 錯誤 key → {"first": 首次發現, "notified": 上次通知時間 or None}
+# 錯誤 key → {"fails": 觀察窗內的失敗時間, "notified": 上次通知時間 or None,
+#            "last": 最近一次失敗}
 _STATE = {}
 
 _TPE = timezone(timedelta(hours=8))
@@ -57,7 +63,7 @@ def _should_notify(key, confirm_first=False):
     confirm_first=True（高頻背景輪詢，例如 http_utils 的連線失敗）：
         第一次失敗只記錄不吵 —— 連線逾時這種故障通常下一輪就自己好了，
         為它推一則通知純粹是噪音，而且異常通知本身也吃 LINE 月配額。
-        要在 _CONFIRM_WINDOW 內再失敗一次，才算真的壞掉。
+        要在 _CONFIRM_WINDOW 內累積 _CONFIRM_COUNT 次失敗，才算真的壞掉。
 
     confirm_first=False（低頻關鍵任務，例如每日推播）：
         第一次就通知 —— 一天只跑一次的東西，要求「連續兩次」等於明天才告訴你。
@@ -68,9 +74,17 @@ def _should_notify(key, confirm_first=False):
     with _LOCK:
         st = _STATE.get(key)
 
+        # 上一次失敗已經是一個窗口以前 → 那次故障早就結束，這是新的一次，
+        # 從頭觀察。少了這段的話，通知過一次之後，之後每次偶發都會直接推。
+        if st is not None and now - st["last"] > _CONFIRM_WINDOW:
+            st = None
+
         if st is None:
-            _STATE[key] = {"first": now, "notified": None if confirm_first else now}
-            return not confirm_first
+            st = _STATE[key] = {"fails": [], "notified": None, "last": now}
+            if not confirm_first:
+                st["notified"] = now
+                return True
+        st["last"] = now
 
         if st["notified"] is not None:
             if now - st["notified"] < _SILENCE_WINDOW:
@@ -78,14 +92,24 @@ def _should_notify(key, confirm_first=False):
             st["notified"] = now
             return True
 
-        # 還在觀察中（只可能是 confirm_first 的路徑）
-        if now - st["first"] > _CONFIRM_WINDOW:
-            # 距離上次抖動已經很久，這是新的一次偶發，重新觀察
-            _STATE[key] = {"first": now, "notified": None}
+        # 還在觀察中（只可能是 confirm_first 的路徑）：只留窗口內的失敗
+        st["fails"] = [t for t in st["fails"] if now - t <= _CONFIRM_WINDOW]
+        st["fails"].append(now)
+        if len(st["fails"]) < _CONFIRM_COUNT:
             return False
-
         st["notified"] = now
         return True
+
+
+# 網址參數裡的金鑰（CWA 的 Authorization=CWA-xxx 會跟著 requests 的錯誤訊息出來）
+_SECRET_PARAM = re.compile(
+    r"((?:authorization|api_?key|key|token|access_token|secret)=)[^&\s)'\"]+",
+    re.IGNORECASE,
+)
+
+
+def _redact(text):
+    return _SECRET_PARAM.sub(lambda m: m.group(1) + "***", text)
 
 
 def notify_admin(error, context=None, confirm_first=False):
@@ -106,7 +130,7 @@ def notify_admin(error, context=None, confirm_first=False):
         module = ctx.get("module", "unknown")
         section = ctx.get("section") or ctx.get("function") or ""
         err_type = type(error).__name__ if isinstance(error, BaseException) else "Error"
-        err_msg = str(error)[:200]
+        err_msg = _redact(str(error))[:200]
 
         throttle_key = f"{err_type}:{module}:{section}"
         if not _should_notify(throttle_key, confirm_first):
@@ -122,7 +146,7 @@ def notify_admin(error, context=None, confirm_first=False):
             f"訊息：{err_msg}",
         ]
         if ctx.get("extra"):
-            lines.append(f"備註：{str(ctx['extra'])[:200]}")
+            lines.append(f"備註：{_redact(str(ctx['extra']))[:200]}")
         text = "\n".join(lines)
 
         try:
