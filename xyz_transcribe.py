@@ -28,6 +28,18 @@ DEFAULT_OUT = "transcripts"
 DEFAULT_MODEL = "medium"
 TRAD_SUFFIX = "_繁"
 
+# casts-down 內部用 aiohttp，預設 trust_env=False 會忽略 HTTPS_PROXY；
+# 在有代理的環境（公司網路、雲端沙盒）會直接 DNS 失敗。這裡在子行程裡
+# 把 ClientSession 的 trust_env 預設打開再呼叫 casts-down 的 CLI。
+_LAUNCHER = (
+    "import functools, sys, aiohttp\n"
+    "aiohttp.ClientSession.__init__ = functools.partialmethod("
+    "aiohttp.ClientSession.__init__, trust_env=True)\n"
+    "from casts_down.cli import main\n"
+    "sys.argv[0] = 'casts-down'\n"
+    "sys.exit(main())\n"
+)
+
 _URL_RE = re.compile(r"^https?://(www\.)?xiaoyuzhoufm\.com/(episode|podcast)/[0-9a-zA-Z]+", re.I)
 
 
@@ -96,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.exit("找不到 casts-down：pip install casts_down")
 
     print("[*] 執行：" + " ".join(cmd))
-    rc = subprocess.call(cmd)
+    rc = subprocess.call([sys.executable, "-c", _LAUNCHER, *cmd[1:]])
     if rc != 0:
         print(f"[!] casts-down 結束碼 {rc}（仍會嘗試轉換已存在的逐字稿）", file=sys.stderr)
 
