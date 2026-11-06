@@ -5,8 +5,11 @@ TimeTree 官方 API 已關，這裡走網頁版的登入流程（跟開源 timet
 行事曆。非官方介面，隨時可能改 —— 所以任何錯誤都只印 log、回空清單，
 不拖垮 Google 日曆那條。
 
-環境變數：
-- TIMETREE_EMAIL / TIMETREE_PASSWORD：帳密（使用者自己放 Infisical）
+環境變數（兩種登入擇一）：
+- TIMETREE_SESSION_COOKIE：瀏覽器登入後的 `_session_id` cookie 值。用 Google／
+  Apple／FB 註冊的帳號沒有密碼，只能走這條；過期時私訊管理員，照
+  docs/timetree-cookie.md 重抓
+- TIMETREE_EMAIL / TIMETREE_PASSWORD：有 email 帳號才能用
 - TIMETREE_CALENDAR：要讀的行事曆名稱；沒設就不讀（先打 /admin/timetree-probe
   看有哪些名稱）
 """
@@ -26,8 +29,16 @@ _TPE = ZoneInfo("Asia/Taipei")
 _session = None  # 同一個 process 重用登入
 
 
+class CookieExpired(RuntimeError):
+    pass
+
+
+def _cookie():
+    return os.environ.get("TIMETREE_SESSION_COOKIE", "").strip()
+
+
 def enabled():
-    return bool(os.environ.get("TIMETREE_EMAIL") and os.environ.get("TIMETREE_PASSWORD"))
+    return bool(_cookie() or (os.environ.get("TIMETREE_EMAIL") and os.environ.get("TIMETREE_PASSWORD")))
 
 
 def calendar_name():
@@ -38,6 +49,9 @@ def login():
     """登入並回傳帶 cookie 的 requests.Session。失敗 raise（訊息不含帳密）。"""
     s = requests.Session()
     s.headers.update(_HEADERS)
+    if _cookie():
+        s.cookies.set("_session_id", _cookie(), domain="timetreeapp.com")
+        return s
     resp = s.put(f"{API_V1}/auth/email/signin", json={
         "uid": os.environ["TIMETREE_EMAIL"],
         "password": os.environ["TIMETREE_PASSWORD"],
@@ -53,6 +67,9 @@ def _get(path_url, relogin=True):
     if _session is None:
         _session = login()
     resp = _session.get(path_url, timeout=20)
+    if resp.status_code == 401 and _cookie():
+        _session = None
+        raise CookieExpired("TimeTree cookie 過期")
     if resp.status_code == 401 and relogin:
         _session = None
         return _get(path_url, relogin=False)
@@ -163,15 +180,30 @@ def events_on(day):
             return []
         raw = fetch_raw_events(cal["id"])
         return [_to_google_shape(e, day) for e in raw if _occurs_on(e, day)]
+    except CookieExpired:
+        _notify_cookie_expired()
+        return []
     except Exception as e:
         print(f"[timetree] 讀取失敗（非致命）：{str(e)[:200]}")
         return []
 
 
+def _notify_cookie_expired():
+    print("[timetree] cookie 過期，明天預告先不帶 TimeTree")
+    try:
+        import admin_notify
+        admin_notify.notify_admin(
+            "TimeTree 登入過期：電腦瀏覽器登入 timetreeapp.com，複製 _session_id cookie，"
+            "貼到 Infisical dev 的 TIMETREE_SESSION_COOKIE（步驟見 repo docs/timetree-cookie.md）",
+            context={"module": "timetree", "section": "cookie"})
+    except Exception as e:
+        print(f"[timetree] 通知失敗（非致命）：{e}")
+
+
 def probe():
     """給 /admin/timetree-probe：從 Railway 試登入，列出行事曆名稱與明天的筆數。"""
     if not enabled():
-        return {"ok": False, "error": "沒設 TIMETREE_EMAIL / TIMETREE_PASSWORD"}
+        return {"ok": False, "error": "沒設 TIMETREE_SESSION_COOKIE（或 TIMETREE_EMAIL / TIMETREE_PASSWORD）"}
     global _session
     _session = None
     try:

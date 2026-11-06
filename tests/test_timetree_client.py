@@ -87,6 +87,28 @@ def test_events_on_filters_by_day(monkeypatch):
     assert len(timetree_client.events_on(DAY)) == 1
 
 
+def test_cookie_mode_skips_password_login(monkeypatch):
+    monkeypatch.delenv("TIMETREE_EMAIL", raising=False)
+    monkeypatch.setenv("TIMETREE_SESSION_COOKIE", "abc")
+    assert timetree_client.enabled()
+    s = timetree_client.login()
+    assert s.cookies.get("_session_id") == "abc"
+
+
+def test_cookie_expired_notifies_admin(monkeypatch):
+    import admin_notify
+    monkeypatch.setenv("TIMETREE_SESSION_COOKIE", "abc")
+    monkeypatch.setenv("TIMETREE_CALENDAR", "我們")
+    sent = []
+    monkeypatch.setattr(admin_notify, "notify_admin", lambda err, context=None: sent.append(err))
+
+    def expired(name):
+        raise timetree_client.CookieExpired("x")
+    monkeypatch.setattr(timetree_client, "_find_calendar", expired)
+    assert timetree_client.events_on(DAY) == []
+    assert sent and "TIMETREE_SESSION_COOKIE" in sent[0]
+
+
 def test_merged_into_preview(monkeypatch):
     monkeypatch.setattr(couple_calendar, "_fetch_google", lambda *a: [
         {"summary": "看展", "start": {"dateTime": "2026-11-08T14:00:00+08:00"}}])
