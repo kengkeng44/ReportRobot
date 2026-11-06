@@ -54,7 +54,23 @@ def get_calendar_service():
 
 
 def fetch_events(day, service=None, calendar_id=None):
-    """回傳那一天（台北時間）跟它重疊的行程，原始 Google event dict。"""
+    """那一天（台北時間）的 ⭐ 特別活動 + TimeTree 共用行事曆行程，時間早的在前。
+
+    兩邊各自吞錯誤：一邊掛了另一邊照推。
+    """
+    import timetree_client
+
+    try:
+        events = _fetch_google(day, service, calendar_id)
+    except Exception as e:
+        print(f"[couple_calendar] 讀 Google 日曆失敗（非致命）：{e}")
+        events = []
+    events = events + timetree_client.events_on(day)
+    events.sort(key=lambda ev: ev.get("start", {}).get("dateTime", ""))  # 整天的排最前
+    return events
+
+
+def _fetch_google(day, service=None, calendar_id=None):
     calendar_id = calendar_id or special_calendar_id()
     if not calendar_id:
         return []
@@ -79,7 +95,8 @@ def _event_line(ev):
     else:
         when = "整天"
     place = ev.get("location")
-    line = f"⭐ {when}　{title}"
+    icon = "🌳" if ev.get("source") == "timetree" else "⭐"
+    line = f"{icon} {when}　{title}"
     if place:
         line += f"（{place.split(',')[0]}）"
     return line

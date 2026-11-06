@@ -834,6 +834,14 @@ async def hut_ingest(request: Request):
         raise HTTPException(status_code=400, detail=str(e)[:200])
 
 
+@app.post("/admin/timetree-probe")
+async def timetree_probe(request: Request):
+    """從 Railway 試登 TimeTree，列出行事曆名稱（設 TIMETREE_CALENDAR 用）與明天筆數。"""
+    _check_admin(request)
+    import timetree_client
+    return timetree_client.probe()
+
+
 @app.post("/admin/hut-probe")
 async def hut_probe(request: Request):
     """從 Railway 對林業署三站首頁各 GET 一次，看國外 IP 會不會被擋。"""
