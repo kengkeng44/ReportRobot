@@ -9,7 +9,6 @@ PLACE = {
     "kgonline": "檜谷",
     "onestop_paiyun": "排雲",
     "onestop_99": "九九",
-    "onestop_7ka": "雪霸",
     "onestop_369camp": "雪霸",
     "onestop_cilai": "奇萊",
     "onestop_nanhu": "南湖",

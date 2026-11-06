@@ -20,7 +20,6 @@ BASE = "https://hike.taiwan.gov.tw/"
 ONESTOP = {
     "onestop_paiyun": ("bed_6.aspx", "排雲山莊"),
     "onestop_99": ("bed_1.aspx", "九九山莊"),
-    "onestop_7ka": ("bed_1.aspx", "七卡山莊"),
     # 三六九山莊 2023-05-20 起改建停止申請，只剩臨時營地（24 帳位）
     "onestop_369camp": ("bed_1.aspx", "三六九臨時營地"),
     "onestop_cilai": ("bed_4.aspx", "奇萊山屋"),
