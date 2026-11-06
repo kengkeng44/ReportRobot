@@ -490,6 +490,27 @@ async def lifespan(app: FastAPI):
             misfire_grace_time=1800,
             replace_existing=True,
         )
+
+    # 山屋申請提醒（週六）：21:00 預告明天要送件／開放，06:50 提醒 07:00 開放的先到先得
+    def _run_hut_remind(kind):
+        try:
+            import hut_remind
+            from tz_utils import today_tpe
+            hut_remind.push(kind, today_tpe())
+        except Exception as e:
+            print(f"[hut_remind] {kind} 失敗（非致命）：{e}")
+
+    for _kind, _hour, _minute in (("evening", 21, 0), ("morning", 6, 50)):
+        scheduler.add_job(
+            _run_hut_remind,
+            CronTrigger(hour=_hour, minute=_minute, timezone="Asia/Taipei"),
+            kwargs={"kind": _kind},
+            id=f"hut_remind_{_kind}",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=600,       # 06:50 的提醒晚超過 10 分鐘就沒意義了
+            replace_existing=True,
+        )
     scheduler.start()
     # 注入 scheduler 給 personal.py 用（提醒功能要排 one-shot job）
     import app_state
