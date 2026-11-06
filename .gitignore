@@ -42,3 +42,4 @@ transcripts/*.m4a
 transcripts/*.mp3
 transcripts/*.tmp
 *.m4a.tmp
+transcripts/*.segments.jsonl
