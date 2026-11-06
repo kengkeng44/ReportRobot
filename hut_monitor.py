@@ -219,18 +219,21 @@ def run_check(send_events_today=False, now=None, fetch=None, send=None, notify=N
     sync(slots, errors, now, notify)
 
     sent = False
+    # 只有週六晚上有空位才寄；抽籤／開放日不再單獨寄，夾在週六的信裡
+    # （send_events_today 留著給 server.py 的排程參數，已不影響寄信）
+    mail = [c for c in changes if hut_calendar.is_notify_night(c.slot.day)]
     try:
-        events = hut_calendar.upcoming_events(today)
-        has_events_today = any(e[0] == today for e in events)
-        if changes or (send_events_today and has_events_today):
-            subject, text = hut_report.build_email(changes, events, errors, today)
+        events = [e for e in hut_calendar.upcoming_events(today)
+                  if hut_calendar.is_notify_night(e[2])]
+        if any(hut_report.is_highlight(c) for c in mail):
+            subject, text = hut_report.build_email(mail, events, errors, today)
             sent = bool(send(subject, text))
             if not sent:
                 print(f"[hut_monitor] 信沒寄出（可能沒設信箱）：{subject}")
     except Exception as e:
         # 寄信失敗：把沒寄出的變化退回快照，下次還會再報
         with _LOCK:
-            for c in changes:
+            for c in mail:
                 if c.before is None:
                     _snapshot.pop(c.slot.key(), None)
                 else:

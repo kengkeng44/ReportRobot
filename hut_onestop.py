@@ -21,6 +21,8 @@ ONESTOP = {
     "onestop_paiyun": ("bed_6.aspx", "排雲山莊"),
     "onestop_99": ("bed_1.aspx", "九九山莊"),
     "onestop_7ka": ("bed_1.aspx", "七卡山莊"),
+    # 三六九山莊 2023-05-20 起改建停止申請，只剩臨時營地（24 帳位）
+    "onestop_369camp": ("bed_1.aspx", "三六九臨時營地"),
     "onestop_cilai": ("bed_4.aspx", "奇萊山屋"),
     "onestop_nanhu": ("bed_4.aspx", "南湖山屋"),
 }
@@ -44,6 +46,7 @@ def ensure_not_blocked(html):
 def parse_onestop_html(html, site):
     ensure_not_blocked(html)
     unit = ONESTOP[site][1]
+    kind = "tent" if "營地" in unit else "bed"
     soup = BeautifulSoup(html, "html.parser")
     slots = []
     for a in soup.select("table.table_bed a[href*='sdate=']"):
@@ -57,5 +60,5 @@ def parse_onestop_html(html, site):
         else:
             remaining = None
         q = _QUEUE.search(text)
-        slots.append(Slot(site, unit, "bed", day, remaining, int(q.group(1)) if q else None))
+        slots.append(Slot(site, unit, kind, day, remaining, int(q.group(1)) if q else None))
     return slots

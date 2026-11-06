@@ -116,11 +116,21 @@ def test_forest_off_server_expects_ingest(monkeypatch):
     assert "jmlnt" in hm.status()["errors"]
 
 
-def test_events_mail_only_when_asked():
+def test_events_alone_never_mail():
+    """抽籤／開放日不再單獨寄信（2026-11-06：只有週六有空位才通知）。"""
     _, sent, _ = _run([])
     assert sent == []
     _, sent, _ = _run([], send_events_today=True)
-    assert sent and sent[0][0].startswith("山屋：今天")
+    assert sent == []
+
+
+def test_only_saturday_mails():
+    """週五、週日的空位只記 Notion，不寄信；週六才寄。"""
+    _run([_s("tconline", "天池山莊", FRI, 0), _s("tconline", "天池山莊", SAT, 0)])
+    out, sent, _ = _run([_s("tconline", "天池山莊", FRI, 5), _s("tconline", "天池山莊", SAT, 0)])
+    assert out["changes"] == 1 and sent == []
+    _, sent, _ = _run([_s("tconline", "天池山莊", FRI, 5), _s("tconline", "天池山莊", SAT, 3)])
+    assert len(sent) == 1 and "12/5(六)" in sent[0][0]
 
 
 def test_line_reply():
@@ -148,7 +158,7 @@ def test_send_failure_rolls_back_and_alerts():
 
 def test_send_failure_rolls_back_new_key():
     _run([_s("tconline", "天池山莊", SAT, 0)])
-    new_day = date(2026, 12, 6)
+    new_day = date(2026, 12, 12)  # 週六
     slots = [_s("tconline", "天池山莊", SAT, 0), _s("tconline", "天池山莊", new_day, 2)]
 
     def boom(subject, text):

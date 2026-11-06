@@ -66,3 +66,14 @@ def test_sheiba_style_cell():
             "餘額 4 待處理 3 已通過 36</a></td></tr></table>")
     s = ho.parse_onestop_html(html, "onestop_cilai")[0]
     assert (s.remaining, s.applicants) == (4, 3)
+
+
+def test_369_camp_fixture_is_tent():
+    """三六九只剩臨時營地，用 2026-11-06 抓的真頁面；營地算帳不算床。"""
+    from pathlib import Path
+    html = (Path(__file__).parent / "fixtures" / "hut" / "onestop_369camp.html").read_text(encoding="utf-8")
+    slots = ho.parse_onestop_html(html, "onestop_369camp")
+    assert len(slots) == 20
+    assert {s.kind for s in slots} == {"tent"}
+    sat = {s.day: s.remaining for s in slots if s.day.weekday() == 5}
+    assert sat[date(2026, 11, 21)] == 1

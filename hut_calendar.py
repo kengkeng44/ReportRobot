@@ -12,6 +12,13 @@ WEEKDAY = "一二三四五六日"
 WEEKEND_NIGHTS = (4, 5, 6)  # 週五、六、日晚上；連假多出來的平日不查（使用者 2026-11-03 選的）
 
 
+NOTIFY_NIGHTS = (5,)  # 寄信只看週六晚上（使用者 2026-11-06 改的）；Notion 和 LINE 查詢仍看週五六日
+
+
+def is_notify_night(d):
+    return d.weekday() in NOTIFY_NIGHTS
+
+
 def is_good_night(d):
     """住宿日 d 是週五、週六或週日晚上。"""
     return d.weekday() in WEEKEND_NIGHTS
