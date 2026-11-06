@@ -43,3 +43,6 @@ transcripts/*.mp3
 transcripts/*.tmp
 *.m4a.tmp
 transcripts/*.segments.jsonl
+# 完整逐字稿是節目方的內容，repo 公開所以不推；只推自己整理的 *_整理.md
+transcripts/*.txt
+transcripts/*.srt
