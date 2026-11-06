@@ -12,7 +12,8 @@
     <標題>.txt/.srt   casts-down 產出的原始轉寫（多為簡體）
     <標題>_繁.txt/.srt  OpenCC s2twp 轉換後的台灣繁體
 
-需要：pip install casts_down opencc-python-reimplemented
+需要：pip install casts_down opencc-python-reimplemented "av<16"
+（PyAV 16 以後拿掉 metadata_errors 參數，faster-whisper 1.2.x 解碼會 TypeError）
 """
 from __future__ import annotations
 
