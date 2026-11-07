@@ -356,10 +356,33 @@ def is_personal_morning(shop, d, hhmm):
     return _MORNING_FROM <= hhmm[:5].zfill(5) < _MORNING_BEFORE and is_workday(d)
 
 
+# 不分時間一律算個人的店（2026-11-08 使用者逐一確認「100% 是我個人的」）。
+# 比對前會轉半形、轉大寫：國泰給的店名常是全形（１０１美食街）或大寫（ANTHROPIC* CLAUDE SUB）。
+_PERSONAL_SHOPS = (
+    "PREPLY", "ANTHROPIC", "AMAZON WEB SERVICES", "RAILWAY",       # 訂閱／工具
+    "台北金融大樓", "101美食街", "萬洲通", "欣宜快餐",               # 上班附近
+    "高鐵", "淡水國民運動中心", "國泰世紀產物保險", "國光汽車客運", "國光客運",
+)
+
+
+def _norm(s):
+    import unicodedata
+    return unicodedata.normalize("NFKC", s or "").upper()
+
+
+def is_personal_shop(shop):
+    name = _norm(shop)
+    return any(k in name for k in _PERSONAL_SHOPS)
+
+
 def apply_personal_rule(txn):
     """跟 apply_shared_rule 對稱：已經有分攤類型的不動（共同規則或手動優先）。"""
     if not txn or txn.get("split_type") or txn.get("direction") != "支出":
         return txn
+    if is_personal_shop(txn.get("shop")):
+        out = dict(txn)
+        out["split_type"] = "個人"
+        return out
     d = txn.get("date")
     if isinstance(d, str):
         from datetime import date as _date

@@ -1846,7 +1846,10 @@ def transaction_add(txn):
         return None
 
     import spend_taxonomy
+    import finance_report
     txn = spend_taxonomy.apply(txn)
+    # 個人店家規則擋在這裡：國泰、載具、截圖等所有來源都吃得到（已有分攤類型的不動）
+    txn = finance_report.apply_personal_rule(txn)
     title = txn.get("shop") or txn.get("category") or "消費"
     candidates = {
         "摘要": {"title": [{"text": {"content": title}}]},

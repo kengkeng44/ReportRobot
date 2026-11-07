@@ -883,6 +883,14 @@ async def einvoice_carriers(request: Request, inv: str = ""):
     return await asyncio.to_thread(run)
 
 
+@app.post("/admin/personal-shops-backfill")
+async def personal_shops_backfill(request: Request, apply: int = 0):
+    """舊資料補套「一律個人的店」。預設只列出（apply=1 才寫）。"""
+    _check_admin(request)
+    import finance_sync
+    return await asyncio.to_thread(finance_sync.backfill_personal_shops, dry_run=not apply)
+
+
 @app.post("/admin/personal-morning-backfill")
 async def personal_morning_backfill(request: Request, apply: int = 0):
     """舊的「平日上午全家」補標個人。預設只列出來（apply=1 才寫）。"""

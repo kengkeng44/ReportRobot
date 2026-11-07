@@ -255,6 +255,38 @@ def backfill_personal_morning(dry_run=True, service=None, client=None):
     return stats
 
 
+def backfill_personal_shops(dry_run=True, client=None):
+    """舊資料補套「一律個人的店」。只動分攤類型還空著的支出。"""
+    import notion_db
+    client = client or notion_db._get_client()
+    db_id = notion_db.get_or_create_db("交易明細")
+    filt = {"and": [{"property": "方向", "select": {"equals": "支出"}},
+                    {"property": "分攤類型", "select": {"is_empty": True}}]}
+    stats = {"checked": 0, "marked": 0, "rows": []}
+    cursor = None
+    while True:
+        kw = {"database_id": db_id, "filter": filt, "page_size": 100}
+        if cursor:
+            kw["start_cursor"] = cursor
+        resp = client.databases.query(**kw)
+        for p in resp["results"]:
+            stats["checked"] += 1
+            props = p["properties"]
+            shop = "".join(x.get("plain_text", "") for x in props["商店"].get("rich_text") or []) \
+                or "".join(x.get("plain_text", "") for x in props["摘要"].get("title") or [])
+            if not finance_report.is_personal_shop(shop):
+                continue
+            stats["marked"] += 1
+            stats["rows"].append(((props["日期"].get("date") or {}).get("start"), shop,
+                                  props["金額"].get("number")))
+            if not dry_run:
+                client.pages.update(page_id=p["id"], properties={
+                    "分攤類型": {"select": {"name": "個人"}}, "算個人": {"checkbox": True}})
+        if not resp.get("has_more"):
+            return stats
+        cursor = resp["next_cursor"]
+
+
 def sync_portfolio(portfolio=None, notion=None, today=None):
     """把持倉與淨值快照寫進 Notion。回統計 dict。
 
