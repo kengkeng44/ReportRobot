@@ -307,6 +307,8 @@ _SCHEMAS = {
         "消費地區": _select(("TW", "default"), ("US", "orange"),
                             ("JP", "pink"), ("EU", "blue")),
         "卡末四碼": {"rich_text": {}},
+        # 誰的卡／誰的載具／誰記的，一眼看懂（payment_label.py 由其他欄位推出）
+        "付款／載具": {"rich_text": {}},
         # 授權 = 當下刷卡紀錄；已結帳 = 月帳單確認後的最終金額（見 spec 4.3）
         "狀態": _select(("授權中", "yellow"), ("已結帳", "green"), ("待確認", "red")),
         # 在哪裡記的、或哪封信抓來的。顯示名稱與程式內部值的對照見 sources.py
@@ -1879,6 +1881,11 @@ def transaction_add(txn):
         "發票資料": _rich(txn["invoice_data"]) if txn.get("invoice_data") else None,
         "發票號碼": _rich(txn["invoice_no"]) if txn.get("invoice_no") else None,
     }
+    import payment_label
+    _pay = payment_label.label(
+        sources.txn_display(txn.get("source"), txn.get("channel")) if txn.get("source") else "",
+        txn.get("card_last4") or "", txn.get("invoice_no") or "", txn.get("recorder") or "")
+    candidates["付款／載具"] = _rich(_pay) if _pay else None
     if txn.get("mail_url"):
         candidates["原信連結"] = {"url": txn["mail_url"]}
     props = {k: v for k, v in candidates.items() if v is not None}
@@ -2527,6 +2534,13 @@ def transaction_attach_invoice(page_id, invoice_no, items, data=None, clear_acti
     if clear_action:
         props["發票處理"] = {"select": None}
         props["發票正確"] = {"checkbox": False}
+    try:
+        import payment_label
+        cur = client.pages.retrieve(page_id=page_id)["properties"]
+        cur["發票號碼"] = {"rich_text": [{"plain_text": invoice_no or ""}]}
+        props["付款／載具"] = payment_label.rich(payment_label.from_props(cur))
+    except Exception as e:
+        print(f"[notion] 付款／載具重算失敗（非致命）：{e}")
     try:
         client.pages.update(page_id=page_id, properties=props)
         return True

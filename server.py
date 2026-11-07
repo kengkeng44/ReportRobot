@@ -842,6 +842,25 @@ async def timetree_probe(request: Request):
     return timetree_client.probe()
 
 
+@app.post("/admin/payment-label-backfill")
+async def payment_label_backfill(request: Request):
+    """交易明細舊資料補「付款／載具」欄（背景跑）；GET 同路徑看進度。"""
+    _check_admin(request)
+    import notion_db
+    import payment_label
+    notion_db.get_or_create_db("交易明細")   # 確保欄位已建
+    if not payment_label.start_backfill():
+        raise HTTPException(status_code=409, detail="還在跑")
+    return {"ok": True}
+
+
+@app.get("/admin/payment-label-backfill")
+async def payment_label_backfill_status(request: Request):
+    _check_admin(request)
+    import payment_label
+    return payment_label.status()
+
+
 @app.post("/admin/einvoice-carriers")
 async def einvoice_carriers(request: Request, inv: str = ""):
     """財政部彙整信裡出現過哪些載具（名稱、號碼、張數）；inv=發票號碼 時回那張發票的載具。"""
