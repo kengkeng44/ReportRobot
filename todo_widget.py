@@ -44,7 +44,10 @@ def _urgent_reason(t, today):
 
 def build(open_todos, done_rows, today, who=None, limit=8):
     """open_todos：personal.list_todos 的項目；done_rows：[(專案, 歸屬), ...]。"""
-    open_todos = [t for t in open_todos if _mine(t.get("owner"), who)]
+    import personal
+    # 一個月後才開始的（非 P0）不算進緊急、也不算進專案未完成數
+    open_todos = [t for t in open_todos
+                  if _mine(t.get("owner"), who) and personal.in_horizon(t, today)]
     done_rows = [(p, o) for p, o in done_rows if _mine(o, who)]
 
     urgent = []

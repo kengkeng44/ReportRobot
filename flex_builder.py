@@ -186,7 +186,19 @@ def todo_list_flex(items, only_important=False, db_url=""):
     only_important=True 表示這是「只列 P0」的檢視：空狀態的文案不同
     （說「沒有重要待辦」而不是「沒有待辦事項」—— 你可能有十筆普通的），
     而且底部多一顆「看全部」。
+
+    超過一個月才開始、又不是 P0 的先不列（personal.in_horizon），
+    只在最後一行說還藏了幾件，免得一次排好的年度待辦塞滿清單。
     """
+    import personal
+    from tz_utils import today_tpe
+    today = today_tpe()
+    shown = [t for t in items if personal.in_horizon(t, today)]
+    hidden = len(items) - len(shown)
+    items = shown
+    hidden_note = ({"type": "text", "size": "xs", "color": _TEXT_LIGHT, "margin": "lg", "wrap": True,
+                    "text": f"🗓 還有 {hidden} 件一個月後才開始的，到時候會出現"}
+                   if hidden else None)
     if not items:
         bubble = {
             "type": "bubble", "size": "mega",
@@ -205,7 +217,7 @@ def todo_list_flex(items, only_important=False, db_url=""):
                     {"type": "text", "text": "辛苦了！",
                      "size": "sm", "align": "center", "color": _TEXT_LIGHT,
                      "margin": "sm"},
-                ],
+                ] + ([hidden_note] if hidden_note else []),
             },
             "footer": _todo_footer(only_important, db_url),
         }
@@ -266,6 +278,8 @@ def todo_list_flex(items, only_important=False, db_url=""):
                 },
             ],
         })
+    if hidden_note:
+        rows.append(hidden_note)
 
     bubble = {
         "type": "bubble", "size": "mega",

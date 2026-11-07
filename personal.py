@@ -394,6 +394,21 @@ def todos_important(user_id):
     return [t for t in list_todos(user_id) if t.get("priority") == "P0"]
 
 
+HORIZON_DAYS = 30
+
+
+def in_horizon(item, today, days=HORIZON_DAYS):
+    """清單要不要顯示這筆：沒日期、P0、或 days 天內到期（含逾期）才顯示。
+
+    2026-11-07 使用者定的：一次排五年的年度待辦，平常不要擠在清單裡，
+    到期前一個月才浮上來。看開始日不看截止日 —— 一段期間的待辦開始了就該看到。
+    """
+    if item.get("priority") == "P0":
+        return True
+    start = item.get("start") or item.get("end")
+    return start is None or start <= today + timedelta(days=days)
+
+
 def _deadline(item):
     """待辦的截止日：end 有值就用 end，沒有就用 start。
 
