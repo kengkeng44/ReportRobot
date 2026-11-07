@@ -842,6 +842,28 @@ async def timetree_probe(request: Request):
     return timetree_client.probe()
 
 
+@app.post("/admin/einvoice-carriers")
+async def einvoice_carriers(request: Request, inv: str = ""):
+    """財政部彙整信裡出現過哪些載具（名稱、號碼、張數）；inv=發票號碼 時回那張發票的載具。"""
+    _check_admin(request)
+    import gmail_reader
+    import einvoice_sync
+
+    def run():
+        invoices = []
+        einvoice_sync.fetch_rows(gmail_reader.get_gmail_service(), sink=invoices)
+        counts = {}
+        for i in invoices:
+            k = (i.get("carrier_name") or "", i.get("carrier_id") or "")
+            counts[k] = counts.get(k, 0) + 1
+        hit = [{"carrier_name": i.get("carrier_name"), "carrier_id": i.get("carrier_id"),
+                "date": str(i.get("date")), "seller": i.get("seller")}
+               for i in invoices if inv and i.get("inv_num") == inv]
+        return {"carriers": [{"name": n, "id": c, "count": v} for (n, c), v in counts.items()],
+                "match": hit}
+    return await asyncio.to_thread(run)
+
+
 @app.post("/admin/personal-morning-backfill")
 async def personal_morning_backfill(request: Request, apply: int = 0):
     """舊的「平日上午全家」補標個人。預設只列出來（apply=1 才寫）。"""
