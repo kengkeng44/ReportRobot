@@ -842,6 +842,14 @@ async def timetree_probe(request: Request):
     return timetree_client.probe()
 
 
+@app.post("/admin/personal-morning-backfill")
+async def personal_morning_backfill(request: Request, apply: int = 0):
+    """舊的「平日上午全家」補標個人。預設只列出來（apply=1 才寫）。"""
+    _check_admin(request)
+    import finance_sync
+    return await asyncio.to_thread(finance_sync.backfill_personal_morning, dry_run=not apply)
+
+
 @app.post("/admin/timetree-import")
 async def timetree_import_run(request: Request):
     """Claude 從使用者已登入的 TimeTree 分頁抓下 rows，送來這裡寫進 Notion（背景跑）。"""

@@ -333,6 +333,47 @@ def apply_shared_rule(txn):
     return out
 
 
+# 平日上午在這些店 = 上班前買早餐，一律算個人（2026-11-07 使用者指定）。
+_PERSONAL_MORNING_SHOPS = ("全家",)
+_MORNING_BEFORE = "12:00"
+
+
+def is_workday(d):
+    """週一到週五、且不是台灣國定假日。"""
+    if d.weekday() >= 5:
+        return False
+    try:
+        import holidays
+        return d not in holidays.Taiwan(years=d.year)
+    except Exception:
+        return True
+
+
+def is_personal_morning(shop, d, hhmm):
+    """平日上午在全家 → 個人。沒有時間（載具發票、手動）就不判斷。"""
+    if not hhmm or not any(k in (shop or "") for k in _PERSONAL_MORNING_SHOPS):
+        return False
+    return hhmm[:5].zfill(5) < _MORNING_BEFORE and is_workday(d)
+
+
+def apply_personal_rule(txn):
+    """跟 apply_shared_rule 對稱：已經有分攤類型的不動（共同規則或手動優先）。"""
+    if not txn or txn.get("split_type") or txn.get("direction") != "支出":
+        return txn
+    d = txn.get("date")
+    if isinstance(d, str):
+        from datetime import date as _date
+        try:
+            d = _date.fromisoformat(d[:10])
+        except ValueError:
+            return txn
+    if not d or not is_personal_morning(txn.get("shop"), d, txn.get("time")):
+        return txn
+    out = dict(txn)
+    out["split_type"] = "個人"
+    return out
+
+
 def guess_category(shop):
     """品項 → 消費類別。認不出來回「其他」，不自創類別。
 

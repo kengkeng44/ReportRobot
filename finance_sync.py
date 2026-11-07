@@ -189,11 +189,69 @@ def sync(service=None, lookback_days=DEFAULT_LOOKBACK_DAYS, notion=None, sources
                 # 套在寫入前而不是 parser 裡：這是「錢怎麼分」的政策，
                 # 不是「信件怎麼讀」的解析，混在一起之後兩邊都難改。
                 txn = finance_report.apply_shared_rule(txn)
+                txn = finance_report.apply_personal_rule(txn)
                 if notion.transaction_add(txn):
                     seen.add(txn["fingerprint"])
                     stats["written"] += 1
 
     print(f"[finance] 同步完成：{stats}")
+    return stats
+
+
+def backfill_personal_morning(dry_run=True, service=None, client=None):
+    """舊資料補套「平日上午全家 = 個人」。
+
+    交易明細的日期欄沒存時間，所以靠原信連結回去重讀國泰通知信、用 Fingerprint
+    對到同一筆拿授權時間。只動分攤類型還空著的（已經標共同的是人判斷過的，不蓋掉）。
+    回 {checked, marked, no_time, rows: [(日期, 時間, 店, 金額)]}。
+    """
+    import notion_db
+    client = client or notion_db._get_client()
+    db_id = notion_db.get_or_create_db("交易明細")
+    service = service or __import__("gmail_reader").get_gmail_service()
+    filt = {"and": [
+        {"property": "方向", "select": {"equals": "支出"}},
+        {"property": "分攤類型", "select": {"is_empty": True}},
+        {"property": "商店", "rich_text": {"contains": "全家"}},
+        {"property": "原信連結", "url": {"is_not_empty": True}},
+    ]}
+    pages, cursor = [], None
+    while True:
+        kw = {"database_id": db_id, "filter": filt, "page_size": 100}
+        if cursor:
+            kw["start_cursor"] = cursor
+        resp = client.databases.query(**kw)
+        pages += resp["results"]
+        if not resp.get("has_more"):
+            break
+        cursor = resp["next_cursor"]
+
+    stats = {"checked": len(pages), "marked": 0, "no_time": 0, "rows": []}
+    parsed = {}   # mid → {fingerprint: txn}
+    for p in pages:
+        props = p["properties"]
+        mid = (props["原信連結"].get("url") or "").rsplit("/", 1)[-1]
+        fp = "".join(x.get("plain_text", "") for x in props["Fingerprint"].get("rich_text") or [])
+        if mid not in parsed:
+            try:
+                msg = service.users().messages().get(userId="me", id=mid, format="full").execute()
+                parsed[mid] = {t["fingerprint"]: t for t in cathay_daily.parse(_html_of(msg.get("payload")))}
+            except Exception as e:
+                print(f"[backfill_personal] 讀信失敗 {mid}：{e}")
+                parsed[mid] = {}
+        txn = parsed[mid].get(fp)
+        if not txn or not txn.get("time"):
+            stats["no_time"] += 1
+            continue
+        if finance_report.apply_personal_rule(txn).get("split_type") != "個人":
+            continue
+        stats["marked"] += 1
+        stats["rows"].append((txn["date"], txn["time"], txn["shop"], txn["amount"]))
+        if not dry_run:
+            client.pages.update(page_id=p["id"], properties={
+                "分攤類型": {"select": {"name": "個人"}},
+                "算個人": {"checkbox": True},
+            })
     return stats
 
 
