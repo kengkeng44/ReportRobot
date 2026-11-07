@@ -105,6 +105,24 @@ def _post_service():
         return None
 
 
+_account_cache = {}
+
+
+def _mail_url(svc, mid):
+    """原信連結。u/0 是瀏覽器第一個登入的帳號，不一定是收信的那個；
+    #inbox 遇到已封存的信會落回收件匣首頁。改用 authuser 指定帳號＋#all。"""
+    key = id(svc)
+    if key not in _account_cache:
+        try:
+            _account_cache[key] = svc.users().getProfile(userId="me").execute()["emailAddress"]
+        except Exception:
+            _account_cache[key] = None
+    email = _account_cache[key]
+    if email:
+        return f"https://mail.google.com/mail/?authuser={email}#all/{mid}"
+    return f"https://mail.google.com/mail/u/0/#all/{mid}"
+
+
 def sync(service=None, lookback_days=DEFAULT_LOOKBACK_DAYS, notion=None, sources=None, max_results=50):
     """主流程。回統計 dict {parsed, written, skipped, sources}。
 
@@ -160,7 +178,7 @@ def sync(service=None, lookback_days=DEFAULT_LOOKBACK_DAYS, notion=None, sources
                 print(f"[finance] 解析失敗 {mid}：{e}")
                 continue
 
-            mail_url = f"https://mail.google.com/mail/u/0/#inbox/{mid}"
+            mail_url = _mail_url(svc, mid)
             for txn in txns:
                 stats["parsed"] += 1
                 if txn["fingerprint"] in seen:
