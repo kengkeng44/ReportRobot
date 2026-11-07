@@ -25,6 +25,7 @@ def test_personal_shops_any_time():
                  "高鐵智慧型手機ＩＰｈｏｎｅ", "國光汽車客運－板橋客運站"):
         assert fr.apply_personal_rule(_txn("2026-10-25", "", shop=shop))["split_type"] == "個人", shop
     assert "split_type" not in fr.apply_personal_rule(_txn("2026-10-25", "", shop="全聯福利中心"))
+    assert "split_type" not in fr.apply_personal_rule(_txn("2026-10-25", "", shop="星巴克  青埔高鐵南"))
 
 
 def test_existing_split_wins():

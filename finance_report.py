@@ -361,8 +361,10 @@ def is_personal_morning(shop, d, hhmm):
 _PERSONAL_SHOPS = (
     "PREPLY", "ANTHROPIC", "AMAZON WEB SERVICES", "RAILWAY",       # 訂閱／工具
     "台北金融大樓", "101美食街", "萬洲通", "欣宜快餐",               # 上班附近
-    "高鐵", "淡水國民運動中心", "國泰世紀產物保險", "國光汽車客運", "國光客運",
+    "淡水國民運動中心", "國泰世紀產物保險", "國光汽車客運", "國光客運",
 )
+# 只比開頭的：「星巴克 青埔高鐵南」是站內咖啡店，不是車票
+_PERSONAL_PREFIXES = ("高鐵",)
 
 
 def _norm(s):
@@ -372,7 +374,7 @@ def _norm(s):
 
 def is_personal_shop(shop):
     name = _norm(shop)
-    return any(k in name for k in _PERSONAL_SHOPS)
+    return any(k in name for k in _PERSONAL_SHOPS) or name.strip().startswith(_PERSONAL_PREFIXES)
 
 
 def apply_personal_rule(txn):
