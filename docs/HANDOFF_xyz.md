@@ -86,8 +86,11 @@ python -m pytest tests/test_xyz_transcribe.py -q
   - ⚠️ 上一個 session 的全文只存在那個雲端容器裡，容器回收後就沒了。需要的話，用第 2 節的指令重新轉寫第 112 期（約 2 小時）。
   - 選項：放到使用者的 Notion 私人頁面，或改用 private repo。使用者如果要「全文修錯字、補標點」版本，也一起放在那裡，不要放進公開 repo。
 - [ ] **是否開 PR 合併到 main**：使用者還沒要求，不要自己開。
-- [ ] （可選）把續跑功能整合進 `xyz_transcribe.py`，例如加 `--resume` 參數，就不用分兩支腳本。
-- [ ] （可選）`xyz_transcribe.py` 目前沒有單元測試；`classify_url`、`build_command`、`convert_to_traditional` 都是純函式，容易補測試（`tests/` 底下用 pytest）。
+- 2026-11-07 使用者決定：**全文放 Notion 私人頁面**（修錯字、補標點後）。本機重新轉寫中：
+  音檔已下載到本機 `C:\Users\acer\projects\ReportRobot-xyz\transcripts\`，轉到 3.3 分時因為筆電記憶體不足（8 GB）被系統停掉。
+  checkpoint 還在，同一行 `--resume` 指令重跑就會接著轉。建議先關掉 Chrome 等程式，或改到雲端「ReportRobot」環境跑。
+- [x] 續跑功能已整合成 `--resume`（int8 模型，省記憶體）。
+- [x] 補了 `tests/test_xyz_transcribe.py`（13 個測試）。
 
 ---
 
