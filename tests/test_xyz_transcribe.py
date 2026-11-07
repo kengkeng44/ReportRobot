@@ -76,8 +76,8 @@ def _fake_whisper(monkeypatch, segments, calls):
     seg = types.SimpleNamespace
 
     class FakeModel:
-        def __init__(self, name, device):
-            calls.append(("model", name, device))
+        def __init__(self, name, device, compute_type):
+            calls.append(("model", name, device, compute_type))
 
         def transcribe(self, path, language, clip_timestamps):
             calls.append(("clip", clip_timestamps))
@@ -114,5 +114,5 @@ def test_transcribe_resumable_fresh_start(tmp_path, monkeypatch):
 
     x.transcribe_resumable(audio, "small")
 
-    assert ("model", "small", "cpu") in calls and ("clip", "0") in calls
+    assert ("model", "small", "cpu", "int8") in calls and ("clip", "0") in calls
     assert (tmp_path / "ep.srt").exists()

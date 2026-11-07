@@ -111,7 +111,8 @@ def transcribe_resumable(audio: Path, model_name: str) -> Path:
     start = done[-1]["end"] if done else 0.0
     print(f"[*] {audio.name}：從 {start / 60:.1f} 分接著轉（已有 {len(done)} 段）", flush=True)
 
-    model = WhisperModel(model_name, device="cpu")
+    # int8：記憶體約 float32 的 1/4（8 GB 筆電載 medium 會 mkl_malloc 失敗），CPU 上也較快
+    model = WhisperModel(model_name, device="cpu", compute_type="int8")
     it, info = model.transcribe(str(audio), language="zh",
                                 clip_timestamps=[start] if start else "0")
     with ckpt.open("a", encoding="utf-8") as f:
