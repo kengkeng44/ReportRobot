@@ -13,6 +13,7 @@ def test_weekday_morning_is_personal():
 
 def test_afternoon_weekend_holiday_other_shop_untouched():
     assert "split_type" not in fr.apply_personal_rule(_txn("2026-10-27", "12:00"))
+    assert "split_type" not in fr.apply_personal_rule(_txn("2026-10-26", "2:23"))       # 凌晨
     assert "split_type" not in fr.apply_personal_rule(_txn("2026-10-25", "08:00"))      # 週日
     assert "split_type" not in fr.apply_personal_rule(_txn("2026-10-09", "08:00"))      # 國慶連假補假
     assert "split_type" not in fr.apply_personal_rule(_txn("2026-10-27", "08:00", shop="統一超商"))

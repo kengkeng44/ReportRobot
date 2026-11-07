@@ -335,7 +335,7 @@ def apply_shared_rule(txn):
 
 # 平日上午在這些店 = 上班前買早餐，一律算個人（2026-11-07 使用者指定）。
 _PERSONAL_MORNING_SHOPS = ("全家",)
-_MORNING_BEFORE = "12:00"
+_MORNING_FROM, _MORNING_BEFORE = "05:00", "12:00"   # 凌晨不算上午（宵夜、旅行）
 
 
 def is_workday(d):
@@ -353,7 +353,7 @@ def is_personal_morning(shop, d, hhmm):
     """平日上午在全家 → 個人。沒有時間（載具發票、手動）就不判斷。"""
     if not hhmm or not any(k in (shop or "") for k in _PERSONAL_MORNING_SHOPS):
         return False
-    return hhmm[:5].zfill(5) < _MORNING_BEFORE and is_workday(d)
+    return _MORNING_FROM <= hhmm[:5].zfill(5) < _MORNING_BEFORE and is_workday(d)
 
 
 def apply_personal_rule(txn):
