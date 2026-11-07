@@ -11,7 +11,7 @@
 ## 1. TL;DR
 
 - 目標：貼小宇宙連結 → 自動下載音檔 → Whisper 轉寫 → OpenCC `s2twp` 轉台灣繁體。不用博主提供的文稿。
-- 腳本：`xyz_transcribe.py`（主流程）、`tools/xyz_resume_transcribe.py`（長集數的可續跑轉寫）。
+- 腳本：`xyz_transcribe.py`（長集數加 `--resume`，可中斷續跑）；測試在 `tests/test_xyz_transcribe.py`。
 - 實測：第 112 期《改變人生的12個槓桿策略》（105 分鐘）已轉寫完成，整理筆記在
   `transcripts/112_改变人生的12个杠杆策略｜106本心理学工具书极致总结_整理.md`。
 - 另外在 Notion「共同待辦」加了一筆「發票歸戶」待辦（第 5 節）。
@@ -27,7 +27,8 @@
 | `545243a` | 註明安裝時需要 `"av<16"` |
 | `587ef08` | `.gitignore` 排除 `transcripts/*.segments.jsonl` |
 | `138f93a` | 第 112 期整理筆記 `*_整理.md`；`.gitignore` 排除完整逐字稿 txt/srt |
-| （本次） | `tools/xyz_resume_transcribe.py` + 本交接文件 |
+| `e753386` | `tools/xyz_resume_transcribe.py` + 本交接文件 |
+| （2026-11-07 第二輪） | 續跑併進主腳本 `--resume`（刪掉 tools 那支）；補 `tests/test_xyz_transcribe.py` |
 
 ### 安裝
 
@@ -49,12 +50,19 @@ python xyz_transcribe.py https://www.xiaoyuzhoufm.com/podcast/<id> --latest 3
 ### 長集數（雲端 session 會撞到 2 小時上限時）
 
 ```bash
-# 先用主腳本下載音檔（轉寫失敗或被停掉都沒關係，音檔會留著）
-python -I tools/xyz_resume_transcribe.py "transcripts/<標題>.m4a"
-# 被停掉就再跑同一行，會從 .segments.jsonl 的最後時間點接著跑
-# 跑完再轉繁體：
-python -c "import xyz_transcribe as x; from pathlib import Path; print(x.convert_to_traditional(Path('transcripts')))"
+python xyz_transcribe.py <連結> --resume
+# 被停掉就再跑同一行：音檔已下載會跳過，轉寫從 .segments.jsonl 的最後時間點接著跑，跑完自動轉繁體
 ```
+
+`--resume` 會轉寫 `transcripts/` 裡**所有還沒有 .txt 的音檔**，不只這次連結的那集。
+
+### 測試
+
+```bash
+python -m pytest tests/test_xyz_transcribe.py -q
+```
+
+沒裝 casts_down / opencc 的環境會自動略過相關測試；faster-whisper 用假模組代替，不會真的跑模型。
 
 ---
 

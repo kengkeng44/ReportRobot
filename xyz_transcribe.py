@@ -6,6 +6,10 @@
 用法：
     python xyz_transcribe.py https://www.xiaoyuzhoufm.com/episode/<id>
     python xyz_transcribe.py https://www.xiaoyuzhoufm.com/podcast/<id> --latest 3
+    python xyz_transcribe.py <連結> --resume   # 長集數：可中斷、重跑會接著轉
+
+--resume 時 casts-down 只負責下載，轉寫改在本程式裡做：每個 segment 即時寫進
+<標題>.segments.jsonl，被停掉後重跑同一行，會從最後一個時間點接著轉。
 
 輸出（transcripts/）：
     <標題>.m4a        音檔（不進 git）
@@ -18,6 +22,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shutil
 import subprocess
@@ -28,6 +33,8 @@ MAX_LATEST = 15
 DEFAULT_OUT = "transcripts"
 DEFAULT_MODEL = "medium"
 TRAD_SUFFIX = "_繁"
+AUDIO_SUFFIXES = (".m4a", ".mp3")
+CKPT_SUFFIX = ".segments.jsonl"
 
 # casts-down 內部用 aiohttp，預設 trust_env=False 會忽略 HTTPS_PROXY；
 # 在有代理的環境（公司網路、雲端沙盒）會直接 DNS 失敗。這裡在子行程裡
@@ -52,10 +59,12 @@ def classify_url(url: str) -> str:
     return m.group(2).lower()
 
 
-def build_command(url: str, out_dir: str, model: str, latest: int | None) -> list[str]:
+def build_command(url: str, out_dir: str, model: str, latest: int | None,
+                  transcribe: bool = True) -> list[str]:
     kind = classify_url(url)
     # casts-down 是 click group：選項必須放在 URL 前面，否則會被當成子指令
-    cmd = ["casts-down", "-o", out_dir, "--skip-existing", "-m", model]
+    cmd = ["casts-down", "-o", out_dir, "--skip-existing"]
+    cmd += ["-m", model] if transcribe else ["--no-transcribe"]
     if kind == "podcast":
         n = latest or 1
         if not 1 <= n <= MAX_LATEST:
@@ -65,6 +74,56 @@ def build_command(url: str, out_dir: str, model: str, latest: int | None) -> lis
         print("[!] 單集連結會忽略 --latest", file=sys.stderr)
     cmd.append(url)
     return cmd
+
+
+def load_checkpoint(ckpt: Path) -> list[dict]:
+    """讀 .segments.jsonl。最後一行可能在寫到一半時被中斷，壞掉的行直接略過。"""
+    if not ckpt.exists():
+        return []
+    segs = []
+    for line in ckpt.read_text(encoding="utf-8").splitlines():
+        try:
+            segs.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return segs
+
+
+def pending_audio(out_dir: Path) -> list[Path]:
+    """還沒有 .txt 逐字稿的音檔。"""
+    return [a for a in sorted(out_dir.glob("*"))
+            if a.suffix in AUDIO_SUFFIXES and not a.with_suffix(".txt").exists()]
+
+
+def transcribe_resumable(audio: Path, model_name: str) -> Path:
+    """faster-whisper 轉寫，每個 segment 即時寫進 checkpoint；重跑時從最後時間點接著轉。
+    跑完用 casts-down 的 formatter 輸出 .txt/.srt（格式與 casts-down 相同）。"""
+    from casts_down.transcribe.engine import Segment
+    from casts_down.transcribe.formatter import write_outputs
+    from faster_whisper import WhisperModel
+
+    ckpt = audio.with_name(audio.stem + CKPT_SUFFIX)
+    done = load_checkpoint(ckpt)
+    if ckpt.exists() and not ckpt.read_bytes().endswith(b"\n"):
+        # 上次停在寫到一半的那行：重寫成乾淨的檔案，免得新資料接在殘行後面
+        ckpt.write_text("".join(json.dumps(d, ensure_ascii=False) + "\n" for d in done),
+                        encoding="utf-8")
+    start = done[-1]["end"] if done else 0.0
+    print(f"[*] {audio.name}：從 {start / 60:.1f} 分接著轉（已有 {len(done)} 段）", flush=True)
+
+    model = WhisperModel(model_name, device="cpu")
+    it, info = model.transcribe(str(audio), language="zh",
+                                clip_timestamps=[start] if start else "0")
+    with ckpt.open("a", encoding="utf-8") as f:
+        for i, s in enumerate(it):
+            f.write(json.dumps({"start": s.start, "end": s.end, "text": s.text.strip()},
+                               ensure_ascii=False) + "\n")
+            f.flush()
+            if i % 100 == 0:
+                print(f"[*] {s.end / 60:.1f} / {info.duration / 60:.1f} 分", flush=True)
+
+    txt, _srt = write_outputs(audio, [Segment(**d) for d in load_checkpoint(ckpt)])
+    return txt
 
 
 def _converter():
@@ -98,10 +157,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("-o", "--output", default=DEFAULT_OUT, help="輸出資料夾（預設 transcripts）")
     p.add_argument("-m", "--model", default=DEFAULT_MODEL, help="Whisper 模型（預設 medium）")
     p.add_argument("--force-convert", action="store_true", help="重新轉換所有繁體檔")
+    p.add_argument("--resume", action="store_true",
+                   help="可續跑轉寫（長集數用）：被停掉後重跑同一行會接著轉")
     args = p.parse_args(argv)
 
     try:
-        cmd = build_command(args.url, args.output, args.model, args.latest)
+        cmd = build_command(args.url, args.output, args.model, args.latest,
+                            transcribe=not args.resume)
     except ValueError as e:
         p.error(str(e))
 
@@ -116,6 +178,9 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = Path(args.output)
     if not out_dir.is_dir():
         return rc or 1
+    if args.resume:
+        for audio in pending_audio(out_dir):
+            print(f"[✓] 原稿：{transcribe_resumable(audio, args.model)}")
     written = convert_to_traditional(out_dir, force=args.force_convert)
     for f in written:
         print(f"[✓] 繁體：{f}")
