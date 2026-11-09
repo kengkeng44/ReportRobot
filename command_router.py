@@ -595,7 +595,7 @@ def _handle_todo_subcmd(user_id, body, by=None):
     # 全部待辦（Rich Menu 的「全部待辦」格送這個）
     if body in ("全部", "所有", "all"):
         from flex_builder import todo_list_flex
-        return todo_list_flex(personal.list_todos(user_id))
+        return todo_list_flex(personal.list_todos(user_id), limit=None)
 
     # 打錯的子命令不該變成一件待辦。「待辦 完成 abc」是手滑，
     # 不是一件叫「完成 abc」的事。比對第一個詞而不是用 regex 詞界：

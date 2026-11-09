@@ -168,9 +168,9 @@ def _see_all_button():
     }
 
 
-def _todo_footer(only_important, db_url=""):
+def _todo_footer(only_important, db_url="", see_all=False):
     box = _add_todo_button()
-    if only_important:
+    if only_important or see_all:
         box["contents"].append(_see_all_button())
     if db_url:
         # 這張清單自己的 Notion 表（一個主人一張），點開只看得到這份
@@ -180,7 +180,10 @@ def _todo_footer(only_important, db_url=""):
     return box
 
 
-def todo_list_flex(items, only_important=False, db_url=""):
+LIST_LIMIT = 10
+
+
+def todo_list_flex(items, only_important=False, db_url="", limit=LIST_LIMIT):
     """items: [{'id': int, 'text': str}, ...]
 
     only_important=True 表示這是「只列 P0」的檢視：空狀態的文案不同
@@ -197,8 +200,14 @@ def todo_list_flex(items, only_important=False, db_url=""):
     items = [t for t in items if not personal.is_hidden_project(t)]
     shown = [t for t in items if personal.in_horizon(t, today)]
     hidden = len(items) - len(shown)
-    items = shown
+    # 只列最近新增的 LIST_LIMIT 筆（編號越大越新；使用者 2026-11-09 指定）
+    recent = sorted(shown, key=lambda t: t.get("id") or 0, reverse=True)[:limit or None]
+    keep = {id(t) for t in recent}
+    older = len(shown) - len(recent)
+    items = [t for t in shown if id(t) in keep]
     notes = []
+    if older:
+        notes.append(f"📦 還有 {older} 件較早的待辦，按「看全部待辦」")
     if hidden:
         notes.append(f"🗓 還有 {hidden} 件一個月後才開始的，到時候會出現")
     if projects:
@@ -298,7 +307,7 @@ def todo_list_flex(items, only_important=False, db_url=""):
             "backgroundColor": _LIGHT_BG, "paddingAll": "lg",
             "contents": rows,
         },
-        "footer": _todo_footer(only_important, db_url),
+        "footer": _todo_footer(only_important, db_url, see_all=bool(older)),
     }
     return _wrap(bubble, alt=(f"📋 重要待辦（{len(items)} 筆）" if only_important
                               else f"📋 待辦清單（{len(items)} 筆）"))

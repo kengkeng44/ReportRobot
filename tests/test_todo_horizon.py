@@ -63,3 +63,19 @@ def test_flex_hides_my_project_category(monkeypatch):
     assert "⬜ 事1" in texts and "⬜ 事2" not in texts and "⬜ 事3" not in texts
     assert any("另有 2 件「我的專案」" in t for t in texts)
     assert any("共 1 筆待完成" in t for t in texts)
+
+
+def test_flex_shows_only_latest_ten(monkeypatch):
+    monkeypatch.setattr("tz_utils.today_tpe", lambda: TODAY)
+    msg = flex_builder.todo_list_flex([_t(i) for i in range(1, 16)])
+    texts = _texts(msg)
+    assert all(f"⬜ 事{i}" in texts for i in range(6, 16))
+    assert all(f"⬜ 事{i}" not in texts for i in range(1, 6))
+    assert any("還有 5 件較早的待辦" in t for t in texts)
+
+
+def test_flex_unlimited_when_limit_none(monkeypatch):
+    monkeypatch.setattr("tz_utils.today_tpe", lambda: TODAY)
+    texts = _texts(flex_builder.todo_list_flex([_t(i) for i in range(1, 16)], limit=None))
+    assert all(f"⬜ 事{i}" in texts for i in range(1, 16))
+    assert "看全部待辦" not in texts
