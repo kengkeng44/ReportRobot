@@ -180,7 +180,16 @@ def _todo_footer(only_important, db_url="", see_all=False):
     return box
 
 
-LIST_LIMIT = 10
+LIST_LIMIT = 3
+_PRIO_RANK = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+
+
+def _todo_rank(t):
+    """清單排序：優先度高 → 截止日近（逾期最前、沒日期最後）→ 新增較新。"""
+    due = t.get("end") or t.get("start")
+    return (_PRIO_RANK.get(t.get("priority"), 4),
+            (0, due) if due else (1, 0),
+            -(t.get("id") or 0))
 
 
 def todo_list_flex(items, only_important=False, db_url="", limit=LIST_LIMIT):
@@ -200,14 +209,14 @@ def todo_list_flex(items, only_important=False, db_url="", limit=LIST_LIMIT):
     items = [t for t in items if not personal.is_hidden_project(t)]
     shown = [t for t in items if personal.in_horizon(t, today)]
     hidden = len(items) - len(shown)
-    # 只列最近新增的 LIST_LIMIT 筆（編號越大越新；使用者 2026-11-09 指定）
-    recent = sorted(shown, key=lambda t: t.get("id") or 0, reverse=True)[:limit or None]
-    keep = {id(t) for t in recent}
+    # 只列最重要、時間最近的 LIST_LIMIT 筆（使用者 2026-11-09 指定：3 筆）
+    ranked = sorted(shown, key=_todo_rank)
+    recent = ranked[:limit or None]
     older = len(shown) - len(recent)
-    items = [t for t in shown if id(t) in keep]
+    items = recent
     notes = []
     if older:
-        notes.append(f"📦 還有 {older} 件較早的待辦，按「看全部待辦」")
+        notes.append(f"📦 還有 {older} 件待辦沒列，按「看全部待辦」")
     if hidden:
         notes.append(f"🗓 還有 {hidden} 件一個月後才開始的，到時候會出現")
     if projects:
