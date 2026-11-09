@@ -177,6 +177,7 @@ def _ensure_todos_loaded(user_id):
                     "type": r.get("type") or "",
                     "owner": r.get("owner") or "",
                     "project": r.get("project") or "",
+                    "category": r.get("category") or "",
                 })
                 max_local_id = max(max_local_id, r["local_id"])
             _TODOS[user_id].extend(unsynced)
@@ -395,6 +396,15 @@ def todos_important(user_id):
 
 
 HORIZON_DAYS = 30
+
+
+# 「我的專案」分類的待辦（仁和自己的程式／自動化專案）不列在 LINE 待辦清單，
+# 只留在 Notion（使用者 2026-11-09 指定）
+HIDDEN_CATEGORY = "我的專案"
+
+
+def is_hidden_project(item):
+    return (item.get("category") or "") == HIDDEN_CATEGORY
 
 
 def in_horizon(item, today, days=HORIZON_DAYS):

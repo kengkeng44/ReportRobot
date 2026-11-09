@@ -52,3 +52,14 @@ def test_widget_ignores_far_items():
     t["project"] = "喵管家"
     out = todo_widget.build([t], [], TODAY)
     assert not out.get("projects")
+
+
+def test_flex_hides_my_project_category(monkeypatch):
+    monkeypatch.setattr("tz_utils.today_tpe", lambda: TODAY)
+    items = [dict(_t(1), category="生活"), dict(_t(2), category="我的專案"),
+             dict(_t(3), category="我的專案")]
+    msg = flex_builder.todo_list_flex(items)
+    texts = _texts(msg)
+    assert "⬜ 事1" in texts and "⬜ 事2" not in texts and "⬜ 事3" not in texts
+    assert any("另有 2 件「我的專案」" in t for t in texts)
+    assert any("共 1 筆待完成" in t for t in texts)

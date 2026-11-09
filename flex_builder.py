@@ -193,12 +193,19 @@ def todo_list_flex(items, only_important=False, db_url=""):
     import personal
     from tz_utils import today_tpe
     today = today_tpe()
+    projects = [t for t in items if personal.is_hidden_project(t)]
+    items = [t for t in items if not personal.is_hidden_project(t)]
     shown = [t for t in items if personal.in_horizon(t, today)]
     hidden = len(items) - len(shown)
     items = shown
+    notes = []
+    if hidden:
+        notes.append(f"🗓 還有 {hidden} 件一個月後才開始的，到時候會出現")
+    if projects:
+        notes.append(f"🛠 另有 {len(projects)} 件「我的專案」沒列，在 Notion 看")
     hidden_note = ({"type": "text", "size": "xs", "color": _TEXT_LIGHT, "margin": "lg", "wrap": True,
-                    "text": f"🗓 還有 {hidden} 件一個月後才開始的，到時候會出現"}
-                   if hidden else None)
+                    "text": "\n".join(notes)}
+                   if notes else None)
     if not items:
         bubble = {
             "type": "bubble", "size": "mega",
