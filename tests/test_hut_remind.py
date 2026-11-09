@@ -34,7 +34,7 @@ def test_only_saturdays():
 def test_quiet_days_send_nothing():
     assert hr.evening_text(date(2026, 11, 6)) is None
     sent = []
-    assert hr.push("evening", date(2026, 11, 6), push_func=lambda u, t: sent.append(t), admin_id="U") is False
+    assert hr.push("evening", date(2026, 11, 6), send_func=lambda subj, t: sent.append(t) or True) is False
     assert sent == []
 
 
@@ -48,6 +48,6 @@ def test_push_once_per_day(tmp_path, monkeypatch):
     monkeypatch.setattr(hr.tempfile, "gettempdir", lambda: str(tmp_path))
     sent = []
     day = date(2026, 11, 8)
-    assert hr.push("evening", day, push_func=lambda u, t: sent.append(t), admin_id="U")
-    assert not hr.push("evening", day, push_func=lambda u, t: sent.append(t), admin_id="U")
+    assert hr.push("evening", day, send_func=lambda subj, t: sent.append(t) or True)
+    assert not hr.push("evening", day, send_func=lambda subj, t: sent.append(t) or True)
     assert len(sent) == 1

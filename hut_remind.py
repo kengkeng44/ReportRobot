@@ -1,4 +1,4 @@
-"""山屋申請提醒：每個週六晚上的「最後送件日」與「07:00 開放日」，前一晚 21:00 私訊你。
+"""山屋申請提醒：每個週六晚上的「最後送件日」與「07:00 開放日」，前一晚 21:00 寄 Gmail 給你。
 
 紅線（~/.claude/skills/hut-apply/SKILL.md）：驗證碼與送出一律你自己按，
 這裡只負責「哪天該做什麼」＋給一句可以貼給 Claude 的話，讓它在 Chrome 填到驗證碼前。
@@ -95,22 +95,23 @@ def _flag(kind, day):
     return os.path.join(tempfile.gettempdir(), f"hut_remind_{kind}_{day:%Y%m%d}.flag")
 
 
-def push(kind, today, push_func=None, admin_id=None):
-    """kind = "evening" | "morning"。同一天只推一次（重啟補跑靠 flag 擋）。回 True = 有推。"""
+def push(kind, today, send_func=None):
+    """kind = "evening" | "morning"。寄 Gmail（使用者 2026-11-09：山屋提醒不走 LINE）。
+
+    同一天只寄一次（重啟補跑靠 flag 擋）。回 True = 有寄。
+    send_func(subject, body) 預設 mailer.send_email。
+    """
     text = (evening_text if kind == "evening" else morning_text)(today)
     if not text:
         return False
     flag = _flag(kind, today)
     if os.path.exists(flag):
         return False
-    if admin_id is None:
-        from admin_notify import _admin_user_id
-        admin_id = _admin_user_id()
-    if not admin_id:
+    if send_func is None:
+        from mailer import send_email as send_func
+    subject = text.splitlines()[0]
+    if not send_func(subject, text):
         return False
-    if push_func is None:
-        from line_sender import push_to_user_sync as push_func
-    push_func(admin_id, text)
     try:
         with open(flag, "w") as f:
             f.write(kind)
