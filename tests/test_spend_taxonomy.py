@@ -98,3 +98,15 @@ def test_second_batch(shop, items, bank, want):
 ])
 def test_third_batch(shop, items, bank, region, want):
     assert classify(shop, "", items, bank, region) == want
+
+
+# 新加坡、愛爾蘭結帳的軟體訂閱：2026-11-07 Microsoft 365 被「海外 → 旅遊」吃成旅行購物
+@pytest.mark.parametrize("shop, bank, region, want", [
+    ("MICROSOFT*SUBSCRIPTION", "線上付款", "SG", ("📱 數位訂閱", "軟體訂閱")),
+    ("MICROSOFT\\*SUBSCRIPTION", "線上付款", "SG", ("📱 數位訂閱", "軟體訂閱")),   # Notion 存的跳脫版
+    ("ADOBE *CREATIVE CLOUD", "線上付款", "IE", ("📱 數位訂閱", "軟體訂閱")),
+    ("GOOGLE *GOOGLE ONE", "線上付款", "SG", ("📱 數位訂閱", "軟體訂閱")),
+    ("SOMEAPP SUBSCRIPTION", "線上付款", "US", ("📱 數位訂閱", "軟體訂閱")),
+])
+def test_software_subscription_abroad_not_travel(shop, bank, region, want):
+    assert classify(shop, "", "", bank, region) == want

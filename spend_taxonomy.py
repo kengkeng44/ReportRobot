@@ -7,7 +7,7 @@ momo 的除濕機算百貨公司），機器人的報表、月摘要、共同帳
 判斷順序（先中先贏）：
 1. 店家／摘要關鍵字
 2. 明細（載具發票品項、手動備註）關鍵字 —— 蝦皮、momo 這種什麼都賣的店只能靠這個
-3. 海外消費（消費地區不是 TW）→ 旅遊（數位訂閱除外：Claude、Railway 是美國扣款）
+3. 海外消費（消費地區不是 TW）→ 旅遊（數位訂閱除外：Claude、Railway 是美國扣款，Microsoft 是新加坡）
 4. 銀行類別對得上的才對（餐飲 → 飲食），對不上的標「❓待分類」，不硬猜
 """
 
@@ -25,6 +25,8 @@ _RULES = [
     ("📱 數位訂閱", "雲端主機", ["RAILWAY", "AMAZON WEB SERVICES", "GOOGLE CLOUD", "VERCEL", "GITHUB", "NOTION", "INFISICAL"]),
     ("📱 數位訂閱", "電信費", ["台灣大哥大", "中華電信", "遠傳", "台灣之星", "MYFONE", "電信費"]),
     ("📱 數位訂閱", "影音訂閱", ["NETFLIX", "SPOTIFY", "YOUTUBE", "DISNEY", "KKBOX", "APPLE.COM/BILL"]),
+    # 新加坡／愛爾蘭結帳（MICROSOFT*SUBSCRIPTION 消費地區 SG），SUBSCRIPTION 收尾接住沒列到的
+    ("📱 數位訂閱", "軟體訂閱", ["MICROSOFT", "ADOBE", "DROPBOX", "GOOGLE ONE", "ICLOUD", "SUBSCRIPTION"]),
 
     ("📚 學習", "語言課", ["PREPLY", "ITALKI", "家教", "英文課"]),
     ("📚 學習", "書籍", ["博客來", "金石堂", "書店", "書城", "圖書"]),
