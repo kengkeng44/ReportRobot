@@ -35,6 +35,9 @@ def _as_read(props):
     if "鍵" in props:
         text = props["鍵"]["title"][0]["text"]["content"]
         out["鍵"] = {"title": [{"plain_text": text}]}
+    if "備註" in props:
+        text = props["備註"]["rich_text"][0]["text"]["content"]
+        out["備註"] = {"rich_text": [{"plain_text": text}]}
     return out
 
 
@@ -151,3 +154,14 @@ def test_tables_missing_raises(monkeypatch, client):
     monkeypatch.setattr(notion_db, "get_or_create_db", lambda name: None)
     with pytest.raises(RuntimeError):
         _sync([_s(FRI, 1)])
+
+
+def test_load_failing_sites_only_returns_broken(client):
+    _sync([_s(FRI, 3)], {"jmlnt": "HTTPError: 500"})
+    assert hn.load_failing_sites() == {"jmlnt": "HTTPError: 500"}
+    assert client.databases.filters[-1] == {"property": "類型", "select": {"equals": "站況"}}
+
+
+def test_load_failing_sites_not_configured(monkeypatch):
+    monkeypatch.setattr(notion_db, "is_configured", lambda: False)
+    assert hn.load_failing_sites() is None

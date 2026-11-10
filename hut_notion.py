@@ -103,6 +103,29 @@ def load_rows(today):
     return rows
 
 
+def load_failing_sites():
+    """{site: 備註}，上次檢查還是失敗的站（站況列備註不是「正常」）。Notion 沒設定回 None。
+
+    hut_monitor 開機時用：重新部署後失敗計數歸零，不補的話同一個壞掉的站
+    每部署一次就再通知一次。
+    """
+    if not notion_db.is_configured():
+        return None
+    client = notion_db._get_client()
+    db_id = notion_db.get_or_create_db(SLOTS_DB)
+    if not client or not db_id:
+        return None
+    flt = {"property": "類型", "select": {"equals": STATUS}}
+    out = {}
+    for page in notion_db._query_all(db_id, client, 100, filter=flt):
+        props = page.get("properties", {})
+        site, _, kind = notion_db._read_title(props, "鍵").partition("|")
+        note = notion_db._read_rich_text(props, "備註").strip()
+        if site and kind == STATUS and note and note != "正常":
+            out[site] = note
+    return out
+
+
 def sync(slots, errors, now, pause=time.sleep):
     """把這次檢查寫進 Notion。回 {"created", "updated", "changes"}；Notion 沒設定回 None。
 
