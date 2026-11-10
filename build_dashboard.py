@@ -75,8 +75,10 @@ def compute(raw, today=None):
 
     # 只有「支出」進金額統計。轉帳與還款是錢在自己口袋間移動，
     # 混進來會讓本月支出憑空膨脹一倍。
+    # 「例外處理」有選的是幫別人付的，也不算。
     spend = [t for t in txns
-             if (t.get("direction") or "支出") == "支出" and t.get("amount")]
+             if (t.get("direction") or "支出") == "支出" and t.get("amount")
+             and not t.get("exception")]
 
     this_month = today.strftime("%Y-%m")
     month_spend = [t for t in spend if _month_of(t.get("date")) == this_month]

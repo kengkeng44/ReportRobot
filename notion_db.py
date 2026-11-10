@@ -2482,6 +2482,8 @@ def _txn_row(r):
         "invoice_action": _read_select(props, "發票處理"),
         "invoice_ok": bool((props.get("發票正確") or {}).get("checkbox")),
         "dup_flag": bool((props.get("重複待確認") or {}).get("checkbox")),
+        # 「幫他人付 已收到錢／未收到錢」：有值就不算自己的支出（finance_report._is_spending）
+        "exception": _read_select(props, "例外處理"),
         # 下面三個給「標成共同」用（couple_ledger.rescan / 整理共同）：
         # split_type 對空值有預設「個人」，分不出「沒標過」跟「標了個人」
         "page_id": r.get("id"),

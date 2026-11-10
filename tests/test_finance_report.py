@@ -53,6 +53,20 @@ def test_monthly_excludes_income_and_repayment():
     assert "50000" not in text and "11072" not in text
 
 
+def test_monthly_excludes_paid_for_others():
+    """「例外處理」有選（幫別人先付的）不算自己的支出，收回來沒都一樣。"""
+    txns = [
+        _txn("2026-11-01", 100),
+        {**_txn("2026-11-02", 849), "exception": "幫他人付 未收到錢"},
+        {**_txn("2026-11-03", 777), "exception": "幫他人付 已收到錢"},
+    ]
+
+    text = fr.format_monthly_spending(txns, "2026-11")
+
+    assert "849" not in text and "777" not in text
+    assert "100" in text
+
+
 def test_monthly_categories_sorted_by_amount():
     txns = [
         _txn("2026-08-01", 50, "餐飲"),

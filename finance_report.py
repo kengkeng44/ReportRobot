@@ -43,7 +43,8 @@ def _money(n):
 
 
 def _is_spending(txn):
-    return (txn.get("direction") or "支出") == "支出"
+    # 「例外處理」有選（幫別人先付的，不管收回來沒）不是自己的花費
+    return (txn.get("direction") or "支出") == "支出" and not txn.get("exception")
 
 
 def _currency(txn):
