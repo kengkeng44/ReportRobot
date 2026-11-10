@@ -20,7 +20,7 @@
 
 | 地點 | 來源 | 狀態 |
 |---|---|---|
-| 嘉明湖山屋、向陽山屋、嘉明湖營地 | `https://jmlnt.forest.gov.tw/room/` | 已實測，不用登入：「剩餘床位 (N) 目前報名 : M」 |
+| 嘉明湖山屋、向陽山屋、嘉明湖營地 | `https://jmlnt.forest.gov.tw/room/` | 已實測，不用登入：「剩餘床位 (N) 目前報名 : M」。**2026-11-10 起停掉自動查詢**：對程式 UA 回 HTTP 500（瀏覽器 UA 回 200），照「被擋不換 UA」不繞；`SITES` 裡標 `auto: False` |
 | 天池山莊＋營地 | `https://tconline.forest.gov.tw/room/` | 已實測，不用登入：「天池山莊 床位 (N) 目前報名 : M」 |
 | 檜谷山莊＋營地（北大武） | `https://kgonline.forest.gov.tw/room/` | 站存在；床位格式實作時確認 |
 

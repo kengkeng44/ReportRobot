@@ -54,13 +54,19 @@ class Slot:
 
 
 SITES = {
+    # 2026-11 起對程式的 User-Agent 回 HTTP 500（瀏覽器 UA 回 200），等於擋掉監控程式；
+    # 照「被擋不換 UA」的原則停掉自動查詢（auto=False），解析與查詢頁網址留著。
+    # 嘉明湖是抽籤制，抽籤／開放日由 hut_remind 提醒。對方放行後把 auto 拿掉即可。
     "jmlnt": {"name": "嘉明湖", "url": "https://jmlnt.forest.gov.tw/room/index.php",
-              "nav": "get", "huts": ("嘉明湖山屋", "嘉明湖營地", "向陽山屋")},
+              "nav": "get", "huts": ("嘉明湖山屋", "嘉明湖營地", "向陽山屋"), "auto": False},
     "tconline": {"name": "天池", "url": "https://tconline.forest.gov.tw/room/index.php",
                  "nav": "get", "huts": ("天池山莊", "周圍營地")},
     "kgonline": {"name": "檜谷", "url": "https://kgonline.forest.gov.tw/room/index.php",
                  "nav": "post", "huts": ("檜谷山莊", "周圍營地")},
 }
+
+# 自動查詢的站（fetch_all 預設、hut_monitor 等本機送的站）
+AUTO_SITES = tuple(site for site, cfg in SITES.items() if cfg.get("auto", True))
 
 # 「剩餘床位 (10) 目前報名 : 202」「大營地4*4 (2) 目前報名 : 0」「四人帳篷(7) 目前報名 : 3」
 _ENTRY = re.compile(r"(?P<label>[^\s()]+)\s*\(\s*(?P<n>\d+)\s*\)\s*目前報名\s*:\s*(?P<m>\d+)")
@@ -169,7 +175,7 @@ def _is_blocked(exc):
 def fetch_all(today, sites=None, session_factory=requests.Session, sleep=time.sleep):
     """(slots, errors)。每站失敗重試一次（403/429 被擋不重試）；還是失敗就記在 errors[site]，不丟例外。"""
     slots, errors = [], {}
-    for site in sites or SITES:
+    for site in sites or AUTO_SITES:
         for attempt in (1, 2):
             try:
                 slots += fetch_site(site, today, session=session_factory(), sleep=sleep)

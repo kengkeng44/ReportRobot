@@ -123,7 +123,7 @@ def test_fetch_all_zero_rows_and_http_error_become_errors():
            "tconline": _Session(kg_index, "<html>改版</html>"),     # 0 筆
            "kgonline": _Session(kg_index, "", status=500)}
     calls = iter(["jmlnt", "jmlnt", "tconline", "tconline", "kgonline", "kgonline"])
-    slots, errors = hs.fetch_all(date(2026, 11, 2),
+    slots, errors = hs.fetch_all(date(2026, 11, 2), sites=["jmlnt", "tconline", "kgonline"],
                                  session_factory=lambda: bad[next(calls)],
                                  sleep=lambda s: None)
     assert slots == []
@@ -152,3 +152,10 @@ def test_fetch_all_blocked_403_not_retried():
                                  session_factory=factory, sleep=lambda s: None)
     assert len(made) == 1
     assert slots == [] and "HTTPError" in errors["jmlnt"] and "403" in errors["jmlnt"]
+
+
+def test_jmlnt_not_auto_checked():
+    """嘉明湖對程式 UA 回 500，不自動查；解析設定還在。"""
+    assert "jmlnt" not in hs.AUTO_SITES
+    assert set(hs.AUTO_SITES) == {"tconline", "kgonline"}
+    assert "jmlnt" in hs.SITES

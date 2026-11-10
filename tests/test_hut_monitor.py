@@ -113,7 +113,8 @@ def test_forest_off_server_expects_ingest(monkeypatch):
     hm.run_check(now=NOW, fetch=lambda today: called.append(1) or ([], {}),
                  send=lambda s, t: True, notify=lambda e, c: None)
     assert called == []
-    assert "jmlnt" in hm.status()["errors"]
+    errs = hm.status()["errors"]
+    assert "tconline" in errs and "jmlnt" not in errs   # 嘉明湖停掉自動查詢，不等本機送
 
 
 def test_events_alone_never_mail():

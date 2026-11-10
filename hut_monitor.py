@@ -92,7 +92,7 @@ def ingest(payload, now=None):
 
 
 def _merge_ingest(now, forest_on_server):
-    expected = list(hut_onestop.ONESTOP) + ([] if forest_on_server else list(hut_sources.SITES))
+    expected = list(hut_onestop.ONESTOP) + ([] if forest_on_server else list(hut_sources.AUTO_SITES))
     slots, errors = [], {}
     for site in expected:
         got = _ingest.get(site)
