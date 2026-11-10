@@ -17,7 +17,8 @@
   錢在自己口袋間移動。沒設 OWNER_REAL_NAME 就不判斷
 
 方向一律「轉帳」：轉帳常是還錢、代墊，不該直接算進花費（儀表板只算「支出」）。
-真的是花費的（房租）在 Notion 把方向改成支出就好。
+例外是房租（轉給房東土地銀行末 4 碼 0594）：直接記成支出／🏠 居家，分攤類型「個人」
+（2026-11-10 使用者指定：房租永遠是自己的個人支出，不跟小螢分攤）。
 
 指紋不含對方名稱：截圖辨識（transfer_ocr）讀到同一筆時，名稱寫法可能不同
 （「洪○芳」vs「洪O芳」），但日期＋時分＋金額＋方向一樣就是同一筆。
@@ -66,6 +67,15 @@ def is_card_payment(bank_code, account, name):
         head.startswith(_CARD_VACCT_PREFIX) or _CARD_VACCT_PREFIX.startswith(head))
 
 
+# 房東帳戶：富邦信寫「土地銀行」＋「00001370****0594」，郵局信寫「005/土地銀行」＋「13*****00594」
+_RENT_BANK = "土地銀行"
+_RENT_ACCOUNT_SUFFIX = "0594"
+
+
+def is_rent(bank_name, account):
+    return _RENT_BANK in (bank_name or "") and (account or "").endswith(_RENT_ACCOUNT_SUFFIX)
+
+
 def _text(html):
     return re.sub(r"\s+", " ", BeautifulSoup(html or "", "html.parser").get_text(" ", strip=True))
 
@@ -83,7 +93,10 @@ def _txn(source, date, hhmm, amount, bank_name, account, name, fee, memo):
     if fee:
         notes.append(f"手續費 {fee}")
     notes.append(f"{bank_name} {account}".strip())
-    return {
+    rent = is_rent(bank_name, account)
+    if rent:
+        notes.insert(0, "房租")
+    txn = {
         "date": date,
         "time": hhmm,
         "amount": amount,
@@ -94,6 +107,10 @@ def _txn(source, date, hhmm, amount, bank_name, account, name, fee, memo):
         "items": "｜".join(notes),
         "fingerprint": transfer_fingerprint(date, hhmm, "out", amount),
     }
+    if rent:
+        # 指紋照舊用 "out"：截圖讀到同一筆時仍對得上
+        txn.update(direction="支出", main_category="🏠 居家", sub_category="其他", split_type="個人")
+    return txn
 
 
 _FUBON_TIME = re.compile(r"交易時間\s*(\d{4})/(\d{2})/(\d{2})\s+(\d{2}):(\d{2})")

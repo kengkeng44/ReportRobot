@@ -40,7 +40,10 @@ CUBE_FRIEND = (CUBE_CARD.replace("013國泰世華", "822中國信託")
 def test_fubon_rent_parsed():
     [t] = bt.parse_fubon(FUBON_RENT)
     assert t["date"] == "2026-07-06" and t["time"] == "09:51"
-    assert t["amount"] == 12870 and t["direction"] == "轉帳"
+    assert t["amount"] == 12870
+    # 房租直接算個人支出，不是轉帳
+    assert (t["direction"], t["main_category"], t["split_type"]) == ("支出", "🏠 居家", "個人")
+    assert t["fingerprint"] == bt.transfer_fingerprint("2026-07-06", "09:51", "out", 12870)
     assert t["shop"] == "↗️ 轉給 洪○芳"
     assert "租屋" in t["items"] and "手續費 15" in t["items"]
     assert t["source"] == "富邦轉帳"
@@ -200,6 +203,18 @@ def test_post_transfer_parsed():
     assert t["source"] == "郵局轉帳" and t["direction"] == "轉帳"
     assert "留言：I聖" in t["items"] and "0021*****58281" in t["items"]
     assert t["fingerprint"] == bt.transfer_fingerprint("2026-10-22", "19:20", "out", 3635)
+
+
+def test_post_rent_is_personal_spending():
+    rent = (POST_MAIL.replace("中華郵政股份有限公司", "005/土地銀行")
+            .replace("0021*****58281", "13*****00594"))
+    [t] = bt.post.parse(rent)
+    assert (t["direction"], t["split_type"]) == ("支出", "個人")
+    assert t["items"].startswith("房租｜")
+    # 不是房東帳戶的跨行轉帳還是轉帳
+    other = rent.replace("13*****00594", "13*****00595")
+    [o] = bt.post.parse(other)
+    assert o["direction"] == "轉帳" and "split_type" not in o
 
 
 def test_post_card_payment_skipped():
