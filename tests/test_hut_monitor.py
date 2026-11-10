@@ -113,7 +113,8 @@ def test_forest_off_server_expects_ingest(monkeypatch):
     hm.run_check(now=NOW, fetch=lambda today: called.append(1) or ([], {}),
                  send=lambda s, t: True, notify=lambda e, c: None)
     assert called == []
-    assert "jmlnt" in hm.status()["errors"]
+    errs = hm.status()["errors"]
+    assert "tconline" in errs and "jmlnt" not in errs   # 嘉明湖停掉自動查詢，不等本機送
 
 
 def test_events_alone_never_mail():
@@ -245,7 +246,7 @@ def test_restore_from_notion_then_first_run_reports():
     rows = {"tconline|天池山莊|2026-12-05": ("p1", 0, 5),
             "tconline|站況": ("p2", None, None),
             "onestop_99|九九山莊|2026-12-05": ("p3", None, 3)}
-    n = hm.restore_from_notion(today=TODAY, load=lambda today: rows)
+    n = hm.restore_from_notion(today=TODAY, load_failing=dict, load=lambda today: rows)
     assert n == 1
     out, sent, _ = _run([_s("tconline", "天池山莊", SAT, 3)])
     assert out["changes"] == 1 and sent
@@ -253,7 +254,7 @@ def test_restore_from_notion_then_first_run_reports():
 
 def test_restore_skipped_when_snapshot_exists():
     _run([_s("tconline", "天池山莊", SAT, 0)])
-    n = hm.restore_from_notion(today=TODAY, load=lambda today: {"tconline|天池山莊|2026-12-05": ("p", 9, 1)})
+    n = hm.restore_from_notion(today=TODAY, load_failing=dict, load=lambda today: {"tconline|天池山莊|2026-12-05": ("p", 9, 1)})
     assert n == 0
     assert hm._snapshot[("tconline", "天池山莊", "2026-12-05")] == 0
 
@@ -261,6 +262,32 @@ def test_restore_skipped_when_snapshot_exists():
 def test_restore_failure_falls_back_to_baseline():
     def boom(today):
         raise RuntimeError("notion down")
-    assert hm.restore_from_notion(today=TODAY, load=boom) == 0
+    assert hm.restore_from_notion(today=TODAY, load_failing=dict, load=boom) == 0
     out, sent, _ = _run([_s("tconline", "天池山莊", SAT, 3)])
     assert out["changes"] == 0  # 照舊第一次只建基準
+
+
+def test_restore_failing_site_does_not_realert_after_redeploy():
+    """重新部署後計數歸零，嘉明湖一直壞的話每天都會再通知一次。"""
+    hm.restore_from_notion(today=TODAY, load=lambda today: {},
+                           load_failing=lambda: {"jmlnt": "HTTPError: 500", "nope": "x"})
+    for _ in range(5):
+        _, _, alerts = _run([], {"jmlnt": "HTTPError: 500"})
+        assert alerts == []
+    assert "nope" not in hm._fails
+
+
+def test_restored_failing_site_alerts_again_after_recovery():
+    hm.restore_from_notion(today=TODAY, load=lambda today: {},
+                           load_failing=lambda: {"jmlnt": "HTTPError: 500"})
+    _run([_s("jmlnt", "嘉明湖山屋", FRI, 1)])          # 好了一次 → 歸零
+    alerts = [a for _ in range(3) for a in _run([], {"jmlnt": "HTTPError: 500"})[2]]
+    assert alerts == ["jmlnt"]
+
+
+def test_restore_failing_lookup_error_is_ignored():
+    def boom():
+        raise RuntimeError("notion down")
+    hm.restore_from_notion(today=TODAY, load=lambda today: {}, load_failing=boom)
+    alerts = [a for _ in range(3) for a in _run([], {"jmlnt": "HTTPError: 500"})[2]]
+    assert alerts == ["jmlnt"]

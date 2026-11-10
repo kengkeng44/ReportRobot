@@ -1,6 +1,7 @@
 """山屋名額監控：抓 → 跟上次比 → 有變化寄 Gmail；LINE「山屋」回最新摘要。
 
-狀態放記憶體；開機先 restore_from_notion 從 Notion 補回快照，重新部署後第一次檢查就能比對。
+狀態放記憶體；開機先 restore_from_notion 從 Notion 補回快照，重新部署後第一次檢查就能比對；
+上次還在失敗的站也從「站況」補回失敗計數，同一個故障不會每部署一次就通知一次。
 Notion 讀不到才退回舊行為：第一次檢查當基準、不寄信。
 一站式由本機 tools/hut_browser.py 用真瀏覽器抓，POST /admin/hut-ingest 送進來，
 60 分鐘內的才算數（本機比伺服器早 10 分鐘跑）。
@@ -91,7 +92,7 @@ def ingest(payload, now=None):
 
 
 def _merge_ingest(now, forest_on_server):
-    expected = list(hut_onestop.ONESTOP) + ([] if forest_on_server else list(hut_sources.SITES))
+    expected = list(hut_onestop.ONESTOP) + ([] if forest_on_server else list(hut_sources.AUTO_SITES))
     slots, errors = [], {}
     for site in expected:
         got = _ingest.get(site)
@@ -126,10 +127,26 @@ def _notify(err, ctx):
     notify_admin(err, ctx)
 
 
-def restore_from_notion(today=None, load=None):
-    """快照是空的時候從 Notion「山屋空位」補回。回傳補回的筆數；失敗回 0。"""
+def _restore_fails(load_failing):
+    """上次還在失敗的站，計數直接補到 FAIL_ALERT：重新部署後不再重複通知同一個故障。
+    之後成功一次會歸零，再壞才會重新通知。"""
+    try:
+        failing = load_failing() or {}
+    except Exception as e:
+        print(f"[hut_monitor] 從 Notion 讀站況失敗，失敗計數從 0 算：{type(e).__name__}: {e}")
+        return
+    with _LOCK:
+        for site in failing:
+            if site in _known_sites() and _fails.get(site, 0) < FAIL_ALERT:
+                _fails[site] = FAIL_ALERT
+
+
+def restore_from_notion(today=None, load=None, load_failing=None):
+    """快照是空的時候從 Notion「山屋空位」補回。回傳補回的筆數；失敗回 0。
+    順便補回「哪些站上次還在失敗」，免得每次部署都重報同一個故障。"""
     today = today or today_tpe()
     load = load or hut_notion.load_rows
+    _restore_fails(load_failing or hut_notion.load_failing_sites)
     try:
         rows = load(today) or {}
     except Exception as e:
