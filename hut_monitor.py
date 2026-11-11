@@ -67,6 +67,11 @@ def _known_sites():
     return set(hut_sources.SITES) | set(hut_onestop.ONESTOP)
 
 
+def paused():
+    """山屋監控暫停（2026-11-11 使用者：目前用不到）。預設暫停；HUT_MONITOR_PAUSED=0 才恢復。"""
+    return os.environ.get("HUT_MONITOR_PAUSED", "1") == "1"
+
+
 def _forest_on_server():
     return os.environ.get("HUT_FOREST_ON_SERVER", "1") != "0"
 
@@ -212,9 +217,13 @@ def run_check(send_events_today=False, now=None, fetch=None, send=None, notify=N
                 alerts.append(site)
         _status.update(checked_at=now, errors=dict(errors))
 
+    # 同一個原因（例如一站式逾時整批停）合併成一則，不要 5 個地點各推一次
+    by_msg = {}
     for site in alerts:
-        notify(RuntimeError(f"{site} 連續 {FAIL_ALERT} 次沒查到：{errors[site]}"),
-               {"module": "hut_monitor", "section": site})
+        by_msg.setdefault(errors[site], []).append(site)
+    for msg, sites in by_msg.items():
+        notify(RuntimeError(f"{'、'.join(sites)} 連續 {FAIL_ALERT} 次沒查到：{msg}"),
+               {"module": "hut_monitor", "section": ",".join(sites)})
 
     sync(slots, errors, now, notify)
 
@@ -244,6 +253,8 @@ def run_check(send_events_today=False, now=None, fetch=None, send=None, notify=N
 
 
 def line_reply(today=None):
+    if paused():
+        return "山屋監控暫停中（HUT_MONITOR_PAUSED），目前不會查空位。"
     today = today or today_tpe()
     with _LOCK:
         checked_at = _status["checked_at"]

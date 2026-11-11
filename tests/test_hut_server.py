@@ -11,6 +11,7 @@ from hut_sources import Slot
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setenv("ADMIN_TOKEN", "t0k")
+    monkeypatch.setenv("HUT_MONITOR_PAUSED", "0")
     hut_monitor.reset()
     yield TestClient(server.app)
     hut_monitor.reset()
@@ -43,3 +44,10 @@ def test_ingest_non_object_body_400(client):
 def test_probe_and_run_require_token(client):
     assert client.post("/admin/hut-probe").status_code == 403
     assert client.post("/admin/hut-run").status_code == 403
+
+
+def test_ingest_ignored_while_paused(client, monkeypatch):
+    monkeypatch.setenv("HUT_MONITOR_PAUSED", "1")
+    r = client.post("/admin/hut-ingest", json=_payload(), headers={"X-Admin-Token": "t0k"})
+    assert r.status_code == 200 and r.json() == {"paused": True}
+    assert hut_monitor._ingest == {}

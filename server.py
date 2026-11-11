@@ -461,6 +461,9 @@ async def lifespan(app: FastAPI):
     def _run_hut_check(send_events_today=False):
         try:
             import hut_monitor
+            if hut_monitor.paused():
+                print("[hut] 暫停中（HUT_MONITOR_PAUSED），這次不查")
+                return
             print(f"[hut] {hut_monitor.run_check(send_events_today=send_events_today)}")
         except Exception as e:
             print(f"[hut] 檢查失敗（非致命）：{e}")
@@ -468,6 +471,9 @@ async def lifespan(app: FastAPI):
     def _run_hut_boot():
         try:
             import hut_monitor
+            if hut_monitor.paused():
+                print("[hut] 暫停中（HUT_MONITOR_PAUSED），開機不補快照也不查")
+                return
             print(f"[hut] 從 Notion 補回 {hut_monitor.restore_from_notion()} 筆快照")
         except Exception as e:
             print(f"[hut] 補快照失敗（非致命）：{e}")
@@ -828,6 +834,8 @@ async def hut_ingest(request: Request):
     """本機 tools/hut_browser.py 用真瀏覽器抓一站式後送回來（一站式有 WAF，Railway 抓不到）。"""
     _check_admin(request)
     import hut_monitor
+    if hut_monitor.paused():
+        return {"paused": True}
     try:
         return hut_monitor.ingest(await request.json())
     except (ValueError, KeyError, TypeError, AttributeError) as e:

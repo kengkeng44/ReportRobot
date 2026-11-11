@@ -16,6 +16,7 @@ FRI = date(2026, 11, 27)  # 25 天後
 def _clean(monkeypatch):
     hm.reset()
     monkeypatch.delenv("HUT_FOREST_ON_SERVER", raising=False)
+    monkeypatch.setenv("HUT_MONITOR_PAUSED", "0")
     monkeypatch.setattr(hm, "_sync_in_background", lambda *a: None)
     yield
     hm.reset()
@@ -264,3 +265,18 @@ def test_restore_failure_falls_back_to_baseline():
     assert hm.restore_from_notion(today=TODAY, load=boom) == 0
     out, sent, _ = _run([_s("tconline", "天池山莊", SAT, 3)])
     assert out["changes"] == 0  # 照舊第一次只建基準
+
+
+def test_same_cause_alerts_merged_into_one():
+    """一站式逾時整批停：5 個地點同一個原因，只推一則。"""
+    msg = "逾時（TimeoutError），這次停止"
+    for _ in range(hm.FAIL_ALERT):
+        hm.ingest({"errors": {"onestop_99": msg, "onestop_cilai": msg}}, now=NOW)
+        _, _, alerts = _run([], {"tconline": "HTTP 500"})
+    assert sorted(alerts) == ["onestop_99,onestop_cilai", "tconline"]
+
+
+def test_paused_by_default(monkeypatch):
+    monkeypatch.delenv("HUT_MONITOR_PAUSED", raising=False)
+    assert hm.paused()
+    assert "暫停" in hm.line_reply(TODAY)
