@@ -176,7 +176,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
     </div>
     <label class="sort">排序
       <select id="sortSel">
-        <option value="score">分數</option><option value="chg">漲跌幅</option><option value="rs">RS</option>
+        <option value="score">得分率</option><option value="chg">漲跌幅</option><option value="rs">相對強度</option>
         <option value="rev">營收年增</option><option value="trend">趨勢</option><option value="vol">量比</option>
       </select>
     </label>
@@ -185,9 +185,12 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   <button class="sec" data-sec="top" aria-expanded="true"><span class="chev">▾</span>達標<span class="cnt" id="topCnt"></span></button>
   <div class="rows" id="boardBody"></div>
   <p class="empty" id="boardEmpty" hidden>目前沒有股票通過全部標準</p>
+  <button class="sec" data-sec="pull" aria-expanded="true"><span class="chev">▾</span>回檔觀察<span class="cnt" id="pullCnt"></span></button>
+  <div class="rows" id="pullBody"></div>
+  <p class="empty" id="pullEmpty" hidden>沒有只差趨勢的股票</p>
   <button class="sec" data-sec="pool" aria-expanded="false"><span class="chev">▾</span>候選<span class="cnt" id="poolCnt"></span></button>
   <div class="rows" id="poolBody" hidden></div>
-  <p class="foot">左邊圓圈是分數（滿分 14），藍色代表達標。點任一檔看完整指標。</p>
+  <p class="foot">左邊圓圈是得分率（0–100，缺資料的燈不算），藍色代表達標。回檔觀察＝其他條件都過，只差股價還沒站穩 50 日線。點任一檔看完整指標。</p>
 </section>
 
 <section id="p-mine" role="tabpanel" hidden>
@@ -196,7 +199,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
     <b style="color:var(--ink)">還沒有追蹤的個股</b>
     <span>跟 Claude 說「追蹤 上銀」就會加進來</span>
   </div>
-  <p class="foot">燈號跟推薦同一套；RS 是拿去跟候選池比。ETF 沒有營收、獲利、上修三燈，圓圈滿分是 8。要再加，跟 Claude 說「追蹤 上銀」。</p>
+  <p class="foot">燈號跟推薦同一套；相對強度跟所在市場的大盤比。ETF 不看營收、獲利、上修、法人四燈。要再加，跟 Claude 說「追蹤 上銀」。</p>
 </section>
 
 <section id="p-chain" role="tabpanel" hidden>
@@ -237,13 +240,13 @@ function money(x){return x==null?'—':x.toLocaleString(undefined,{minimumFracti
 
 /* ===== 指標：門檻只寫在這裡 ===== */
 var IND=[
-  {k:'rev',n:'營收年增',why:'最近月營收 vs 去年同月',s:'≥ 20%',m:'0 ~ 20%',w:'< 0%',
+  {k:'rev',n:'營收年增',why:'台股：最近月營收；外股：最近一季',s:'≥ 20%',m:'0 ~ 20%',w:'< 0%',at:'revAt',
    lv:function(d){var v=d.rev;if(v==null)return null;return v>=20?'s':v>=0?'m':'w'},
-   show:function(d){return d.rev==null?(d.m==='gl'?'不適用':'—'):f1(d.rev,1)+'%'}},
-  {k:'eps',n:'獲利成長',why:'近四季 EPS 年增',s:'≥ 25%',m:'0 ~ 25%',w:'衰退或虧損',
+   show:function(d){return d.rev==null?'—':f1(d.rev,1)+'%'}},
+  {k:'eps',n:'獲利成長',why:'台股：近四季 EPS 年增；外股：最近一季',s:'≥ 25%',m:'0 ~ 25%',w:'衰退或虧損',at:'epsAt',
    lv:function(d){if(d.loss)return 'w';var v=d.eps;if(v==null)return null;return v>=25?'s':v>=0?'m':'w'},
    show:function(d){return d.loss?'虧損':d.eps==null?'—':f1(d.eps,1)+'%'}},
-  {k:'est',n:'預估上修',why:'法人 EPS 預估變化',s:'上修 ≥ 5%',m:'±5% 內',w:'下修 ≥ 5%',
+  {k:'est',n:'預估上修',why:'今年 EPS 共識 vs 90 天前',s:'上修 ≥ 5%',m:'±5% 內',w:'下修 ≥ 5%',
    lv:function(d){var v=d.est;if(v==null)return null;if(v==='up')return 's';if(v==='down')return 'w';return v>=5?'s':v>-5?'m':'w'},
    show:function(d){return d.est==='up'?'上修':d.est==='down'?'下修':d.est==null?'—':f1(d.est,1)+'%'}},
   {k:'trend',n:'趨勢',why:'股價高於 200 日線',s:'價 > 50 > 150 > 200 日線，且 200 日線向上',m:'價 > 200 日線',w:'價 < 200 日線',
@@ -252,25 +255,36 @@ var IND=[
   {k:'pos',n:'距 52 週高',why:'越接近新高越強',s:'≤ 10%，且比低點高 ≥ 30%',m:'10 ~ 25%',w:'> 25%',
    lv:function(d){if(d.px==null||d.hi52==null)return null;var off=(1-d.px/d.hi52)*100,up=(d.px/d.lo52-1)*100;if(off<=10&&up>=30)return 's';return off<=25?'m':'w'},
    show:function(d){return d.px==null||d.hi52==null?'—':'−'+f1((1-d.px/d.hi52)*100)+'%'}},
-  {k:'rs',n:'相對強度 RS',why:'在候選池的強弱排名 1–99',s:'≥ 80',m:'60 ~ 80',w:'< 60',
-   lv:function(d){var v=d.rs;if(v==null)return null;return v>=80?'s':v>=60?'m':'w'},
-   show:function(d){return d.rs==null?'—':String(d.rs)}},
+  {k:'rs',n:'相對強度',why:'一年加權報酬 − 所在市場大盤（近 3 月占 40%）',s:'贏大盤 ≥ 10 點',m:'贏 0 ~ 10 點',w:'輸大盤',
+   lv:function(d){var v=d.rsx;if(v==null)return null;return v>=10?'s':v>=0?'m':'w'},
+   show:function(d){return d.rsx==null?'—':f1(d.rsx,1)+' 點'},
+   sub:function(d){return (d.idx?'比 '+(IDXN[d.idx]||d.idx):'')+(d.rs!=null?(d.idx?'；':'')+'池內排名 '+d.rs:'')}},
   {k:'vol',n:'量比',why:'20 日均量 ÷ 60 日均量',s:'≥ 1.2',m:'1.0 ~ 1.2',w:'< 1.0',
    lv:function(d){var v=d.vol;if(v==null)return null;return v>=1.2?'s':v>=1?'m':'w'},
-   show:function(d){return d.vol==null?'—':d.vol.toFixed(2)}}
+   show:function(d){return d.vol==null?'—':d.vol.toFixed(2)}},
+  {k:'inst',n:'法人買超',why:'近 20 日三大法人買賣超 ÷ 成交量（只有台股）',s:'≥ 5%',m:'0 ~ 5%',w:'賣超',tw:1,
+   lv:function(d){var v=d.inst;if(v==null)return null;return v>=5?'s':v>=0?'m':'w'},
+   show:function(d){return d.inst==null?'—':f1(d.inst,1)+'%'}}
 ];
+var IDXN={'^TWII':'加權指數','^GSPC':'S&P 500','^N225':'日經','510300.SS':'滬深 300','^HSI':'恒生','^KS11':'KOSPI','^KQ11':'KOSDAQ','^OMX':'OMX 30','^SSMI':'SMI'};
+/* 達標門檻：得分率（拿到的分 ÷ 有資料燈的滿分），最多缺 2 燈 */
+var PASS=0.64,MAX_MISS=2;
 var REG=[{k:'tw',n:'台股'},{k:'us',n:'美股'},{k:'vix',n:'VIX'}];
 var SCORE={s:2,m:1,w:0},LVN={s:'強',m:'中',w:'弱'};
 var SEG={vision:{no:1,n:'視覺感測',tw:1},brain:{no:2,n:'AI 晶片',tw:1},reducer:{no:3,n:'減速機',tw:2},
   motor:{no:4,n:'馬達驅動',tw:2},screw:{no:5,n:'螺桿滑軌',tw:3},integ:{no:6,n:'整機',tw:1}};
-var S=RADAR.stocks,W=RADAR.watch||[],ALL=S.concat(W),NA_ETF=['rev','eps','est'];
+var S=RADAR.stocks,W=RADAR.watch||[],ALL=S.concat(W),NA_ETF=['rev','eps','est','inst'];
 ALL.forEach(function(d){
   d.L={};var sc=0,known=0,app=0;
   IND.forEach(function(i){
-    if(d.etf&&NA_ETF.indexOf(i.k)>=0){d.L[i.k]='x';return}
+    if((d.etf&&NA_ETF.indexOf(i.k)>=0)||(i.tw&&d.m!=='tw')){d.L[i.k]='x';return}
     app++;var l=i.lv(d);d.L[i.k]=l;if(l){sc+=SCORE[l];known++}});
-  d.score=sc;d.max=app*2;d.complete=known===app;
-  d.ok=d.L.trend==='s'&&d.L.pos&&d.L.pos!=='w'&&(d.etf||d.L.rev==='s'||d.L.eps==='s')&&sc/d.max>=9/14;
+  /* 缺資料不算 0 分，從分母扣掉；缺太多就不排名 */
+  d.pts=sc;d.max=known*2;d.miss=app-known;d.enough=d.miss<=MAX_MISS&&known>0;
+  d.score=d.enough?Math.round(sc/d.max*100):0;
+  var base=d.enough&&d.L.pos&&d.L.pos!=='w'&&(d.etf||d.L.rev==='s'||d.L.eps==='s')&&sc/d.max>=PASS;
+  d.ok=base&&d.L.trend==='s';
+  d.pull=base&&d.L.trend==='m';
 });
 function grp(d){return d.g?SEG[d.g].n:(d.etf?'ETF':'個股')}
 
@@ -294,8 +308,8 @@ function spark(xs,w,h,cls){
   return '<svg class="'+cls+'" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true">'+area+'<path d="'+d+'" stroke="'+c+'" fill="none" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>';
 }
 function ring(d){
-  var r=15.5,c=2*Math.PI*r,p=Math.min(1,d.score/(d.max||14));
-  return '<span class="ring'+(d.ok?' ok':'')+'" title="分數 '+d.score+' / '+(d.max||14)+'"><svg viewBox="0 0 36 36"><circle class="bgc" cx="18" cy="18" r="'+r+'"/><circle class="fg" cx="18" cy="18" r="'+r+'" stroke-dasharray="'+(c*p).toFixed(1)+' '+c.toFixed(1)+'"/></svg><span>'+d.score+'</span></span>';
+  var r=15.5,c=2*Math.PI*r,p=Math.min(1,d.score/100);
+  return '<span class="ring'+(d.ok?' ok':'')+'" title="得分率 '+d.score+'（'+d.pts+' / '+d.max+' 分'+(d.miss?'，缺 '+d.miss+' 燈':'')+'）"><svg viewBox="0 0 36 36"><circle class="bgc" cx="18" cy="18" r="'+r+'"/><circle class="fg" cx="18" cy="18" r="'+r+'" stroke-dasharray="'+(c*p).toFixed(1)+' '+c.toFixed(1)+'"/></svg><span>'+(d.enough?d.score:'—')+'</span></span>';
 }
 function pill(d){return d.chg==null?'<span class="pill flat">—</span>':'<span class="pill '+dir(d.chg)+'">'+f1(d.chg,1)+'%</span>'}
 function row(d,inSeg){
@@ -308,33 +322,44 @@ function row(d,inSeg){
 /* board */
 var mkt='all',sortKey='score';
 function num(d,k){
-  if(k==='score')return d.score;if(k==='chg')return d.chg;if(k==='rev')return d.rev;if(k==='rs')return d.rs;if(k==='vol')return d.vol;
+  if(k==='score')return d.score;if(k==='chg')return d.chg;if(k==='rev')return d.rev;if(k==='rs')return d.rsx;if(k==='vol')return d.vol;
   if(k==='trend')return d.ma200?d.px/d.ma200:null;return null;
 }
 function cmp(a,b){var x=num(a,sortKey),y=num(b,sortKey);
-  if(x==null&&y==null)return b.score-a.score;if(x==null)return 1;if(y==null)return -1;return (y-x)||b.score-a.score||(b.rs||0)-(a.rs||0)}
-function rankKey(a,b){return b.score-a.score||(b.rs||0)-(a.rs||0)}
-var secTop=document.querySelector('.sec[data-sec=top]'),secPool=document.querySelector('.sec[data-sec=pool]');
+  if(x==null&&y==null)return b.score-a.score;if(x==null)return 1;if(y==null)return -1;return (y-x)||rankKey(a,b)}
+function rsk(d){return d.rsx==null?-999:d.rsx}
+function rankKey(a,b){return b.score-a.score||rsk(b)-rsk(a)}
+var secTop=document.querySelector('.sec[data-sec=top]'),secPull=document.querySelector('.sec[data-sec=pull]'),secPool=document.querySelector('.sec[data-sec=pool]');
+function inMkt(d){return mkt==='all'||d.m===mkt}
 function render(){
   var ok=S.filter(function(d){return d.ok}).sort(rankKey);
   var topAll=ok.filter(function(d){return d.m==='tw'}).slice(0,12).concat(ok.filter(function(d){return d.m==='gl'}).slice(0,8));
-  var top=topAll.filter(function(d){return mkt==='all'||d.m===mkt}).sort(cmp);
-  var pool=S.filter(function(d){return topAll.indexOf(d)<0&&(mkt==='all'||d.m===mkt)}).sort(cmp);
+  var top=topAll.filter(inMkt).sort(cmp);
+  var pull=S.filter(function(d){return d.pull&&inMkt(d)}).sort(cmp);
+  var pool=S.filter(function(d){return topAll.indexOf(d)<0&&pull.indexOf(d)<0&&inMkt(d)}).sort(cmp);
+  /* 族群溫度：池內有幾檔趨勢是強（Minervini 拿「通過模板的檔數」當市場寬度） */
+  var mk=S.filter(inMkt),hot=mk.filter(function(d){return d.L.trend==='s'}).length,below=mk.filter(function(d){return d.L.trend==='w'}).length;
   document.getElementById('c-board').textContent=topAll.length||'';
   document.getElementById('topCnt').textContent=top.length;
+  document.getElementById('pullCnt').textContent=pull.length;
   document.getElementById('poolCnt').textContent=pool.length;
   document.getElementById('boardBody').innerHTML=top.map(row).join('');
+  document.getElementById('pullBody').innerHTML=pull.map(row).join('');
   document.getElementById('poolBody').innerHTML=pool.map(row).join('');
-  document.getElementById('boardEmpty').hidden=top.length>0||secTop.getAttribute('aria-expanded')!=='true';
+  var be=document.getElementById('boardEmpty');
+  be.innerHTML='目前沒有股票通過全部標準<br><span class="muted" style="font-size:12.5px">族群溫度：'+mk.length+' 檔裡趨勢強 '+hot+' 檔、跌破 200 日線 '+below+' 檔'+(hot<=mk.length*0.1?'，族群偏冷':'')+'</span>';
+  be.hidden=top.length>0||secTop.getAttribute('aria-expanded')!=='true';
+  document.getElementById('pullEmpty').hidden=pull.length>0||secPull.getAttribute('aria-expanded')!=='true';
 }
 function toggle(b,body,open){b.setAttribute('aria-expanded',open?'true':'false');body.hidden=!open}
 document.querySelectorAll('.filter button').forEach(function(b){b.addEventListener('click',function(){
   mkt=b.dataset.mkt;document.querySelectorAll('.filter button').forEach(function(x){x.setAttribute('aria-pressed',x===b?'true':'false')});render()})});
 document.getElementById('sortSel').addEventListener('change',function(e){sortKey=e.target.value;render()});
 secTop.addEventListener('click',function(){toggle(secTop,document.getElementById('boardBody'),secTop.getAttribute('aria-expanded')!=='true');render()});
+secPull.addEventListener('click',function(){toggle(secPull,document.getElementById('pullBody'),secPull.getAttribute('aria-expanded')!=='true');render()});
 secPool.addEventListener('click',function(){toggle(secPool,document.getElementById('poolBody'),secPool.getAttribute('aria-expanded')!=='true')});
 render();
-if(!document.getElementById('boardBody').children.length)toggle(secPool,document.getElementById('poolBody'),true);
+if(!document.getElementById('boardBody').children.length&&!document.getElementById('pullBody').children.length)toggle(secPool,document.getElementById('poolBody'),true);
 
 /* 我的追蹤 */
 (function(){
@@ -378,19 +403,22 @@ function open(c){
   showSheet(
     '<div class="sh-hd"><div><h2 id="shName">'+esc(d.n)+'</h2><div class="sub">'+esc(d.sym||d.c)+' · '+grp(d)+' · '+esc(d.role)+'</div></div>'+X+'</div>'+
     '<div class="quote"><span class="big">'+money(d.px)+'</span><span class="chg '+dir(d.chg)+'">'+(d.chg==null?'':f1(d.chg,1)+'%')+'</span>'+
-      '<span class="sc">分數 <b>'+d.score+'</b> / '+d.max+(d.ok?'<span class="badge-ok">達標</span>':'')+'</span></div>'+
+      '<span class="sc">得分率 <b>'+d.score+'</b>（'+d.pts+' / '+d.max+' 分'+(d.miss?'，缺 '+d.miss+' 燈':'')+'）'+(d.ok?'<span class="badge-ok">達標</span>':d.pull?'<span class="badge-ok" style="background:var(--bg2);color:var(--ink)">回檔觀察</span>':'')+'</span></div>'+
     spark(d.spark,300,64,'bigspark')+'<div class="muted" style="font-size:11.5px">近 3 個月</div>'+
     '<div class="sh-sec">指標</div><div class="ind">'+
-    IND.map(function(i){var l=d.L[i.k];if(l==='x')return '<div class="ir"><span class="k">'+i.n+'<small>'+i.why+'</small></span><span class="v na">ETF 不適用</span><span class="lv na">—</span></div>';return '<div class="ir"><span class="k">'+i.n+'<small>'+i.why+'</small></span><span class="v '+(l||'na')+'">'+i.show(d)+(i.k==='rev'&&d.revAt?'<small class="muted" style="display:block;font-weight:400;font-size:11px">'+d.revAt+'</small>':'')+'</span><span class="lv '+(l||'na')+'">'+(l?LVN[l]:'—')+'</span></div>'}).join('')+'</div>'+
+    IND.map(function(i){var l=d.L[i.k];if(l==='x')return '<div class="ir"><span class="k">'+i.n+'<small>'+i.why+'</small></span><span class="v na">不適用</span><span class="lv na">—</span></div>';
+      var sub=i.at&&d[i.at]?d[i.at]:i.sub?i.sub(d):'';
+      return '<div class="ir"><span class="k">'+i.n+'<small>'+i.why+'</small></span><span class="v '+(l||'na')+'">'+i.show(d)+(sub?'<small class="muted" style="display:block;font-weight:400;font-size:11px">'+esc(sub)+'</small>':'')+'</span><span class="lv '+(l||'na')+'">'+(l?LVN[l]:'—')+'</span></div>'}).join('')+'</div>'+
     tech+
     (d.why&&d.why.length?'<div class="sh-sec">重點</div><ul class="why">'+d.why.map(function(w){return '<li>'+esc(w.t)+(w.u?' <a href="'+esc(w.u)+'" target="_blank" rel="noopener">來源 ↗</a>':'')+'</li>'}).join('')+'</ul>':'')+
     '<div class="links">'+(d.links||[]).map(function(l){return '<a href="'+esc(l.u)+'" target="_blank" rel="noopener">'+esc(l.t)+' ↗</a>'}).join('')+'</div>');
 }
 function info(){
-  showSheet('<div class="sh-hd"><div><h2 id="shName">說明</h2><div class="sub">每檔 7 個指標，強 2 分 · 中 1 分 · 弱 0 分，滿分 14</div></div>'+X+'</div>'+
+  showSheet('<div class="sh-hd"><div><h2 id="shName">說明</h2><div class="sub">每檔 8 個指標，強 2 分 · 中 1 分 · 弱 0 分；得分率＝拿到的分 ÷ 有資料燈的滿分</div></div>'+X+'</div>'+
     '<table class="std"><thead><tr><th>指標</th><th>強</th><th>中</th><th>弱</th></tr></thead><tbody>'+
     IND.map(function(i){return '<tr><td>'+i.n+'</td><td>'+i.s+'</td><td>'+i.m+'</td><td>'+i.w+'</td></tr>'}).join('')+'</tbody></table>'+
-    '<div class="sh-sec">達標條件</div><ul class="why"><li>趨勢＝強，距 52 週高不能是弱</li><li>營收年增或獲利成長至少一個強</li><li>總分 ≥ 9；依分數取前 20，台股 12、外股 8</li></ul>'+
+    '<div class="sh-sec">達標條件</div><ul class="why"><li>趨勢＝強，距 52 週高不能是弱</li><li>營收年增或獲利成長至少一個強</li><li>得分率 ≥ '+Math.round(PASS*100)+'，缺資料最多 '+MAX_MISS+' 燈；依得分率取前 20，台股 12、外股 8</li><li>回檔觀察：其他條件都過，只差趨勢是「中」</li></ul>'+
+    '<div class="sh-sec">資料來源</div><ul class="why"><li>股價、外股營收與獲利、EPS 預估：Yahoo Finance</li><li>台股月營收：證交所／櫃買</li><li>台股近四季 EPS、三大法人：FinMind</li></ul>'+
     '<div class="sh-sec">賽道風險</div><ul class="why">'+
     '<li>整機廠多虧損，估值靠預期 <a href="https://www.cnbc.com/2026/08/19/china-backflipping-robot-maker-unitree-jumps-shanghai-ipo.html" target="_blank" rel="noopener">來源 ↗</a></li>'+
     '<li>Optimus 時程一再延後 <a href="https://www.basenor.com/blogs/news/tesla-optimus-production-ramp-6-details-that-matter" target="_blank" rel="noopener">來源 ↗</a></li>'+

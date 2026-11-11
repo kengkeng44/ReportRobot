@@ -1,7 +1,7 @@
 """全球股市雷達：機器人賽道的即時動能榜。
 
 GET /radar 只讀快照（秒開）；快照每天 14:45 排程更新，或按頁面上的更新鈕。流程拆成三段：
-- collect  打 Yahoo（日線一年）與證交所／櫃買 OpenAPI（月營收），唯一碰網路的部分
+- collect  打 Yahoo（日線一年、財報摘要）、證交所／櫃買 OpenAPI（月營收）、FinMind（台股 EPS、法人），唯一碰網路的部分
 - compute  純函式：收盤價序列 → 均線、52 週位置、相對強度、量比
 - render   把結果塞進 static/radar.html 的 window.RADAR
 
@@ -76,6 +76,20 @@ WATCH = [
 ]
 
 BENCH = {"tw": "^TWII", "us": "^GSPC", "vix": "^VIX"}
+
+# 相對強度跟「所在市場」的大盤比：日股比日經、陸股比滬深 300…，不再只在候選池裡互比
+# 陸股：Yahoo 的 000300.SS 只有一天資料，改用追蹤滬深 300 的 ETF 510300.SS
+LOCAL_INDEX = {".T": "^N225", ".SS": "510300.SS", ".SZ": "510300.SS", ".HK": "^HSI",
+               ".KS": "^KS11", ".KQ": "^KQ11", ".ST": "^OMX", ".SW": "^SSMI"}
+
+
+def index_of(code, mkt):
+    if mkt == "tw":
+        return "^TWII"
+    for suf, idx in LOCAL_INDEX.items():
+        if code.endswith(suf):
+            return idx
+    return "^GSPC"
 
 # 人工整理的基本面（抓不到 API 的部分）。每條重點都附來源連結。
 NOTES = {
@@ -168,6 +182,43 @@ def rs_vs_pool(pool_raw, raw):
     return max(1, min(99, round(below / len(pool_raw) * 99)))
 
 
+def excess_rs(raw, index_raw):
+    """個股 IBD 式加權報酬 − 所在市場大盤的同一個數，單位是百分點。"""
+    if raw is None or index_raw is None:
+        return None
+    return round(raw - index_raw, 1)
+
+
+def ttm_eps_yoy(quarters):
+    """單季 EPS（舊→新）→ (近四季 EPS 年增 %, 近四季是否虧損)。不滿 8 季或去年同期 ≤ 0 時年增給 None。"""
+    q = [x for x in quarters if x is not None]
+    if len(q) < 4:
+        return None, False
+    now = sum(q[-4:])
+    if len(q) < 8:
+        return None, now < 0
+    before = sum(q[-8:-4])
+    if before <= 0:
+        return None, now < 0
+    return round((now / before - 1) * 100, 1), now < 0
+
+
+def est_change(current, ago):
+    """今年度 EPS 共識：現在 vs 90 天前，變化 %。分母取絕對值，虧損股也看得出方向。"""
+    if current is None or ago is None or ago == 0:
+        return None
+    return round((current - ago) / abs(ago) * 100, 1)
+
+
+def inst_ratio(net_shares, volumes, days=20):
+    """近 N 日三大法人買賣超股數 ÷ 同期成交股數，%。"""
+    vols = [v for v in volumes if v][-days:]
+    if net_shares is None or len(vols) < days:
+        return None
+    total = sum(vols)
+    return round(net_shares / total * 100, 1) if total else None
+
+
 def regime(index_closes):
     """指數收盤 → 大環境：價、200 日線、是否在線上、200 日線是否向上。"""
     if not index_closes:
@@ -209,18 +260,51 @@ def _row(code, name, mkt, seg, role, prices, revenue):
     return r
 
 
-def assemble(prices, revenue, bench):
-    """各來源 → 給頁面的資料包。prices: {代號: (symbol, closes, volumes)}。"""
+def _fundamentals(r, code, mkt, revenue, extra, etf=False):
+    """營收、獲利、上修、法人、相對強度塞進 row。資料來源的優先序寫在這裡，頁面只看數字。"""
+    yf = (extra.get("yahoo") or {}).get(code, {})
+    note = NOTES.get(code, {})
+    if not etf:
+        # 營收：台股用月營收（較新），外股用 Yahoo 最近一季年增
+        if mkt == "tw" and code in revenue:
+            r["rev"], r["revAt"] = revenue[code]
+        elif yf.get("rev") is not None:
+            r["rev"], r["revAt"] = yf["rev"], "最近一季"
+        # 獲利：台股用 FinMind 近四季，外股用 Yahoo 最近一季
+        eps = (extra.get("eps") or {}).get(code)
+        if eps:
+            r["eps"], loss = eps
+            r["epsAt"] = "近四季"
+            if loss:
+                r["loss"] = True
+        elif yf.get("eps") is not None:
+            r["eps"], r["epsAt"] = yf["eps"], "最近一季"
+        if yf.get("loss") or note.get("loss"):
+            r["loss"] = True
+        # 上修：Yahoo 共識 90 天變化；抓不到才用人工 NOTES
+        if yf.get("est") is not None:
+            r["est"] = yf["est"]
+        elif note.get("est"):
+            r["est"] = note["est"]
+    # ETF 有申購買回，法人買賣超會被放大（0050 曾算出 -63%），不看
+    net = (extra.get("inst") or {}).get(code)
+    if mkt == "tw" and not etf and net is not None:
+        r["inst"] = inst_ratio(net, (extra.get("vols") or {}).get(code, []))
+    r["idx"] = index_of(code, mkt)
+    r["rsx"] = excess_rs(r.get("rsraw"), (extra.get("index_raw") or {}).get(r["idx"]))
+
+
+def assemble(prices, revenue, bench, extra=None):
+    """各來源 → 給頁面的資料包。prices: {代號: (symbol, closes, volumes)}。
+    extra: {"index": {指數: closes}, "yahoo": {代號: {...}}, "eps": {代號: (年增, 虧損)}, "inst": {代號: 買超股數}}"""
+    extra = dict(extra or {})
+    extra["vols"] = {c: v[2] for c, v in prices.items()}
+    extra["index_raw"] = {k: price_metrics(v, []).get("rsraw") for k, v in (extra.get("index") or {}).items()}
     rows = []
     for code, name, mkt, seg, role in UNIVERSE:
         r = _row(code, name, mkt, seg, role, prices, revenue)
-        if mkt == "tw" and code in revenue:
-            r["rev"], r["revAt"] = revenue[code]
+        _fundamentals(r, code, mkt, revenue, extra)
         note = NOTES.get(code, {})
-        if note.get("loss"):
-            r["loss"] = True
-        if note.get("est"):
-            r["est"] = note["est"]
         r["why"] = [{"t": t, "u": u} for t, u in note.get("why", [])]
         r["links"] = _links(code, mkt, r["sym"])
         rows.append(r)
@@ -231,8 +315,7 @@ def assemble(prices, revenue, bench):
         r = _row(code, name, mkt, None, role, prices, revenue)
         if kind == "etf":
             r["etf"] = True
-        elif mkt == "tw" and code in revenue:
-            r["rev"], r["revAt"] = revenue[code]
+        _fundamentals(r, code, mkt, revenue, extra, etf=kind == "etf")
         note = NOTES.get(code, {})
         r["why"] = [{"t": t, "u": u} for t, u in note.get("why", [])]
         r["links"] = _links(code, mkt, r["sym"])
@@ -324,14 +407,119 @@ def _revenue():
     return out
 
 
+def _yahoo_fund(syms):
+    """Yahoo 財報摘要 → {symbol: {rev, eps, est, loss}}。要先拿 cookie＋crumb，拿不到就整批放棄。"""
+    import requests
+    s = requests.Session()
+    s.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                                    "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"})
+    try:
+        s.get("https://fc.yahoo.com", timeout=8)  # 本來就回 404，只是要它發的 cookie
+    except Exception:
+        pass
+    try:
+        crumb = s.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=8).text.strip()
+    except Exception as e:
+        print(f"[radar] Yahoo crumb 取得失敗：{e}")
+        return {}
+    if not crumb or "<" in crumb or " " in crumb:
+        print("[radar] Yahoo crumb 無效，跳過財報摘要")
+        return {}
+
+    def raw(d, *ks):
+        for k in ks:
+            d = (d or {}).get(k)
+        return d
+
+    def one(sym):
+        try:
+            r = s.get(f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{sym}",
+                      params={"modules": "earningsTrend,financialData,defaultKeyStatistics", "crumb": crumb},
+                      timeout=8)
+            res = (r.json().get("quoteSummary") or {}).get("result") or []
+        except Exception as e:
+            print(f"[radar] {sym} 財報摘要失敗：{e}")
+            return sym, None
+        if not res:
+            return sym, None
+        x, out = res[0], {}
+        for k, src in (("rev", "revenueGrowth"), ("eps", "earningsGrowth")):
+            v = raw(x, "financialData", src, "raw")
+            if v is not None:
+                out[k] = round(v * 100, 1)
+        year = [t for t in raw(x, "earningsTrend", "trend") or [] if t.get("period") == "0y"]
+        if year:
+            et = year[0].get("epsTrend") or {}
+            out["est"] = est_change(raw(et, "current", "raw"), raw(et, "90daysAgo", "raw"))
+        teps = raw(x, "defaultKeyStatistics", "trailingEps", "raw")
+        if teps is not None and teps < 0:
+            out["loss"] = True
+        return sym, out
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        return {k: v for k, v in ex.map(one, syms) if v}
+
+
+_FINMIND = "https://api.finmindtrade.com/api/v4/data"
+
+
+def _finmind(dataset, code, start):
+    # 不帶 token 每小時 300 次；一次更新約 36 次。有設 FINMIND_TOKEN 就帶上
+    headers = dict(UA)
+    if os.environ.get("FINMIND_TOKEN"):
+        headers["Authorization"] = f"Bearer {os.environ['FINMIND_TOKEN']}"
+    r = http_utils.get(_FINMIND, params={"dataset": dataset, "data_id": code, "start_date": start},
+                       headers=headers, timeout=20)
+    return r.json().get("data") or []
+
+
+def _tw_extra(code):
+    """FinMind：單季 EPS → 近四季年增；三大法人 → 近 20 個交易日買賣超股數。"""
+    today = datetime.now(TPE).date()
+    eps = net = None
+    try:
+        q = sorted((d["date"], d["value"]) for d in
+                   _finmind("TaiwanStockFinancialStatements", code, str(today - timedelta(days=800)))
+                   if d.get("type") == "EPS")
+        if q:
+            eps = ttm_eps_yoy([v for _, v in q])
+    except Exception as e:
+        print(f"[radar] {code} EPS 抓取失敗：{e}")
+    try:
+        rows = _finmind("TaiwanStockInstitutionalInvestorsBuySell", code, str(today - timedelta(days=45)))
+        days = sorted({d["date"] for d in rows})[-20:]
+        if len(days) == 20:
+            net = sum(d["buy"] - d["sell"] for d in rows if d["date"] in days)
+    except Exception as e:
+        print(f"[radar] {code} 法人抓取失敗：{e}")
+    return code, eps, net
+
+
+def _tw_all(codes):
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        return list(ex.map(_tw_extra, codes))
+
+
 def collect():
+    tw_codes = [u[0] for u in UNIVERSE + WATCH if u[2] == "tw"]
+    indices = sorted({index_of(u[0], u[2]) for u in UNIVERSE + WATCH})
     with ThreadPoolExecutor(max_workers=12) as ex:
         rev = ex.submit(_revenue)
+        tw = ex.submit(_tw_all, tw_codes)
         got = list(ex.map(lambda u: _fetch_one(u[0], u[2]), UNIVERSE + WATCH))
         bench = list(ex.map(lambda kv: (kv[0], _chart(kv[1])), BENCH.items()))
+        idx = list(ex.map(lambda sym: (sym, _chart(sym)), indices))
         revenue = rev.result()
-    prices = {c: v for c, v in got if v}
-    return prices, revenue, {k: (v[0] if v else []) for k, v in bench}
+        prices = {c: v for c, v in got if v}
+        yf = _yahoo_fund([v[0] for v in prices.values()])
+        tw = tw.result()
+    extra = {
+        "index": {k: v[0] for k, v in idx if v},
+        "yahoo": {c: yf[v[0]] for c, v in prices.items() if v[0] in yf},
+        "eps": {c: e for c, e, _ in tw if e and (e[0] is not None or e[1])},
+        "inst": {c: n for c, _, n in tw if n is not None},
+    }
+    return prices, revenue, {k: (v[0] if v else []) for k, v in bench}, extra
 
 
 # ── 快照：每天排程更新一次，或按頁面上的更新鈕；打開頁面只讀快照，不連外 ──

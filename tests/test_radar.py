@@ -43,6 +43,52 @@ def test_rank_rs_orders_by_raw():
     assert rows[2]["rs"] == 99
 
 
+def test_ttm_eps_yoy():
+    assert radar.ttm_eps_yoy([1, 1, 1, 1, 2, 2, 2, 2]) == (100.0, False)
+    # 去年同期虧損：年增算不出來，但近四季賺錢
+    assert radar.ttm_eps_yoy([-1, -1, -1, 0, 1, 1, 1, 1]) == (None, False)
+    # 近四季虧損
+    assert radar.ttm_eps_yoy([1, 1, 1, 1, -1, -1, 0, 0]) == (-150.0, True)
+    assert radar.ttm_eps_yoy([1, 1]) == (None, False)
+
+
+def test_est_change_and_inst_ratio():
+    assert radar.est_change(11, 10) == 10.0
+    assert radar.est_change(-0.5, -1) == 50.0  # 虧損縮小也算上修
+    assert radar.est_change(None, 10) is None and radar.est_change(1, 0) is None
+    assert radar.inst_ratio(100, [100] * 20) == 5.0
+    assert radar.inst_ratio(100, [100] * 10) is None
+
+
+def test_index_of_local_market():
+    assert radar.index_of("2049", "tw") == "^TWII"
+    assert radar.index_of("6861.T", "gl") == "^N225"
+    assert radar.index_of("300124.SZ", "gl") == "510300.SS"
+    assert radar.index_of("NVDA", "gl") == "^GSPC"
+
+
+def test_assemble_uses_extra_sources():
+    prices = {"2049": ("2049.TW", _rising(), [1000] * 260),
+              "6861.T": ("6861.T", _rising(), [10] * 260),
+              "0050": ("0050.TW", _rising(), [1000] * 260)}
+    extra = {
+        "index": {"^TWII": _rising(260, 100, 0.1), "^N225": _rising(260, 100, 1.0)},
+        "yahoo": {"6861.T": {"rev": 36.8, "eps": 47.9, "est": 8.6}, "2049": {"est": 8.9, "rev": 1.0}},
+        "eps": {"2049": (124.4, False)},
+        "inst": {"2049": 2000, "0050": -99999},
+    }
+    d = radar.assemble(prices, {"2049": (30.1, "2026/9")}, {}, extra)
+    by = {r["c"]: r for r in d["stocks"] + d["watch"]}
+    a, k, etf = by["2049"], by["6861.T"], by["0050"]
+    assert a["rev"] == 30.1 and a["revAt"] == "2026/9"  # 台股月營收優先於 Yahoo
+    assert a["eps"] == 124.4 and a["epsAt"] == "近四季" and a["est"] == 8.9
+    assert a["inst"] == 10.0  # 2000 ÷ (1000 × 20)
+    assert a["rsx"] > 0  # 漲得比加權快
+    assert k["rev"] == 36.8 and k["revAt"] == "最近一季" and k["eps"] == 47.9
+    assert k["rsx"] < 0  # 漲得比日經慢
+    assert "inst" not in k and "inst" not in etf and "rev" not in etf
+
+
 def test_parse_revenue_twse_shape():
     rows = [
         {"出表日期": "1151105", "資料年月": "11510", "公司代號": "2049", "公司名稱": "上銀",
