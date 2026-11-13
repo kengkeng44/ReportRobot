@@ -3,7 +3,7 @@
 狀態放記憶體；開機先 restore_from_notion 從 Notion 補回快照，重新部署後第一次檢查就能比對。
 Notion 讀不到才退回舊行為：第一次檢查當基準、不寄信。
 一站式由本機 tools/hut_browser.py 用真瀏覽器抓，POST /admin/hut-ingest 送進來，
-60 分鐘內的才算數（本機比伺服器早 10 分鐘跑）。
+60 分鐘內的才算數。本機送來後 server.py 馬上跑 run_check（網頁會休眠，伺服器不再自己定時檢查）。
 HUT_FOREST_ON_SERVER=0 時林業署三站也改由本機送（Railway 國外 IP 被擋時的備案）。
 寄信只寄住宿日是週五、六、日的增加；全部空位（含平日）寫進 Notion（hut_notion，背景執行緒）。
 

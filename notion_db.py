@@ -3134,6 +3134,20 @@ def pantry_set_status(page_id, status):
         return False
 
 
+def reminders_get_status(page_id):
+    """回 pending／fired／cancelled；查不到回 None。"""
+    client = _get_client()
+    if not client:
+        return None
+    try:
+        page = client.pages.retrieve(page_id=page_id)
+        sel = ((page.get("properties") or {}).get("Status") or {}).get("select") or {}
+        return sel.get("name")
+    except Exception as e:
+        print(f"[notion] reminders_get_status 失敗：{e}")
+        return None
+
+
 def reminders_set_status(page_id, status):
     """status in {pending, fired, cancelled}。"""
     client = _get_client()

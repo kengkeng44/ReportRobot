@@ -539,6 +539,28 @@ def snapshot():
     return _snap["data"]
 
 
+def is_stale(d, now=None):
+    """快照該不該重抓：沒有快照，或今天 14:45（台股收盤資料齊）之後還是 14:45 前抓的。"""
+    if not d or not d.get("at"):
+        return True
+    now = now or datetime.now(TPE)
+    cutoff = now.replace(hour=14, minute=45, second=0, microsecond=0)
+    if now < cutoff:
+        cutoff -= timedelta(days=1)
+    try:
+        at = datetime.strptime(d["at"], "%Y-%m-%d %H:%M").replace(tzinfo=TPE)
+    except ValueError:
+        return True
+    return at < cutoff
+
+
+def snapshot_fresh():
+    """打開頁面用：快照舊了就當場重抓（約 20 秒）。
+    以前靠每天 14:45 排程更新；網頁會休眠後改成有人看才抓，沒人看就不花錢。"""
+    d = snapshot()
+    return refresh() if is_stale(d) else d
+
+
 def refresh():
     """重抓一次並存成快照。同時只跑一個；已在跑的話等它跑完直接用它的結果。"""
     if not _lock.acquire(blocking=False):

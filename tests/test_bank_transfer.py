@@ -255,7 +255,8 @@ def test_webhook_routes_images_to_ocr():
     src = (Path(__file__).resolve().parent.parent / "server.py").read_text(encoding="utf-8")
     assert 'msg.get("type") == "image"' in src and "transfer_ocr.handle_line_image" in src
     assert "_is_admin(img_ctx)" in src            # 只有本人私訊的圖才處理
-    assert 'id="transfer_backfill_boot"' in src
+    import jobs
+    assert jobs.transfer_backfill in [fn for _, fn, _ in jobs.plan("0650")]
 
 
 def test_fingerprints_skip_source_options_not_yet_in_notion(monkeypatch):

@@ -11,6 +11,7 @@ from hut_sources import Slot
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setenv("ADMIN_TOKEN", "t0k")
+    monkeypatch.setenv("HUT_CHECK_ON_INGEST", "0")   # 不在測試裡真的去抓山屋網站
     hut_monitor.reset()
     yield TestClient(server.app)
     hut_monitor.reset()

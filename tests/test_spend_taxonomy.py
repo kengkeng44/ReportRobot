@@ -69,11 +69,10 @@ def test_apply_skips_non_spending_and_respects_given():
 
 
 def test_schema_and_scheduler_wired():
-    from pathlib import Path
     import notion_db
     assert "大類" in notion_db._SCHEMAS["交易明細"] and "細項" in notion_db._SCHEMAS["交易明細"]
-    src = (Path(__file__).resolve().parent.parent / "server.py").read_text(encoding="utf-8")
-    assert 'id="taxonomy_backfill_daily"' in src
+    import jobs
+    assert jobs.taxonomy_backfill in [fn for _, fn, _ in jobs.plan("1500")]
 
 
 @pytest.mark.parametrize("shop, items, bank, want", [

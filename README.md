@@ -52,12 +52,11 @@
 | `/財務` | 精簡版：持股概況（含 P&L）+ 信用卡分類總和 + ⚡ ≥ NT$3,000 大筆消費。同義詞：`/帳單` `/訂閱` `/扣款` 都觸發精簡版 |
 | `/財務詳細` | 完整 IC Memo：信用卡逐筆分類 + 訂閱 + 證券手續費（web 估算 fallback）+ 月加總 |
 
-**自動推送（背景，每 5 分鐘輪詢，不用打指令）：**
+**自動推送（背景，跟著 jobs.py 四個時段檢查，不用打指令）：**
 
 | 來源 | 條件 | 推送對象 | 格式 |
 |---|---|---|---|
-| CWA 颱風警報（W-C0033-001）| 新一筆 advisory | 群組 + admin | Flex 卡片 |
-| 重要 Gmail 即時轉發 | `GMAIL_FORWARD_FROM` env 列的寄件人新信 | admin | 文字 |
+| 重要 Gmail 轉發 | `GMAIL_FORWARD_FROM` env 列的寄件人新信（上一班到這班之間） | admin | 文字 |
 
 **保守觸發策略**：`hi` / `ok`、純中文聊天、「我買台積」這種句子都不會觸發。短英文與無前綴中文不視為指令，避免家人聊天被打擾。
 
@@ -335,13 +334,9 @@ Invoke-RestMethod -Method Get `
 
 ## 排程時間
 
-`server.py` 用 apscheduler，預設讀 `DAILY_CRON` 環境變數：
-
-```
-DAILY_CRON = "0 22 * * *"  # UTC 22:00 = 台北 06:00
-```
-
-要改時間直接改 Infisical 的 `DAILY_CRON` 變數。
+定時工作在 `jobs.py`，由 Railway 定時任務（`railway.cron.json`，UTC `0,50 1,7,13,22 * * *`）叫，
+集中在台北 06:50／09:00／15:00／21:00 四個時段，跑完就關；網頁服務閒置會休眠。
+`python jobs.py list` 看各時段工作，`python jobs.py 1500` 手動補跑某個時段。
 
 ## Roadmap / 待辦清單
 
