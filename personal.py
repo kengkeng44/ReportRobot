@@ -569,7 +569,9 @@ def add_reminder(user_id, text, fire_at, push_func):
     會把未到期的重新 schedule。"""
     from app_state import get_scheduler
     scheduler = get_scheduler()
-    if not scheduler:
+    # 網頁服務閒置會休眠，in-process 的 job 不一定活到時間到；
+    # Notion 那筆才是正本，jobs.py 每個時段會把到期沒送的補送。
+    if not scheduler and not _notion_enabled():
         return None
 
     with _LOCK:
@@ -592,15 +594,15 @@ def add_reminder(user_id, text, fire_at, push_func):
         except Exception as e:
             print(f"[personal/reminders] Notion create 失敗：{e}")
 
-    job_id = f"reminder-{user_id}-{next_id}"
-    scheduler.add_job(
-        _fire_reminder,
-        "date",
-        run_date=fire_at,
-        args=[user_id, next_id, push_func],
-        id=job_id,
-        replace_existing=True,
-    )
+    if scheduler:
+        scheduler.add_job(
+            _fire_reminder,
+            "date",
+            run_date=fire_at,
+            args=[user_id, next_id, push_func],
+            id=f"reminder-{user_id}-{next_id}",
+            replace_existing=True,
+        )
     return next_id
 
 
@@ -617,6 +619,14 @@ def _fire_reminder(user_id, reminder_id, push_func):
             items.remove(target)
     if not target:
         return
+    # 網頁睡著時 jobs.py 可能已經補送過了：Notion 不是 pending 就不再推
+    if target.get("page_id") and _notion_enabled():
+        try:
+            import notion_db
+            if notion_db.reminders_get_status(target["page_id"]) not in (None, "pending"):
+                return
+        except Exception as e:
+            print(f"[personal/reminders] 查 Notion 狀態失敗，照推：{e}")
     try:
         push_func(user_id, f"⏰ 提醒：{target['text']}")
     except Exception as e:
@@ -694,11 +704,8 @@ def restore_reminders_from_notion(push_func):
         page_id = r["page_id"]
 
         if fire_at <= now:
-            # 已過期，Notion 標 fired，不 reschedule
-            try:
-                notion_db.reminders_set_status(page_id, "fired")
-            except Exception:
-                pass
+            # 已過期（服務睡著時到期）：補送，不是默默丟掉
+            _push_late(push_func, r)
             expired += 1
             continue
 
@@ -726,8 +733,41 @@ def restore_reminders_from_notion(push_func):
         except Exception as e:
             print(f"[personal/reminders] reschedule 失敗 {job_id}：{e}")
 
-    print(f"[personal/reminders] restore 完成：reschedule {restored} 個 / 過期清理 {expired} 個")
+    print(f"[personal/reminders] restore 完成：reschedule {restored} 個 / 過期補送 {expired} 個")
     return restored
+
+
+def _push_late(push_func, r):
+    """補送一筆已到期的提醒並標 fired。先標再推：重複推比漏推煩，但兩邊同時補送時這樣只會推一次的機率高。"""
+    import notion_db
+    if not notion_db.reminders_set_status(r["page_id"], "fired"):
+        print("[personal/reminders] 標 fired 失敗，這次不送免得重複")
+        return False
+    when = r["fire_at"].strftime("%m/%d %H:%M")
+    try:
+        push_func(r["user_id"], f"⏰ 提醒（原定 {when}）：{r['text']}")
+    except Exception as e:
+        print(f"[personal/reminders] 補送失敗 {mask(r['user_id'])}：{e}")
+        return False
+    with _LOCK:
+        items = _REMINDERS.get(r["user_id"], [])
+        items[:] = [t for t in items if t.get("page_id") != r["page_id"]]
+    return True
+
+
+def dispatch_due_reminders(push_func, now=None):
+    """jobs.py 每個時段呼叫：Notion 裡到期還是 pending 的提醒補送。回補送筆數。"""
+    if not _notion_enabled():
+        return 0
+    import notion_db
+    rows = notion_db.reminders_load_pending_all()
+    sent = 0
+    for r in rows:
+        fire_at = r["fire_at"]
+        cur = now or (datetime.now(fire_at.tzinfo) if fire_at.tzinfo else datetime.now())
+        if fire_at <= cur and _push_late(push_func, r):
+            sent += 1
+    return sent
 
 
 def format_reminders(user_id):

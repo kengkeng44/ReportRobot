@@ -441,13 +441,22 @@ Invoke-RestMethod -Method Post -Uri "$base/admin/hut-run" -Headers $h
 
 ### 排程
 
-| 工作 | 台灣時間 | env |
-|---|---|---|
-| 每日推播(群組,LINE) | 07:00 | `DAILY_CRON` |
-| 每日個人報(email) | 07:00 | 同上,跟在群組版後面跑 |
-| 財務同步 | 15:30 | `FINANCE_CRON`(預設 `30 7 * * *` UTC) |
-| 山屋監控(07:00 那次另寄當天抽籤／開放日) | 07:00／16:30／23:30,開機 3 分鐘後建基準 | 寫死在 `server.py` |
-| 山屋一站式(本機 Windows 排程「山屋一站式」) | 06:50／16:20／23:20 | `tools/hut_browser_task.ps1` 註冊;log 在 `~/.hut_monitor/log.txt` |
+2026-11-13 起：網頁服務閒置就休眠（`railway.json` 的 `sleepApplication`），
+定時工作全部搬到 `jobs.py`，由另一個 Railway 定時任務服務（`railway.cron.json`）叫，跑完就關。
+原因：帳單 99% 是常駐的記憶體時間。`python jobs.py list` 看各時段跑什麼。
+
+| 時段(台灣) | 工作 |
+|---|---|
+| 06:50 | 山屋早上提醒、OwnTracks 整理昨天、每日報(`DAILY_REPORT_PAUSED`)、Notion 欄位收斂、圖文選單、轉帳信補抓 |
+| 09:00 | 待辦早上提醒、LINE 額度、找重複發票 |
+| 15:00 | 財務同步 → 載具發票 → 共同帳本重掃 → 來源補標 → 大類補標 |
+| 21:00 | 情侶群組明天預告、山屋晚上提醒 |
+| 每個時段 | 到期提醒補送、重要 Gmail 轉發(只看上一班到這班之間的信)、Notion 打勾記共同帳本、發票人工確認 |
+| 山屋監控 | 本機「山屋一站式」06:50／16:20／23:20 送來 `/admin/hut-ingest` 時當場檢查(林業署三站由伺服器順便抓)。**電腦沒開就不檢查** |
+| 股市雷達 | 有人打開 `/radar` 且快照是當天 14:45 前抓的才重抓 |
+
+「提醒我」：網頁醒著時準時送；睡著時到期的，下一個時段或下次醒來補送(訊息會標「原定 HH:MM」)。
+颱風警報 2026-11-13 拿掉。`DAILY_CRON`、`FINANCE_CRON` 已不再使用。
 
 個人版 2026-08-20 起改寄 Gmail(`mailer.py`),不再吃 LINE push 配額 ——
 push 每月 200 則,群組版每天已佔一則,個人版再佔一則等於一半花在自己身上。
@@ -567,7 +576,6 @@ ReportRobot（根頁,NOTION_PARENT_PAGE_ID）
 
 | 變數 | 用途 | 預設 |
 |---|---|---|
-| `FINANCE_CRON` | 財務同步排程(UTC crontab) | `30 7 * * *` |
 | `SEND_TOKEN_PICKLE_B64` | 個人報寄信用的 OAuth token base64,**只有 `gmail.send`** | 無 —— **沒設就整個不寄** |
 | `REPORT_EMAIL_TO` | 個人報收件者 | 沒設就寄給 `GMAIL_USER` 自己 |
 | `TW_HOLDINGS` | 台股起始庫存**備援** `代號:股數@均價`,逗號分隔 | 無 —— 正常走 Notion「起始庫存」表,這個只在 Notion 讀不到時生效 |

@@ -1,7 +1,7 @@
 """
 長駐 web service：
 - POST /line/webhook：接 LINE Messaging API 訊息事件，dispatch 到 command_router
-- 背景 scheduler：每天 UTC 00:00（台北 08:00）跑 run_daily_report
+- 定時工作在 jobs.py（Railway 定時任務）；這裡閒置會休眠
 - GET /：健康檢查
 """
 
@@ -16,13 +16,10 @@ from contextlib import asynccontextmanager
 
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI, Header, HTTPException, Request
 
 import command_router
 from admin_notify import notify_admin
-from daily_report import run_daily_report
 from line_sender import reply_message
 from security_utils import mask_source
 
@@ -41,60 +38,9 @@ def _env(name):
 LINE_CHANNEL_SECRET = _env("LINE_CHANNEL_SECRET")
 
 
-def _cron_or_default(env_name, default):
-    """crontab 必須是 5 欄位；env 打錯不該讓 startup crash。"""
-    raw = os.environ.get(env_name, default) or default
-    if len(raw.split()) == 5:
-        return raw
-    print(f"⚠️ {env_name} 格式錯誤 ({raw!r}，需要 5 欄)，fallback 用 {default!r}")
-    return default
-
-
-# UTC 07:30 = 台北 15:30
-FINANCE_CRON = _cron_or_default("FINANCE_CRON", "30 7 * * *")
-
-
-def _run_finance_sync():
-    """排程進入點。同步失敗不能拖垮同 process 的每日推播。
-
-    交易與持倉分開 try：其中一個掛掉不該讓另一個也不跑。
-    """
-    import finance_sync
-    try:
-        finance_sync.sync()
-    except Exception as e:
-        print(f"[finance] 交易同步失敗：{e}")
-    try:
-        finance_sync.sync_portfolio()
-    except Exception as e:
-        print(f"[finance] 持倉同步失敗：{e}")
-
-
-def _run_einvoice_sync():
-    """載具發票 → 食材庫存 + 交易明細補明細。跟財務同步分開,失敗不互相拖累。
-    彙整通知每月才一封,但每天檢查一次:信何時寄不確定,
-    而重跑有 (名稱, 購買日) 去重擋著,不會寫出重複。
-    """
-    import einvoice_sync
-    try:
-        einvoice_sync.sync()
-    except Exception as e:
-        print(f"[einvoice] 食材同步失敗：{e}")
-
-# DAILY_CRON 必須是 5 欄位的 crontab（minute hour day month dow）
-# 用 env override 但若格式錯亂（空字串 / 欄位數不對）→ fallback 預設值，不讓 startup crash
-DAILY_CRON_DEFAULT = "0 22 * * *"  # UTC 22:00 = 台北 06:00
-_daily_cron_raw = os.environ.get("DAILY_CRON", DAILY_CRON_DEFAULT) or DAILY_CRON_DEFAULT
-if len(_daily_cron_raw.split()) == 5:
-    DAILY_CRON = _daily_cron_raw
-else:
-    print(
-        f"⚠️ DAILY_CRON env 格式錯誤 ({_daily_cron_raw!r}，需要 5 個空白分隔的欄位)，"
-        f"fallback 用預設 {DAILY_CRON_DEFAULT!r}"
-    )
-    DAILY_CRON = DAILY_CRON_DEFAULT
-
-
+# 定時工作都搬到 jobs.py（Railway 定時任務，跑完就關）。網頁服務閒置會休眠，
+# 這裡只留「提醒我」用的 in-process scheduler：醒著時準時送；睡著時到期的，
+# 下次醒來（restore）或 jobs.py 下一個時段補送。
 scheduler = AsyncIOScheduler()
 
 
@@ -109,437 +55,26 @@ def _scheduler_error_listener(event):
     })
 
 
-# 應用層冪等：每日報每天最多執行一次。flag 寫到 /tmp（Railway 容器內 ephemeral，
-# 重啟會清空；但搭配 apscheduler 的 coalesce + misfire_grace_time，已經能擋住
-# 90% 重啟剛好踩在排程點的場景）。
-_DAILY_FLAG_DIR = "/tmp" if os.path.isdir("/tmp") else os.getcwd()
-
-
-def _today_flag_path():
-    from datetime import date
-    return os.path.join(_DAILY_FLAG_DIR, f"daily_report_{date.today():%Y%m%d}.flag")
-
-
-# 2026-10-25 使用者要求暫停：天氣、今日一則都靠 Claude API，API 掛了只會推出
-# 「天氣資料暫時無法取得」的空卡。找到原因後改回 False（或 env 設 0）就恢復。
-DAILY_REPORT_PAUSED = os.environ.get("DAILY_REPORT_PAUSED", "1") == "1"
-
-
-async def _idempotent_daily_report(force_premarket=False):
-    """執行前檢查 today flag；已跑過則 skip。"""
-    if DAILY_REPORT_PAUSED:
-        print("[daily_report] 暫停中（DAILY_REPORT_PAUSED），今天不推")
-        return
-    flag = _today_flag_path()
-    if os.path.exists(flag):
-        print(f"[daily_report] 冪等保護觸發，今日已執行（{flag}）")
-        return
-    try:
-        await run_daily_report(force_premarket=force_premarket)
-    finally:
-        # 寫 flag 不論成功失敗都寫，避免失敗後立刻被排程補跑導致雙推
-        try:
-            with open(flag, "w") as f:
-                from datetime import datetime as _dt
-                f.write(_dt.utcnow().isoformat())
-        except Exception as e:
-            print(f"[daily_report] flag 寫入失敗（非致命）：{e}")
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 啟動時掛排程
-    minute, hour, day, month, dow = DAILY_CRON.split()
-    scheduler.add_job(
-        _idempotent_daily_report,
-        CronTrigger(minute=minute, hour=hour, day=day, month=month, day_of_week=dow),
-        id="daily_report",
-        max_instances=1,
-        coalesce=True,                # 多個錯過的觸發合併成 1 次
-        misfire_grace_time=300,       # 錯過 5 分鐘內仍補跑，超過就放棄
-        replace_existing=True,
-    )
-    # 財務同步：台灣 15:30。實測國泰「消費彙整通知」每天 14:2x–14:5x 送達、
-    # 富邦證券成交回報盤後約 14:25，那時信都到齊、台股也收盤了。
-    # 一天一次即足夠 —— 這些信一天只來一封，每小時跑有 23 次是空轉。
-    f_minute, f_hour, f_day, f_month, f_dow = FINANCE_CRON.split()
-    scheduler.add_job(
-        _run_finance_sync,
-        CronTrigger(minute=f_minute, hour=f_hour, day=f_day,
-                    month=f_month, day_of_week=f_dow),
-        id="finance_sync",
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=1800,      # 漏跑半小時內補跑；重跑有指紋擋著不會重複
-        replace_existing=True,
-    )
-    # 載具發票 → 食材庫存：台灣 16:30（UTC 08:30），排在財務同步之後半小時，
-    # 錯開兩者對 Notion 的寫入。彙整通知每月才一封，但每天檢查一次 ——
-    # 信何時寄不確定，而重跑有 (名稱, 購買日) 去重擋著。
-    scheduler.add_job(
-        _run_einvoice_sync,
-        CronTrigger(minute=30, hour=8),
-        id="einvoice_sync",
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=1800,
-        replace_existing=True,
-    )
-    # 即時警示（颱風 / 重要 Gmail）：每 5 分鐘檢查一輪
-    from alerts import check_and_push_all as _check_alerts
-    scheduler.add_job(
-        _check_alerts,
-        IntervalTrigger(minutes=5),
-        id="alerts_loop",
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=120,
-        replace_existing=True,
-    )
-    scheduler.add_listener(
-        _scheduler_error_listener,
-        EVENT_JOB_ERROR | EVENT_JOB_MISSED,
-    )
-    # LINE push 月配額警示：每天 09:00 (TPE) 檢查當月用量，超 80%/90%/100% 推 admin
-    from line_quota import check_and_warn as _check_quota
-    scheduler.add_job(
-        _check_quota,
-        CronTrigger(hour=9, minute=0, timezone="Asia/Taipei"),
-        id="line_quota_warn",
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=300,
-        replace_existing=True,
-    )
-    # 共同帳本重掃：排在財務同步（15:30）之後，把當天新進的全聯 / 康達盛通、
-    # 以及你在 Notion 手動改成共同的那幾筆補進共同帳本。重跑有去重。
-    def _run_couple_rescan():
-        try:
-            import couple_ledger
-            print(f"[couple] 重掃：{couple_ledger.rescan()}")
-        except Exception as e:
-            print(f"[couple] 重掃失敗（非致命）：{e}")
-
-    # 來源欄換新名稱 + 補記錄人：開機後跑一次，之後每天跟著重掃跑
-    #（抓在 Notion 直接手打的新帳）。重跑安全，只改不一樣的列。
-    def _run_sources_backfill():
-        try:
-            import sources
-            print(f"[sources] 來源補標：{sources.backfill()}")
-        except Exception as e:
-            print(f"[sources] 來源補標失敗（非致命）：{e}")
-
-    from datetime import datetime, timedelta, timezone
-    from apscheduler.triggers.date import DateTrigger
-    # 轉帳通知信一年份補抓：只跑轉帳那兩種信（不碰國泰刷卡，那條線的起點是 8/7，
-    # 往前撈會把 Notion 還沒有的舊刷卡寫進來）。每次開機都跑，有指紋擋著重跑安全
-    def _run_transfer_backfill():
-        try:
-            import finance_sync
-            stats = finance_sync.sync(lookback_days=400, sources=finance_sync.TRANSFER_SOURCES,
-                                      max_results=200)
-            print(f"[finance] 轉帳信補抓：{stats}")
-        except Exception as e:
-            print(f"[finance] 轉帳信補抓失敗（非致命）：{e}")
-
-    # 大類／細項補標：開機一次 + 每天 17:00（載具發票 16:30 補完品項之後，待分類的才分得出來）
-    def _run_taxonomy_backfill():
-        try:
-            import spend_taxonomy
-            spend_taxonomy.backfill()
-        except Exception as e:
-            print(f"[taxonomy] 補標失敗（非致命）：{e}")
-
-    # 圖文選單：程式碼裡的選單改了，開機就自動重建（不用再手動打 admin 端點）
-    def _ensure_richmenu():
-        try:
-            import setup_richmenu
-            print(f"[richmenu] {setup_richmenu.ensure_current()}")
-        except Exception as e:
-            print(f"[richmenu] 自動更新失敗（非致命）：{e}")
-
-    scheduler.add_job(
-        _ensure_richmenu,
-        DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(minutes=1)),
-        id="richmenu_ensure_boot",
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        _run_taxonomy_backfill,
-        DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(minutes=6)),
-        id="taxonomy_backfill_boot",
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        _run_taxonomy_backfill,
-        CronTrigger(hour=17, minute=0, timezone="Asia/Taipei"),
-        id="taxonomy_backfill_daily",
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=3600,
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        _run_transfer_backfill,
-        DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(minutes=4)),
-        id="transfer_backfill_boot",
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        _run_sources_backfill,
-        DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(minutes=2)),
-        id="sources_backfill_boot",
-        replace_existing=True,
-    )
-    def _radar_refresh():
-        try:
-            import radar
-            radar.refresh()
-        except Exception as e:
-            print(f"[radar] 排程更新失敗（非致命）：{e}")
-
-    def _radar_boot():
-        import radar
-        if radar.snapshot() is None:
-            _radar_refresh()
-
-    scheduler.add_job(
-        _radar_boot,
-        DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(seconds=30)),
-        id="radar_boot",
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        _radar_refresh,
-        CronTrigger(hour=14, minute=45, timezone="Asia/Taipei"),
-        id="radar_daily",
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=3600,
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        _run_sources_backfill,
-        CronTrigger(hour=16, minute=5, timezone="Asia/Taipei"),
-        id="sources_backfill_daily",
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=1800,
-        replace_existing=True,
-    )
-
-    # Notion 勾「算共同」→ 記進共同帳本。Notion 沒有能用的推播，只能輪詢；
-    # 一次一個查詢、沒勾的時候撈到 0 筆，5 分鐘一次負擔很小。
-    def _run_sync_checked():
-        try:
-            import couple_ledger
-            n = couple_ledger.sync_checked()
-            if n:
-                print(f"[couple] Notion 打勾記進共同帳本：{n} 筆")
-        except Exception as e:
-            print(f"[couple] 打勾同步失敗（非致命）：{e}")
-
-    scheduler.add_job(
-        _run_sync_checked,
-        IntervalTrigger(minutes=5),
-        id="couple_sync_checked",
-        max_instances=1,
-        coalesce=True,
-        replace_existing=True,
-    )
-
-    # Notion「發票處理」選了 ✅/➡️/➕ → 照選的處理。純 Notion 查詢，不用 AI
-    def _run_invoice_review():
-        try:
-            import einvoice_ledger
-            n = einvoice_ledger.review()
-            if n:
-                print(f"[einvoice] 發票人工確認處理：{n} 筆")
-        except Exception as e:
-            print(f"[einvoice] 發票人工確認失敗（非致命）：{e}")
-
-    scheduler.add_job(
-        _run_invoice_review,
-        IntervalTrigger(minutes=5),
-        id="einvoice_review",
-        max_instances=1,
-        coalesce=True,
-        replace_existing=True,
-    )
-
-    # 每天找重複：同一張發票掛在兩列以上 → 勾「重複待確認」，你在 Notion 刪掉一列；
-    # 不自動刪。新出現的才推 LINE，已經勾過的不重複推
-    def _run_ledger_dedup():
-        try:
-            import einvoice_ledger
-            report = einvoice_ledger.dedup()
-            print(f"[dedup] {report or '沒有重複'}")
-            from admin_notify import _admin_user_id
-            admin_id = _admin_user_id()
-            if report and admin_id:
-                from line_sender import push_to_user_sync
-                push_to_user_sync(admin_id, report)
-        except Exception as e:
-            print(f"[dedup] 找重複失敗（非致命）：{e}")
-
-    scheduler.add_job(
-        _run_ledger_dedup,
-        CronTrigger(hour=9, minute=30, timezone="Asia/Taipei"),
-        id="ledger_dedup_daily",
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=3600,
-        replace_existing=True,
-    )
-
-    scheduler.add_job(
-        _run_couple_rescan,
-        CronTrigger(hour=15, minute=50, timezone="Asia/Taipei"),
-        id="couple_rescan",
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=1800,
-        replace_existing=True,
-    )
-    # 情侶群組明天預告：明天有 ⭐ 特別活動才推，到期待辦順便帶（每次 2 則額度）
-    def _run_couple_preview():
-        try:
-            import couple_calendar
-            couple_calendar.run_evening_preview()
-        except Exception as e:
-            print(f"[couple_calendar] 明天預告失敗（非致命）：{e}")
-        try:
-            import couple_calendar
-            couple_calendar.run_evening_personal()
-        except Exception as e:
-            print(f"[todo_remind] 個人明天預告失敗（非致命）：{e}")
-
-    # 待辦 09:00 提醒：今天到期與逾期的（群組推群組、你的私訊你）
-    def _run_morning_todos():
-        try:
-            import couple_calendar
-            couple_calendar.run_morning_todos()
-        except Exception as e:
-            print(f"[todo_remind] 早上提醒失敗（非致命）：{e}")
-
-    scheduler.add_job(
-        _run_morning_todos,
-        CronTrigger(hour=9, minute=0, timezone="Asia/Taipei"),
-        id="todo_morning",
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=1800,      # flag 擋重複，重啟補跑不會推兩次
-        replace_existing=True,
-    )
-
-    scheduler.add_job(
-        _run_couple_preview,
-        CronTrigger(hour=21, minute=0, timezone="Asia/Taipei"),
-        id="couple_preview",
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=1800,      # 重啟補跑有 flag 擋著，不會推兩次
-        replace_existing=True,
-    )
-    # OwnTracks：00:20 把昨天的定位點整理進每日紀錄 + 封存 30 天前的原始點
-    def _run_owntracks_nightly():
-        import owntracks
-        owntracks.nightly()
-
-    scheduler.add_job(
-        _run_owntracks_nightly,
-        CronTrigger(hour=0, minute=20, timezone="Asia/Taipei"),
-        id="owntracks_nightly",
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=3 * 3600,  # 重跑同一天安全（地點統計只在第一次連上時累加）
-        replace_existing=True,
-    )
-    # 山屋名額監控：07:00／16:30／23:30（docs/superpowers/specs/2026-11-02-hut-monitor-design.md）
-    # 07:00 那班就算沒有空位變化，今天有抽籤／開放日也寄。
-    # 開機 3 分鐘後先從 Notion 補快照再檢查（補不到才當基準、不寄信）。
-    def _run_hut_check(send_events_today=False):
-        try:
-            import hut_monitor
-            print(f"[hut] {hut_monitor.run_check(send_events_today=send_events_today)}")
-        except Exception as e:
-            print(f"[hut] 檢查失敗（非致命）：{e}")
-
-    def _run_hut_boot():
-        try:
-            import hut_monitor
-            print(f"[hut] 從 Notion 補回 {hut_monitor.restore_from_notion()} 筆快照")
-        except Exception as e:
-            print(f"[hut] 補快照失敗（非致命）：{e}")
-        _run_hut_check()
-
-    scheduler.add_job(
-        _run_hut_boot,
-        DateTrigger(run_date=datetime.now(timezone.utc) + timedelta(minutes=3)),
-        id="hut_check_boot",
-        replace_existing=True,
-    )
-    for _hour, _minute, _events in ((7, 0, True), (16, 30, False), (23, 30, False)):
-        scheduler.add_job(
-            _run_hut_check,
-            CronTrigger(hour=_hour, minute=_minute, timezone="Asia/Taipei"),
-            kwargs={"send_events_today": _events},
-            id=f"hut_check_{_hour:02d}{_minute:02d}",
-            max_instances=1,
-            coalesce=True,
-            misfire_grace_time=1800,
-            replace_existing=True,
-        )
-
-    # 山屋申請提醒（週六）：21:00 預告明天要送件／開放，06:50 提醒 07:00 開放的先到先得
-    def _run_hut_remind(kind):
-        try:
-            import hut_remind
-            from tz_utils import today_tpe
-            hut_remind.push(kind, today_tpe())
-        except Exception as e:
-            print(f"[hut_remind] {kind} 失敗（非致命）：{e}")
-
-    for _kind, _hour, _minute in (("evening", 21, 0), ("morning", 6, 50)):
-        scheduler.add_job(
-            _run_hut_remind,
-            CronTrigger(hour=_hour, minute=_minute, timezone="Asia/Taipei"),
-            kwargs={"kind": _kind},
-            id=f"hut_remind_{_kind}",
-            max_instances=1,
-            coalesce=True,
-            misfire_grace_time=600,       # 06:50 的提醒晚超過 10 分鐘就沒意義了
-            replace_existing=True,
-        )
+    scheduler.add_listener(_scheduler_error_listener, EVENT_JOB_ERROR | EVENT_JOB_MISSED)
     scheduler.start()
     # 注入 scheduler 給 personal.py 用（提醒功能要排 one-shot job）
     import app_state
     app_state.set_scheduler(scheduler)
-    print(f"Scheduler 啟動，每日報排程：{DAILY_CRON} (UTC)")
-    print("LINE push 月配額警示：每天 09:00 TPE")
-    # Notion 持久化：把上次 deploy 前還沒 fire 的提醒重新 schedule
-    try:
-        from personal import restore_reminders_from_notion
-        from line_sender import push_to_user_sync
-        restore_reminders_from_notion(push_to_user_sync)
-    except Exception as e:
-        print(f"[startup] reminders restore 失敗（非致命）：{e}")
 
-    # Notion schema 收斂：確保 _SCHEMAS 的每個 DB 都存在。
-    # 丟背景 thread 而非同步跑 —— 這會打數十次 Notion API（限流 3 req/s），
-    # 擋在啟動路徑上會拖長 Railway 的健康檢查時間。
-    # 不用 lazy create 是因為它會被上游的提早 return 吃掉（見 notion_db.ensure_all_dbs）。
-    def _ensure_notion_schema():
+    # 背景跑，不擋啟動：休眠醒來第一個請求要快
+    def _warm_up():
+        # 提醒：未到期的重新排、睡著時到期的補送
         try:
-            import notion_db
-            notion_db.ensure_all_dbs()
+            from personal import restore_reminders_from_notion
+            from line_sender import push_to_user_sync
+            restore_reminders_from_notion(push_to_user_sync)
         except Exception as e:
-            print(f"[startup] Notion schema 收斂失敗（非致命）：{e}")
-        # 排在 schema 之後：共同帳本第一次部署時要先建好才撈得到
+            print(f"[startup] reminders restore 失敗（非致命）：{e}")
         command_router.warm_caches()
 
-    threading.Thread(target=_ensure_notion_schema,
-                     name="notion-schema-ensure", daemon=True).start()
+    threading.Thread(target=_warm_up, name="warm-up", daemon=True).start()
     yield
     scheduler.shutdown()
 
@@ -811,6 +346,7 @@ async def trigger_daily(request: Request, force: int = 0):
     if request.headers.get("X-Admin-Token") != admin_token:
         raise HTTPException(status_code=403, detail="Forbidden")
     # admin 手動觸發：直接呼叫 run_daily_report，跳過 flag 冪等（測試用）
+    from daily_report import run_daily_report
     await run_daily_report(force_premarket=bool(force))
     return {"ok": True, "force_premarket": bool(force)}
 
@@ -829,9 +365,25 @@ async def hut_ingest(request: Request):
     _check_admin(request)
     import hut_monitor
     try:
-        return hut_monitor.ingest(await request.json())
+        out = hut_monitor.ingest(await request.json())
     except (ValueError, KeyError, TypeError, AttributeError) as e:
         raise HTTPException(status_code=400, detail=str(e)[:200])
+    # 網頁會休眠、伺服器端不再自己 07:00／16:30／23:30 檢查：本機送來就馬上比對
+    #（林業署三站在 run_check 裡由伺服器自己抓）。背景跑，本機不用等。
+    if os.environ.get("HUT_CHECK_ON_INGEST", "1") != "0":
+        threading.Thread(target=_hut_check_after_ingest, name="hut-check", daemon=True).start()
+    return out
+
+
+def _hut_check_after_ingest():
+    import hut_monitor
+    try:
+        n = hut_monitor.restore_from_notion()   # 剛醒來快照是空的，先從 Notion 補
+        if n:
+            print(f"[hut] 從 Notion 補回 {n} 筆快照")
+        print(f"[hut] {hut_monitor.run_check()}")
+    except Exception as e:
+        print(f"[hut] 檢查失敗（非致命）：{e}")
 
 
 @app.post("/admin/timetree-probe")
@@ -1124,14 +676,14 @@ def _radar_auth(k):
 
 @app.get("/radar")
 def radar_page(k: str = ""):
-    """全球股市雷達（機器人賽道）。只讀快照，秒開；快照每天 14:45 更新，或按頁面上的更新鈕。
+    """全球股市雷達（機器人賽道）。快照新的就秒開；舊了（過了當天 14:45）當場重抓約 20 秒。
 
     只有公開行情、沒有個人資料。設了 RADAR_TOKEN 就要帶 ?k=。
     """
     from fastapi.responses import HTMLResponse
     _radar_auth(k)
     import radar
-    return HTMLResponse(radar.render(radar.snapshot()), headers={"Cache-Control": "no-store"})
+    return HTMLResponse(radar.render(radar.snapshot_fresh()), headers={"Cache-Control": "no-store"})
 
 
 @app.post("/radar/refresh")

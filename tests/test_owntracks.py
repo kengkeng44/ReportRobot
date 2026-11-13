@@ -157,8 +157,9 @@ def test_itinerary_format_matches_google_import():
 
 def test_nightly_job_registered():
     src = (Path(__file__).resolve().parent.parent / "server.py").read_text(encoding="utf-8")
-    assert 'id="owntracks_nightly"' in src
     assert '@app.post("/owntracks")' in src
+    import jobs
+    assert jobs.owntracks_nightly in [fn for _, fn, _ in jobs.plan("0650")]
 
 
 # ── run_for_day（假 Notion）────────────────────────────
