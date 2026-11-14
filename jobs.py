@@ -104,6 +104,9 @@ def daily_report():
 
 
 def hut_remind(kind):
+    import hut_monitor
+    if hut_monitor.paused():
+        return "暫停中（HUT_PAUSED）"
     import hut_remind as hr
     from tz_utils import today_tpe
     return hr.push(kind, today_tpe())

@@ -364,6 +364,8 @@ async def hut_ingest(request: Request):
     """本機 tools/hut_browser.py 用真瀏覽器抓一站式後送回來（一站式有 WAF，Railway 抓不到）。"""
     _check_admin(request)
     import hut_monitor
+    if hut_monitor.paused():
+        return {"paused": True}
     try:
         out = hut_monitor.ingest(await request.json())
     except (ValueError, KeyError, TypeError, AttributeError) as e:
@@ -495,6 +497,8 @@ async def hut_run(request: Request):
     """手動跑一次山屋檢查（會照常寄信）。"""
     _check_admin(request)
     import hut_monitor
+    if hut_monitor.paused():
+        return {"paused": True}
     return await asyncio.to_thread(hut_monitor.run_check, True)
 
 

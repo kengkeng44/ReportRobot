@@ -63,6 +63,11 @@ def watchable(slot, today):
     return MIN_AHEAD <= ahead <= limit
 
 
+def paused():
+    """使用者 2026-11-14：山屋監控全部暫停（不寄信、不搜尋、不提醒）。HUT_PAUSED=0 才恢復。"""
+    return os.environ.get("HUT_PAUSED", "1") != "0"
+
+
 def _known_sites():
     return set(hut_sources.SITES) | set(hut_onestop.ONESTOP)
 

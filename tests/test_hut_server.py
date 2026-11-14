@@ -44,3 +44,16 @@ def test_ingest_non_object_body_400(client):
 def test_probe_and_run_require_token(client):
     assert client.post("/admin/hut-probe").status_code == 403
     assert client.post("/admin/hut-run").status_code == 403
+
+
+def test_paused_ingest_and_run_do_nothing(client, monkeypatch):
+    monkeypatch.setenv("HUT_PAUSED", "1")
+    h = {"X-Admin-Token": "t0k"}
+    assert client.post("/admin/hut-ingest", json=_payload(), headers=h).json() == {"paused": True}
+    assert client.post("/admin/hut-run", headers=h).json() == {"paused": True}
+    assert hut_monitor._ingest == {}
+
+
+def test_paused_is_default(monkeypatch):
+    monkeypatch.delenv("HUT_PAUSED", raising=False)
+    assert hut_monitor.paused()

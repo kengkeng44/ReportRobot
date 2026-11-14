@@ -158,6 +158,11 @@ def main(argv=None):
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
 
+    # 使用者 2026-11-14：山屋監控暫停，排程叫到也不開瀏覽器。要恢復設 HUT_PAUSED=0。
+    if os.environ.get("HUT_PAUSED", "1") != "0" and not (args.dry_run or args.recon):
+        print("山屋監控暫停中（HUT_PAUSED），沒有開瀏覽器")
+        return 0
+
     token = None
     if not (args.dry_run or args.recon):
         token = _read_token()
