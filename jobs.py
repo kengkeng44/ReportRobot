@@ -9,10 +9,11 @@
   09:00  待辦早上提醒、LINE 額度、找重複發票
   15:00  記帳同步 → 載具發票 → 共同帳本重掃 → 來源補標 → 大類補標
   21:00  情侶群組明天預告、山屋晚上提醒
-每個時段都順便跑：到期的「提醒我」、重要 Gmail 轉發、Notion 打勾記共同帳本、發票人工確認。
+每個時段都順便跑：重要 Gmail 轉發、Notion 打勾記共同帳本、發票人工確認。
 
-Railway cron（UTC）：`0,50 1,7,13,22 * * *`。一天叫 8 次，對不上時段的 4 次直接結束，
-不載入任何東西（cron 只能寫一組分鐘，06:50 跟其他整點湊不進同一個式子）。
+「提醒我」不跟時段走：Railway cron（UTC）`*/10 * * * *` 每 10 分鐘叫一次，
+對不上時段的那幾次只補送到期的提醒就結束（查一次 Notion，幾秒鐘）。
+以前一天只叫 8 次，「今天 18:00 去關車門」要等到 21:00 才送，提醒就沒意義了。
 
 用法：
   python jobs.py           依現在時間挑時段（對不上就什麼都不做）
@@ -25,8 +26,9 @@ import sys
 from datetime import datetime, timedelta
 
 SLOTS = ("0650", "0900", "1500", "2100")
-# cron 可能晚幾分鐘才啟動；30 分鐘內都算同一班。08:50 那類叫醒比時段早，不會被當成 09:00。
-SLOT_WINDOW = timedelta(minutes=30)
+# cron 每 10 分鐘叫一次，所以一班只能認 10 分鐘：放寬的話 09:10 那次會把 09:00 的工作再跑一遍。
+# 代價是 cron 晚超過 10 分鐘才啟動，那一班就漏掉（Railway 實際上晚不到一分鐘）。
+SLOT_WINDOW = timedelta(minutes=10)
 
 
 def _now_tpe():
@@ -55,7 +57,7 @@ def previous_slot_start(slot, day, tz):
     return _slot_dt(SLOTS[i - 1], day, tz)
 
 
-def _step(name, fn, *args, **kwargs):
+def _step(name, fn, *args, notify=True, **kwargs):
     """每一步各自吞例外：一段壞了不拖累同一班的其他工作。"""
     print(f"[jobs] ▶ {name}", flush=True)
     try:
@@ -64,6 +66,8 @@ def _step(name, fn, *args, **kwargs):
             print(f"[jobs]   {name}：{out}", flush=True)
     except Exception as e:
         print(f"[jobs] ✖ {name} 失敗（非致命）：{type(e).__name__}: {e}", flush=True)
+        if not notify:
+            return
         try:
             from admin_notify import notify_admin
             notify_admin(e, {"module": "jobs", "section": name})
@@ -249,7 +253,10 @@ def main(argv):
         now = _now_tpe()
         slot = pick_slot(now)
         if not slot:
-            print(f"[jobs] {now:%H:%M} 不在任何時段，結束")
+            # 不在時段的叫醒只補送到期提醒。Notion 掛掉時不通知管理員：
+            # 每 10 分鐘一封會洗版，四個時段那次的失敗照樣會通知
+            print(f"[jobs] {now:%H:%M} 不在任何時段，只補送到期提醒")
+            _step("到期提醒", due_reminders, notify=False)
             return 0
     run(slot)
     return 0

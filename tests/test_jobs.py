@@ -11,21 +11,29 @@ def at(h, m, day=13):
     return datetime(2026, 11, day, h, m, tzinfo=TPE)
 
 
-# ── 時段挑選：Railway cron `0,50 1,7,13,22 * * *`（UTC）的 8 次叫醒 ──
+# ── 時段挑選：Railway cron `*/10 * * * *`（UTC），每一班只認一次叫醒 ──
 
-@pytest.mark.parametrize("utc_h, utc_m, slot", [
-    (22, 50, "0650"), (1, 0, "0900"), (7, 0, "1500"), (13, 0, "2100"),   # 對得上
-    (22, 0, None), (0, 50, None), (6, 50, None), (12, 50, None),          # 多出來的 4 次
-    (1, 50, None), (7, 50, None), (13, 50, None),
-])
-def test_cron_wakeups_map_to_slots(utc_h, utc_m, slot):
-    now = datetime(2026, 11, 13, utc_h, utc_m, tzinfo=timezone.utc).astimezone(TPE)
-    assert jobs.pick_slot(now) == slot
+def test_each_slot_matches_exactly_one_cron_wakeup():
+    day = datetime(2026, 11, 12, 16, 0, tzinfo=timezone.utc)   # 台北 11/13 00:00
+    hits = {}
+    for i in range(24 * 6):
+        now = (day + timedelta(minutes=10 * i)).astimezone(TPE)
+        slot = jobs.pick_slot(now)
+        if slot:
+            hits.setdefault(slot, []).append(f"{now:%H:%M}")
+    assert hits == {"0650": ["06:50"], "0900": ["09:00"], "1500": ["15:00"], "2100": ["21:00"]}
 
 
-def test_late_start_within_30_min_still_counts():
-    assert jobs.pick_slot(at(15, 29)) == "1500"
-    assert jobs.pick_slot(at(15, 30)) is None
+def test_late_start_within_window_still_counts():
+    assert jobs.pick_slot(at(15, 9)) == "1500"
+    assert jobs.pick_slot(at(15, 10)) is None
+
+
+def test_railway_cron_runs_every_10_minutes():
+    import json
+    import pathlib
+    cfg = json.loads((pathlib.Path(jobs.__file__).parent / "railway.cron.json").read_text())
+    assert cfg["deploy"]["cronSchedule"] == "*/10 * * * *"
 
 
 def test_previous_slot_wraps_to_yesterday():
@@ -69,9 +77,25 @@ def test_gmail_forward_gets_previous_slot_as_window(monkeypatch):
     assert seen["since"] == at(15, 0)
 
 
-def test_main_outside_slots_does_nothing(monkeypatch):
-    monkeypatch.setattr(jobs, "_now_tpe", lambda: at(12, 0))
-    monkeypatch.setattr(jobs, "run", lambda slot: pytest.fail("不該跑"))
+def test_main_outside_slots_only_sends_due_reminders(monkeypatch):
+    """「今天 18:00 去關車門」不能等到 21:00 那班才送。"""
+    ran = []
+    monkeypatch.setattr(jobs, "_now_tpe", lambda: at(18, 0))
+    monkeypatch.setattr(jobs, "run", lambda slot: pytest.fail("不該跑整班"))
+    monkeypatch.setattr(jobs, "due_reminders", lambda: ran.append("due"))
+    assert jobs.main(["jobs.py"]) == 0
+    assert ran == ["due"]
+
+
+def test_off_slot_reminder_failure_does_not_page_admin(monkeypatch):
+    """每 10 分鐘一次，Notion 掛掉時每次都通知會洗版。"""
+    monkeypatch.setattr(jobs, "_now_tpe", lambda: at(18, 0))
+    monkeypatch.setattr("admin_notify.notify_admin", lambda *a, **k: pytest.fail("不該通知"))
+
+    def boom():
+        raise RuntimeError("Notion 掛了")
+
+    monkeypatch.setattr(jobs, "due_reminders", boom)
     assert jobs.main(["jobs.py"]) == 0
 
 

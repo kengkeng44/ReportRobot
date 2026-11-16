@@ -1108,3 +1108,58 @@ def test_jot_needs_a_space_so_menu_words_still_work(env, monkeypatch, text):
     monkeypatch.setattr(notion_db, "transactions_load", lambda **kw: [])
     monkeypatch.setattr(notion_db, "couple_load", lambda **kw: [])
     cl.handle(text, _group())
+
+
+# ── 記帳群組的提醒：時間到推回群組 ─────────────────────────
+
+@pytest.fixture
+def reminders(env, monkeypatch):
+    import personal
+    added = []
+    monkeypatch.setattr(personal, "add_reminder",
+                        lambda uid, text, at, push: added.append((uid, text, at)) or 1)
+    monkeypatch.setattr(notion_db, "couple_add", lambda r: pytest.fail("提醒不該記成一筆帳"))
+    return added
+
+
+def test_group_reminder_is_owned_by_group(reminders):
+    out = cr.handle("提醒 明天 18:00 陳小螢要去關車門", _group(user=GF))
+    assert "已設定提醒" in out and "陳小螢要去關車門" in out
+    (uid, text, at), = reminders
+    assert uid == GROUP          # 推到群組，不是推給打字的人
+    assert text == "陳小螢要去關車門"
+    assert (at.hour, at.minute) == (18, 0) and at.utcoffset() == timedelta(hours=8)
+
+
+def test_group_reminder_with_slash(reminders):
+    assert "已設定提醒" in cr.handle("/提醒 30 分鐘後 出門", _group())
+    assert reminders[0][0] == GROUP
+
+
+def test_group_chat_about_reminding_is_ignored(reminders):
+    """聊天講「提醒小螢明天要繳費」看不出時間，不設提醒也不回用法。"""
+    out = cr.handle("提醒小螢明天要繳費", _group())
+    assert reminders == []
+    assert not (out and "無法解析時間" in str(out))
+
+
+def test_group_reminder_list_reads_group(env, monkeypatch):
+    import personal
+    seen = []
+    monkeypatch.setattr(personal, "list_reminders", lambda uid: seen.append(uid) or [])
+    cr.handle("提醒", _group(user=GF))
+    assert seen == [GROUP]
+
+
+def test_reminder_still_private_in_other_groups(env):
+    out = cr.handle("/提醒 明天 18:00 關車門", _group(gid="Cfamily"))
+    assert out == cr.PERSONAL_ONLY_MSG
+
+
+def test_group_reminder_card_buttons_act_on_group(env, monkeypatch):
+    import personal
+    seen = []
+    monkeypatch.setattr(personal, "cancel_reminder", lambda uid, rid: seen.append((uid, rid)) or True)
+    monkeypatch.setattr(personal, "list_reminders", lambda uid: [])
+    cr.handle_postback("action=reminder_cancel&id=1", GF, _group(user=GF))
+    assert seen == [(GROUP, 1)]

@@ -168,7 +168,7 @@ HELP_TEXT = (
     "  • /待辦 清空         清掉全部\n"
     "  ℹ️ 不會自動 nag，請定期打 /待辦 看清單\n"
     "\n"
-    "⏰ 提醒（只在 1 對 1 chat 有效，響一次就結束）\n"
+    "⏰ 提醒（1 對 1 chat 和記帳群組有效，響一次就結束）\n"
     "  • /提醒 30 分鐘後 喝水\n"
     "  • /提醒 2 小時後 開會\n"
     "  • /提醒 明天 9:30 會議\n"
@@ -1161,6 +1161,9 @@ def handle(text, ctx=None):
         return hut_monitor.line_reply()
     reply = couple_ledger.setup_reply(text, ctx)
     if reply is None and couple_ledger.is_couple_chat(ctx):
+        # 「提醒 明天 18:00 X」排在記帳前面：「18:00」會被當成一筆金額
+        reply = _couple_reminder(text, ctx)
+    if reply is None and couple_ledger.is_couple_chat(ctx):
         reply = couple_ledger.handle(text, ctx)
     if reply is None:
         # 私訊也能看共同帳本最近幾筆 / 編輯紀錄 / 成員（限記帳群組成員）
@@ -1182,6 +1185,60 @@ def handle(text, ctx=None):
             return note
         return [note] + (result if isinstance(result, list) else [result])
     return result
+
+
+_REMINDER_KINDS = {"reminder_add", "reminder_list", "reminder_cancel"}
+
+
+def _couple_reminder(text, ctx):
+    """記帳群組裡的提醒：時間到推回群組（清單主人是群組，跟群組待辦一樣）。
+
+    只接得出時間的「提醒 明天 18:00 X」、「提醒」清單和「取消提醒 N」。
+    聊天講「提醒小螢明天要繳費」解析不出時間就當沒聽到 —— 群組裡每次都
+    回一串用法太吵。"""
+    parsed = parse(text)
+    if not parsed or parsed[0] not in _REMINDER_KINDS:
+        return None
+    kind, arg = parsed
+    if kind == "reminder_add" and not _personal().parse_reminder_input(arg):
+        return None
+    group_ctx = dict(ctx, user_id=ctx["group_id"])
+    return _reminder_reply(kind, arg, group_ctx)
+
+
+def _personal():
+    import personal
+    return personal
+
+
+def _reminder_reply(kind, arg, ctx):
+    """提醒三個指令。ctx["user_id"] 是提醒的主人（私訊是本人、記帳群組是群組 ID），
+    時間到就推給它。"""
+    personal = _personal()
+    if kind == "reminder_list":
+        from flex_builder import reminder_list_flex
+        return reminder_list_flex(personal.list_reminders(ctx["user_id"]))
+
+    if kind == "reminder_cancel":
+        if personal.cancel_reminder(ctx["user_id"], arg):
+            return f"🗑️ 提醒 [{arg}] 已取消"
+        return f"找不到編號 {arg} 的提醒"
+
+    from line_sender import push_to_user_sync
+    parsed_time = personal.parse_reminder_input(arg)
+    if not parsed_time:
+        return ("無法解析時間，可用格式：\n"
+                "  /提醒 30 分鐘後 喝水\n"
+                "  /提醒 2 小時後 開會\n"
+                "  /提醒 明天 9:30 會議\n"
+                "  /提醒 今天 18:00 倒垃圾")
+    fire_at, content = parsed_time
+    rid = personal.add_reminder(ctx["user_id"], content, fire_at, push_to_user_sync)
+    if rid is None:
+        return "⚠️ 排程系統未就緒，請稍後再試"
+    return (f"✅ 已設定提醒 [{rid}]\n"
+            f"⏰ {fire_at.strftime('%Y-%m-%d %H:%M')}\n"
+            f"📝 {content}")
 
 
 def _dispatch(text, ctx, parsed):
@@ -1271,36 +1328,8 @@ def _dispatch(text, ctx, parsed):
             from free_query import answer
             return answer(arg)
 
-        if kind == "reminder_list":
-            import personal
-            from flex_builder import reminder_list_flex
-            return reminder_list_flex(personal.list_reminders(ctx["user_id"]))
-
-        if kind == "reminder_cancel":
-            import personal
-            if personal.cancel_reminder(ctx["user_id"], arg):
-                return f"🗑️ 提醒 [{arg}] 已取消"
-            return f"找不到編號 {arg} 的提醒"
-
-        if kind == "reminder_add":
-            import personal
-            from line_sender import push_to_user_sync
-            parsed_time = personal.parse_reminder_input(arg)
-            if not parsed_time:
-                return ("無法解析時間，可用格式：\n"
-                        "  /提醒 30 分鐘後 喝水\n"
-                        "  /提醒 2 小時後 開會\n"
-                        "  /提醒 明天 9:30 會議\n"
-                        "  /提醒 今天 18:00 倒垃圾")
-            fire_at, content = parsed_time
-            rid = personal.add_reminder(
-                ctx["user_id"], content, fire_at, push_to_user_sync,
-            )
-            if rid is None:
-                return "⚠️ 排程系統未就緒，請稍後再試"
-            return (f"✅ 已設定提醒 [{rid}]\n"
-                    f"⏰ {fire_at.strftime('%Y-%m-%d %H:%M')}\n"
-                    f"📝 {content}")
+        if kind in _REMINDER_KINDS:
+            return _reminder_reply(kind, arg, ctx)
 
         if kind == "todo_list":
             import personal
@@ -1382,6 +1411,9 @@ def handle_postback(data, user_id, ctx=None):
     if action.startswith("todo_") and couple_ledger.is_couple_chat(ctx):
         if action == "todo_add_start":
             return "群組裡直接打「待辦 內容」就好，例如：待辦 買衛生紙"
+        user_id = ctx["group_id"]
+    # 群組提醒也是一樣：清單卡片上的「取消」「延後」要對群組那份
+    if action.startswith("reminder_") and couple_ledger.is_couple_chat(ctx):
         user_id = ctx["group_id"]
 
     if action == "split_mark":
@@ -1479,7 +1511,9 @@ def handle_postback(data, user_id, ctx=None):
             if not target:
                 return f"找不到編號 {rid} 的提醒"
             personal.cancel_reminder(user_id, rid)
-            new_fire = datetime.now() + timedelta(minutes=mins)
+            from tz_utils import now_tpe
+            # 要帶台北時區：容器是 UTC，naive 的 now() 存進 Notion 會差 8 小時
+            new_fire = now_tpe() + timedelta(minutes=mins)
             new_id = personal.add_reminder(
                 user_id, target["text"], new_fire, push_to_user_sync,
             )

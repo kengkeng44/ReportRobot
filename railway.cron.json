@@ -5,7 +5,7 @@
   },
   "deploy": {
     "startCommand": "python jobs.py",
-    "cronSchedule": "0,50 1,7,13,22 * * *",
+    "cronSchedule": "*/10 * * * *",
     "restartPolicyType": "NEVER"
   }
 }
