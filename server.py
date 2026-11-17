@@ -732,6 +732,20 @@ async def owntracks_ingest(request: Request):
     return JSONResponse(status_code=status, content=body)
 
 
+@app.post("/health")
+async def health_ingest(request: Request):
+    """iPhone 捷徑 / Health Auto Export 送 Apple 健康資料進來（Bearer HEALTH_TOKEN）。"""
+    from fastapi.responses import JSONResponse
+    import health
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = None
+    status, body = await asyncio.to_thread(
+        health.handle_post, request.headers.get("Authorization"), payload)
+    return JSONResponse(status_code=status, content=body)
+
+
 @app.post("/admin/owntracks-summarize")
 def owntracks_summarize(request: Request, day: str = ""):
     """手動整理某天的定位（?day=YYYY-MM-DD，預設昨天）。重跑安全。"""
