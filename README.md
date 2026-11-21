@@ -336,7 +336,7 @@ Invoke-RestMethod -Method Get `
 
 ## 排程時間
 
-定時工作在 `jobs.py`，由 Railway 定時任務（`railway.cron.json`，UTC `*/10 * * * *`）叫，
+定時工作在 `jobs.py`，由 Railway 定時任務（`railway.cron.json`，UTC `0,50 1,7,13,22 * * *`，一天 8 次）叫，
 集中在台北 06:50／09:00／15:00／21:00 四個時段，跑完就關；網頁服務閒置會休眠。
 其餘每 10 分鐘的叫醒只補送到期的「提醒」（所以提醒最多晚 10 分鐘，整點、:10、:20… 準時）。
 `python jobs.py list` 看各時段工作，`python jobs.py 1500` 手動補跑某個時段。

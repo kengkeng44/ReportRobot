@@ -445,6 +445,10 @@ Invoke-RestMethod -Method Post -Uri "$base/admin/hut-run" -Headers $h
 定時工作全部搬到 `jobs.py`，由另一個 Railway 定時任務服務（`railway.cron.json`）叫，跑完就關。
 原因：帳單 99% 是常駐的記憶體時間。`python jobs.py list` 看各時段跑什麼。
 
+定時任務服務叫 `jobs`（2026-11-21 才建，11-13～11-21 之間所有排程都沒跑）。Railway 已不支援指定設定檔路徑，
+`railway.cron.json` **不會被讀**，只是紀錄；真正的設定存在服務上（啟動 `python jobs.py`、排程 UTC `0,50 1,7,13,22 * * *`、不重啟）。
+變數全部是 `${{chengreport_bot.X}}` 參照，在 Infisical 改值會跟著網頁服務走；**網頁服務新增變數時，jobs 要手動補一條參照**。
+
 | 時段(台灣) | 工作 |
 |---|---|
 | 06:50 | 山屋早上提醒、OwnTracks 整理昨天、每日報(`DAILY_REPORT_PAUSED`)、Notion 欄位收斂、圖文選單、轉帳信補抓 |
